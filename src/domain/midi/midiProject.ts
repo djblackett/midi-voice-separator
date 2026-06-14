@@ -70,3 +70,15 @@ export function formatMidiWarningLocation(warning: MidiWarning): string {
 
   return parts.length > 0 ? parts.join(", ") : "unknown location";
 }
+
+export function formatMidiChannel(channel: number): string {
+  return `Channel ${channel + 1}`;
+}
+
+export function formatSelectedNote(note: MidiNote | null): string {
+  if (!note) {
+    return "No note selected";
+  }
+
+  return `Pitch ${note.pitch} | ${formatMidiChannel(note.channel)} | ${note.startTick}-${note.endTick} ticks | ${note.voiceId}`;
+}

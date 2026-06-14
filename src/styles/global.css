@@ -94,6 +94,7 @@ button {
 .inline-error,
 .warnings,
 .voice-legend,
+.selection-details,
 .file-details {
   margin: 12px 24px 0;
   border-radius: 6px;
@@ -153,6 +154,41 @@ button {
   width: 12px;
   height: 12px;
   border-radius: 3px;
+}
+
+.selection-details {
+  border: 1px solid #334155;
+  background: #111827;
+}
+
+.selection-details h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.selection-details p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.selection-details dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.selection-details dt {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.selection-details dd {
+  margin: 3px 0 0;
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .file-details > div {

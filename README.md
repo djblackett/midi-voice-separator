@@ -16,11 +16,12 @@ piano roll.
 - Deterministic heuristic voice assignment for imported notes.
 - Basic canvas piano-roll rendering.
 - Voice-colored note display.
+- Single-note selection with selected-note details.
 - Focused frontend and Rust tests.
 
 ## Non-capabilities
 
-This version does not yet perform editable voice correction, MIDI playback, DAW routing,
+This version does not yet perform editable voice reassignment, MIDI playback, DAW routing,
 audio separation, or machine learning. The current voice assignment is a deterministic
 first-pass heuristic, not a finished musical separation algorithm.
 
@@ -75,5 +76,5 @@ claiming final musical correctness.
 
 ## Next milestone
 
-The next milestone should introduce note selection, reassignment shortcuts, and export to
-separate MIDI tracks.
+The next milestone should introduce reassignment shortcuts and export to separate MIDI
+tracks.

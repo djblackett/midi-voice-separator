@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatMidiWarningLocation, formatProjectSummary, type MidiProject } from "./midiProject";
+import {
+  formatMidiChannel,
+  formatMidiWarningLocation,
+  formatProjectSummary,
+  formatSelectedNote,
+  type MidiProject,
+} from "./midiProject";
 
 describe("formatProjectSummary", () => {
   it("formats an empty project state", () => {
@@ -69,5 +75,31 @@ describe("formatMidiWarningLocation", () => {
         tick: null,
       }),
     ).toBe("unknown location");
+  });
+});
+
+describe("note formatting", () => {
+  it("formats MIDI channels for users as one-based values", () => {
+    expect(formatMidiChannel(9)).toBe("Channel 10");
+  });
+
+  it("formats selected note details", () => {
+    expect(
+      formatSelectedNote({
+        id: "note-1",
+        voiceId: "voice-2",
+        sourceTrackIndex: 0,
+        channel: 1,
+        pitch: 64,
+        velocity: 90,
+        startTick: 120,
+        endTick: 360,
+        durationTicks: 240,
+      }),
+    ).toBe("Pitch 64 | Channel 2 | 120-360 ticks | voice-2");
+  });
+
+  it("formats the empty selected-note state", () => {
+    expect(formatSelectedNote(null)).toBe("No note selected");
   });
 });

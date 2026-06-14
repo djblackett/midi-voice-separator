@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import type { MidiProject } from "../domain/midi/midiProject";
-import { formatMidiWarningLocation, formatProjectSummary } from "../domain/midi/midiProject";
+import {
+  formatMidiChannel,
+  formatMidiWarningLocation,
+  formatProjectSummary,
+  formatSelectedNote,
+} from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
 import { PianoRoll } from "../features/piano-roll/PianoRoll";
@@ -24,6 +29,8 @@ export default function App() {
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<AppCommandError | null>(null);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const selectedNote = project?.notes.find((note) => note.id === selectedNoteId) ?? null;
 
   useEffect(() => {
     void getBackendStatus()
@@ -41,6 +48,7 @@ export default function App() {
       const importedProject = await selectAndImportMidi();
       if (importedProject) {
         setProject(importedProject);
+        setSelectedNoteId(null);
       }
     } catch (commandError) {
       setError(
@@ -150,8 +158,42 @@ export default function App() {
         </section>
       ) : null}
 
+      {project ? (
+        <section className="selection-details" aria-label="Selected note details">
+          <h2>Selected note</h2>
+          {selectedNote ? (
+            <dl>
+              <div>
+                <dt>Pitch</dt>
+                <dd>{selectedNote.pitch}</dd>
+              </div>
+              <div>
+                <dt>Voice</dt>
+                <dd>{selectedNote.voiceId}</dd>
+              </div>
+              <div>
+                <dt>Channel</dt>
+                <dd>{formatMidiChannel(selectedNote.channel)}</dd>
+              </div>
+              <div>
+                <dt>Ticks</dt>
+                <dd>
+                  {selectedNote.startTick}-{selectedNote.endTick}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p>{formatSelectedNote(null)}</p>
+          )}
+        </section>
+      ) : null}
+
       <section className="editor-grid">
-        <PianoRoll project={project} />
+        <PianoRoll
+          project={project}
+          selectedNoteId={selectedNoteId}
+          onSelectedNoteChange={setSelectedNoteId}
+        />
       </section>
 
       <footer className="metrics-bar">{formatProjectSummary(project)}</footer>
