@@ -13,13 +13,16 @@ piano roll.
 - MIDI-file selection through the Tauri dialog plugin.
 - Rust MIDI parsing with `midly`.
 - Owned, serializable MIDI DTOs returned to the frontend.
+- Deterministic heuristic voice assignment for imported notes.
 - Basic canvas piano-roll rendering.
+- Voice-colored note display.
 - Focused frontend and Rust tests.
 
 ## Non-capabilities
 
-This version does not yet perform voice separation, manual note correction, MIDI playback,
-DAW routing, audio separation, or machine learning.
+This version does not yet perform editable voice correction, MIDI playback, DAW routing,
+audio separation, or machine learning. The current voice assignment is a deterministic
+first-pass heuristic, not a finished musical separation algorithm.
 
 ## Windows prerequisites
 
@@ -65,7 +68,12 @@ zooming, scrolling, selection, and editing can be added without rewriting the re
 parser converts those borrowed structures into owned application DTOs before returning them
 through Tauri.
 
+The current voice assignment is a simple monophonic-lane heuristic: notes are processed in
+deterministic order, a compatible non-overlapping voice is reused when possible, and the
+closest prior pitch wins ties. This makes the first visual grouping repeatable without
+claiming final musical correctness.
+
 ## Next milestone
 
-The next milestone should introduce deterministic heuristic voice assignment, voice colors,
-note selection, reassignment shortcuts, and export to separate MIDI tracks.
+The next milestone should introduce note selection, reassignment shortcuts, and export to
+separate MIDI tracks.

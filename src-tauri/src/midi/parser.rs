@@ -10,6 +10,7 @@ use crate::error::AppError;
 use super::model::{
     MidiNoteDto, MidiProjectDto, MidiWarningCode, MidiWarningDto, TempoChangeDto, TimeSignatureDto,
 };
+use super::voice_assignment::assign_heuristic_voices;
 
 #[derive(Debug, Clone)]
 struct ActiveNote {
@@ -144,6 +145,7 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
             .then(left.channel.cmp(&right.channel))
             .then(left.id.cmp(&right.id))
     });
+    let voices = assign_heuristic_voices(&mut notes);
 
     Ok(MidiProjectDto {
         file_name: path
@@ -155,6 +157,7 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
         ppq,
         duration_ticks: max_tick,
         track_count: smf.tracks.len(),
+        voices,
         notes,
         tempo_changes,
         time_signatures,
@@ -247,6 +250,7 @@ fn push_note(
             "t{track_index}-c{channel}-p{pitch}-s{}-e{end_tick}-n{}",
             active_note.start_tick, active_note.sequence
         ),
+        voice_id: String::new(),
         source_track_index: track_index,
         channel,
         pitch,
@@ -459,7 +463,34 @@ mod tests {
         assert_eq!(project.file_name, "two-note-smoke.mid");
         assert_eq!(project.ppq, 480);
         assert_eq!(project.notes.len(), 2);
+        assert_eq!(project.voices.len(), 1);
         assert_eq!(project.duration_ticks, 960);
         assert!(project.warnings.is_empty());
+    }
+
+    #[test]
+    fn assigns_voice_ids_deterministically_after_sorting() {
+        let first_project = parse_tracks(vec![vec![
+            note_on(0, 0, 60, 90),
+            note_on(0, 0, 64, 90),
+            note_off(240, 0, 60),
+            note_off(0, 0, 64),
+            note_on(0, 0, 65, 90),
+            note_off(240, 0, 65),
+        ]]);
+        let second_project = parse_tracks(vec![vec![
+            note_on(0, 0, 60, 90),
+            note_on(0, 0, 64, 90),
+            note_off(240, 0, 60),
+            note_off(0, 0, 64),
+            note_on(0, 0, 65, 90),
+            note_off(240, 0, 65),
+        ]]);
+
+        assert_eq!(first_project.voices.len(), 2);
+        assert_eq!(first_project.notes[0].voice_id, "voice-1");
+        assert_eq!(first_project.notes[1].voice_id, "voice-2");
+        assert_eq!(first_project.notes[2].voice_id, "voice-2");
+        assert_eq!(first_project, second_project);
     }
 }

@@ -92,6 +92,10 @@ export default function App() {
             <strong>{project.format}</strong>
           </div>
           <div>
+            <span className="detail-label">Suggested voices</span>
+            <strong>{project.voices.length}</strong>
+          </div>
+          <div>
             <span className="detail-label">Tempo changes</span>
             <strong>{project.tempoChanges.length}</strong>
           </div>
@@ -120,6 +124,26 @@ export default function App() {
                   <span>{formatMidiWarningLocation(warning)}</span>
                 </div>
                 <p>{warning.message}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {project && project.voices.length > 0 ? (
+        <section className="voice-legend" aria-label="Suggested voice assignments">
+          <h2>Suggested voices</h2>
+          <ul>
+            {project.voices.map((voice, index) => (
+              <li key={voice.id}>
+                <span
+                  className="voice-swatch"
+                  style={{ backgroundColor: `var(--voice-${(index % 6) + 1})` }}
+                />
+                <span>{voice.label}</span>
+                <span>
+                  {voice.noteCount} notes, pitches {voice.lowestPitch}-{voice.highestPitch}
+                </span>
               </li>
             ))}
           </ul>

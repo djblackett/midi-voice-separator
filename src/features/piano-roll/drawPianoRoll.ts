@@ -3,6 +3,23 @@ import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 
 const LABEL_WIDTH = 56;
+const VOICE_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#f472b6"];
+const VOICE_STROKES = ["#7dd3fc", "#c4b5fd", "#86efac", "#fde68a", "#fda4af", "#f9a8d4"];
+
+function voiceColorIndex(voiceId: string): number {
+  const voiceNumber = Number.parseInt(voiceId.replace("voice-", ""), 10);
+  return Number.isFinite(voiceNumber) && voiceNumber > 0
+    ? (voiceNumber - 1) % VOICE_COLORS.length
+    : 0;
+}
+
+export function getVoiceFillColor(voiceId: string): string {
+  return VOICE_COLORS[voiceColorIndex(voiceId)];
+}
+
+export function getVoiceStrokeColor(voiceId: string): string {
+  return VOICE_STROKES[voiceColorIndex(voiceId)];
+}
 
 export function buildViewport(
   project: MidiProject | null,
@@ -101,9 +118,9 @@ export function drawPianoRoll(
     const width = Math.max(2, endX - x);
     const height = Math.max(2, rowHeight - 2);
 
-    context.fillStyle = "#38bdf8";
+    context.fillStyle = getVoiceFillColor(note.voiceId);
     context.fillRect(x, y + 1, width, height);
-    context.strokeStyle = "#7dd3fc";
+    context.strokeStyle = getVoiceStrokeColor(note.voiceId);
     context.strokeRect(x, y + 1, width, height);
   }
 }

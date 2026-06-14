@@ -8,6 +8,7 @@ pub struct MidiProjectDto {
     pub ppq: u16,
     pub duration_ticks: u64,
     pub track_count: usize,
+    pub voices: Vec<MidiVoiceDto>,
     pub notes: Vec<MidiNoteDto>,
     pub tempo_changes: Vec<TempoChangeDto>,
     pub time_signatures: Vec<TimeSignatureDto>,
@@ -18,6 +19,7 @@ pub struct MidiProjectDto {
 #[serde(rename_all = "camelCase")]
 pub struct MidiNoteDto {
     pub id: String,
+    pub voice_id: String,
     pub source_track_index: usize,
     pub channel: u8,
     pub pitch: u8,
@@ -25,6 +27,16 @@ pub struct MidiNoteDto {
     pub start_tick: u64,
     pub end_tick: u64,
     pub duration_ticks: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MidiVoiceDto {
+    pub id: String,
+    pub label: String,
+    pub note_count: usize,
+    pub lowest_pitch: u8,
+    pub highest_pitch: u8,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

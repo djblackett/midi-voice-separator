@@ -4,6 +4,7 @@ export interface MidiProject {
   ppq: number;
   durationTicks: number;
   trackCount: number;
+  voices: MidiVoice[];
   notes: MidiNote[];
   tempoChanges: TempoChange[];
   timeSignatures: TimeSignature[];
@@ -12,6 +13,7 @@ export interface MidiProject {
 
 export interface MidiNote {
   id: string;
+  voiceId: string;
   sourceTrackIndex: number;
   channel: number;
   pitch: number;
@@ -19,6 +21,14 @@ export interface MidiNote {
   startTick: number;
   endTick: number;
   durationTicks: number;
+}
+
+export interface MidiVoice {
+  id: string;
+  label: string;
+  noteCount: number;
+  lowestPitch: number;
+  highestPitch: number;
 }
 
 export interface TempoChange {
@@ -41,10 +51,10 @@ export interface MidiWarning {
 
 export function formatProjectSummary(project: MidiProject | null): string {
   if (!project) {
-    return "Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0";
+    return "Notes: 0 | Voices: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0";
   }
 
-  return `Notes: ${project.notes.length} | Tracks: ${project.trackCount} | PPQ: ${project.ppq} | Duration: ${project.durationTicks} ticks | Tempo changes: ${project.tempoChanges.length} | Time signatures: ${project.timeSignatures.length}`;
+  return `Notes: ${project.notes.length} | Voices: ${project.voices.length} | Tracks: ${project.trackCount} | PPQ: ${project.ppq} | Duration: ${project.durationTicks} ticks | Tempo changes: ${project.tempoChanges.length} | Time signatures: ${project.timeSignatures.length}`;
 }
 
 export function formatMidiWarningLocation(warning: MidiWarning): string {

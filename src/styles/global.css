@@ -9,6 +9,12 @@
     sans-serif;
   color: #e5e7eb;
   background: #0b1120;
+  --voice-1: #38bdf8;
+  --voice-2: #a78bfa;
+  --voice-3: #34d399;
+  --voice-4: #fbbf24;
+  --voice-5: #fb7185;
+  --voice-6: #f472b6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -87,6 +93,7 @@ button {
 
 .inline-error,
 .warnings,
+.voice-legend,
 .file-details {
   margin: 12px 24px 0;
   border-radius: 6px;
@@ -109,10 +116,43 @@ button {
 
 .file-details {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 12px;
   border: 1px solid #334155;
   background: #111827;
+}
+
+.voice-legend {
+  border: 1px solid #334155;
+  background: #0f172a;
+}
+
+.voice-legend h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.voice-legend ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.voice-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
 }
 
 .file-details > div {

@@ -4,7 +4,7 @@ import { formatMidiWarningLocation, formatProjectSummary, type MidiProject } fro
 describe("formatProjectSummary", () => {
   it("formats an empty project state", () => {
     expect(formatProjectSummary(null)).toBe(
-      "Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0",
+      "Notes: 0 | Voices: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0",
     );
   });
 
@@ -15,9 +15,19 @@ describe("formatProjectSummary", () => {
       ppq: 480,
       durationTicks: 960,
       trackCount: 2,
+      voices: [
+        {
+          id: "voice-1",
+          label: "Voice 1",
+          noteCount: 1,
+          lowestPitch: 60,
+          highestPitch: 60,
+        },
+      ],
       notes: [
         {
           id: "note-1",
+          voiceId: "voice-1",
           sourceTrackIndex: 0,
           channel: 0,
           pitch: 60,
@@ -33,7 +43,7 @@ describe("formatProjectSummary", () => {
     };
 
     expect(formatProjectSummary(project)).toBe(
-      "Notes: 1 | Tracks: 2 | PPQ: 480 | Duration: 960 ticks | Tempo changes: 0 | Time signatures: 1",
+      "Notes: 1 | Voices: 1 | Tracks: 2 | PPQ: 480 | Duration: 960 ticks | Tempo changes: 0 | Time signatures: 1",
     );
   });
 });
