@@ -41,8 +41,22 @@ export interface MidiWarning {
 
 export function formatProjectSummary(project: MidiProject | null): string {
   if (!project) {
-    return "Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks";
+    return "Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0";
   }
 
-  return `Notes: ${project.notes.length} | Tracks: ${project.trackCount} | PPQ: ${project.ppq} | Duration: ${project.durationTicks} ticks`;
+  return `Notes: ${project.notes.length} | Tracks: ${project.trackCount} | PPQ: ${project.ppq} | Duration: ${project.durationTicks} ticks | Tempo changes: ${project.tempoChanges.length} | Time signatures: ${project.timeSignatures.length}`;
+}
+
+export function formatMidiWarningLocation(warning: MidiWarning): string {
+  const parts = [];
+
+  if (warning.trackIndex !== null) {
+    parts.push(`track ${warning.trackIndex}`);
+  }
+
+  if (warning.tick !== null) {
+    parts.push(`tick ${warning.tick}`);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "unknown location";
 }

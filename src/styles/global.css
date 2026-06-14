@@ -86,7 +86,8 @@ button {
 }
 
 .inline-error,
-.warnings {
+.warnings,
+.file-details {
   margin: 12px 24px 0;
   border-radius: 6px;
   padding: 10px 12px;
@@ -106,14 +107,71 @@ button {
   color: #fde68a;
 }
 
+.file-details {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  border: 1px solid #334155;
+  background: #111827;
+}
+
+.file-details > div {
+  display: grid;
+  gap: 3px;
+}
+
+.detail-label {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.file-details strong {
+  color: #e5e7eb;
+  font-size: 14px;
+}
+
 .warnings h2 {
   margin: 0 0 6px;
   font-size: 14px;
 }
 
-.warnings ul {
+.warnings > p {
+  margin: 0 0 10px;
+  color: #fef3c7;
+  font-size: 13px;
+}
+
+.warning-list {
+  display: grid;
+  gap: 8px;
   margin: 0;
-  padding-left: 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.warning-list li {
+  border-top: 1px solid #713f12;
+  padding-top: 8px;
+}
+
+.warning-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.warning-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #fef3c7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.warning-list p {
+  margin: 4px 0 0;
+  color: #fde68a;
+  font-size: 13px;
 }
 
 .editor-grid {

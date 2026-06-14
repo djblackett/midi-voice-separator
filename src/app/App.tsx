@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MidiProject } from "../domain/midi/midiProject";
-import { formatProjectSummary } from "../domain/midi/midiProject";
+import { formatMidiWarningLocation, formatProjectSummary } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
 import { PianoRoll } from "../features/piano-roll/PianoRoll";
@@ -85,15 +85,41 @@ export default function App() {
         </section>
       ) : null}
 
+      {project ? (
+        <section className="file-details" aria-label="Imported file details">
+          <div>
+            <span className="detail-label">Format</span>
+            <strong>{project.format}</strong>
+          </div>
+          <div>
+            <span className="detail-label">Tempo changes</span>
+            <strong>{project.tempoChanges.length}</strong>
+          </div>
+          <div>
+            <span className="detail-label">Time signatures</span>
+            <strong>{project.timeSignatures.length}</strong>
+          </div>
+          <div>
+            <span className="detail-label">Recoverable warnings</span>
+            <strong>{project.warnings.length}</strong>
+          </div>
+        </section>
+      ) : null}
+
       {project && project.warnings.length > 0 ? (
         <section className="warnings" aria-label="Import warnings">
-          <h2>Import warnings</h2>
-          <ul>
+          <h2>Recoverable import warnings</h2>
+          <p>The MIDI file was imported, but the parser repaired or ignored these events.</p>
+          <ul className="warning-list">
             {project.warnings.map((warning, index) => (
               <li
                 key={`${warning.code}-${warning.trackIndex ?? "none"}-${warning.tick ?? "none"}-${index}`}
               >
-                {warning.message}
+                <div className="warning-heading">
+                  <span>{warning.code}</span>
+                  <span>{formatMidiWarningLocation(warning)}</span>
+                </div>
+                <p>{warning.message}</p>
               </li>
             ))}
           </ul>

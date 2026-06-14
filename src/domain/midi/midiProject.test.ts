@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatProjectSummary, type MidiProject } from "./midiProject";
+import { formatMidiWarningLocation, formatProjectSummary, type MidiProject } from "./midiProject";
 
 describe("formatProjectSummary", () => {
   it("formats an empty project state", () => {
-    expect(formatProjectSummary(null)).toBe("Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks");
+    expect(formatProjectSummary(null)).toBe(
+      "Notes: 0 | Tracks: 0 | PPQ: - | Duration: 0 ticks | Tempo changes: 0 | Time signatures: 0",
+    );
   });
 
   it("formats imported project metrics", () => {
@@ -26,12 +28,36 @@ describe("formatProjectSummary", () => {
         },
       ],
       tempoChanges: [],
-      timeSignatures: [],
+      timeSignatures: [{ tick: 0, numerator: 4, denominator: 4 }],
       warnings: [],
     };
 
     expect(formatProjectSummary(project)).toBe(
-      "Notes: 1 | Tracks: 2 | PPQ: 480 | Duration: 960 ticks",
+      "Notes: 1 | Tracks: 2 | PPQ: 480 | Duration: 960 ticks | Tempo changes: 0 | Time signatures: 1",
     );
+  });
+});
+
+describe("formatMidiWarningLocation", () => {
+  it("formats track and tick metadata", () => {
+    expect(
+      formatMidiWarningLocation({
+        code: "DANGLING_NOTE_ON",
+        message: "Closed dangling note.",
+        trackIndex: 1,
+        tick: 960,
+      }),
+    ).toBe("track 1, tick 960");
+  });
+
+  it("falls back when warning metadata is absent", () => {
+    expect(
+      formatMidiWarningLocation({
+        code: "UNMATCHED_NOTE_OFF",
+        message: "Ignored note-off.",
+        trackIndex: null,
+        tick: null,
+      }),
+    ).toBe("unknown location");
   });
 });
