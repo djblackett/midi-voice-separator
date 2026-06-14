@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MidiProject } from "../domain/midi/midiProject";
 import {
   formatMidiChannel,
@@ -10,6 +10,11 @@ import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
 import { PianoRoll } from "../features/piano-roll/PianoRoll";
 import { getBackendStatus, type AppCommandError } from "../lib/tauri/commands";
+import {
+  applyVoiceOverrides,
+  voiceIdForNumber,
+  type VoiceOverrides,
+} from "../domain/midi/voiceAssignments";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -30,7 +35,12 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<AppCommandError | null>(null);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const selectedNote = project?.notes.find((note) => note.id === selectedNoteId) ?? null;
+  const [voiceOverrides, setVoiceOverrides] = useState<VoiceOverrides>({});
+  const displayedProject = useMemo(
+    () => (project ? applyVoiceOverrides(project, voiceOverrides) : null),
+    [project, voiceOverrides],
+  );
+  const selectedNote = displayedProject?.notes.find((note) => note.id === selectedNoteId) ?? null;
 
   useEffect(() => {
     void getBackendStatus()
@@ -39,6 +49,43 @@ export default function App() {
       )
       .catch((commandError: unknown) => setStatus(getErrorMessage(commandError)));
   }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === "Escape") {
+        setSelectedNoteId(null);
+        return;
+      }
+
+      if (!selectedNoteId || !displayedProject || !/^[1-9]$/.test(event.key)) {
+        return;
+      }
+
+      const targetVoiceId = voiceIdForNumber(displayedProject, Number(event.key));
+      if (!targetVoiceId) {
+        return;
+      }
+
+      event.preventDefault();
+      setVoiceOverrides((currentOverrides) => ({
+        ...currentOverrides,
+        [selectedNoteId]: targetVoiceId,
+      }));
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [displayedProject, selectedNoteId]);
 
   async function handleImport() {
     setIsImporting(true);
@@ -49,6 +96,7 @@ export default function App() {
       if (importedProject) {
         setProject(importedProject);
         setSelectedNoteId(null);
+        setVoiceOverrides({});
       }
     } catch (commandError) {
       setError(
@@ -93,37 +141,37 @@ export default function App() {
         </section>
       ) : null}
 
-      {project ? (
+      {displayedProject ? (
         <section className="file-details" aria-label="Imported file details">
           <div>
             <span className="detail-label">Format</span>
-            <strong>{project.format}</strong>
+            <strong>{displayedProject.format}</strong>
           </div>
           <div>
             <span className="detail-label">Suggested voices</span>
-            <strong>{project.voices.length}</strong>
+            <strong>{displayedProject.voices.length}</strong>
           </div>
           <div>
             <span className="detail-label">Tempo changes</span>
-            <strong>{project.tempoChanges.length}</strong>
+            <strong>{displayedProject.tempoChanges.length}</strong>
           </div>
           <div>
             <span className="detail-label">Time signatures</span>
-            <strong>{project.timeSignatures.length}</strong>
+            <strong>{displayedProject.timeSignatures.length}</strong>
           </div>
           <div>
             <span className="detail-label">Recoverable warnings</span>
-            <strong>{project.warnings.length}</strong>
+            <strong>{displayedProject.warnings.length}</strong>
           </div>
         </section>
       ) : null}
 
-      {project && project.warnings.length > 0 ? (
+      {displayedProject && displayedProject.warnings.length > 0 ? (
         <section className="warnings" aria-label="Import warnings">
           <h2>Recoverable import warnings</h2>
           <p>The MIDI file was imported, but the parser repaired or ignored these events.</p>
           <ul className="warning-list">
-            {project.warnings.map((warning, index) => (
+            {displayedProject.warnings.map((warning, index) => (
               <li
                 key={`${warning.code}-${warning.trackIndex ?? "none"}-${warning.tick ?? "none"}-${index}`}
               >
@@ -138,11 +186,11 @@ export default function App() {
         </section>
       ) : null}
 
-      {project && project.voices.length > 0 ? (
+      {displayedProject && displayedProject.voices.length > 0 ? (
         <section className="voice-legend" aria-label="Suggested voice assignments">
           <h2>Suggested voices</h2>
           <ul>
-            {project.voices.map((voice, index) => (
+            {displayedProject.voices.map((voice, index) => (
               <li key={voice.id}>
                 <span
                   className="voice-swatch"
@@ -158,7 +206,7 @@ export default function App() {
         </section>
       ) : null}
 
-      {project ? (
+      {displayedProject ? (
         <section className="selection-details" aria-label="Selected note details">
           <h2>Selected note</h2>
           {selectedNote ? (
@@ -185,18 +233,22 @@ export default function App() {
           ) : (
             <p>{formatSelectedNote(null)}</p>
           )}
+          <p className="keyboard-hint">
+            Select a note, then press <kbd>1</kbd>-<kbd>9</kbd> to assign it to an existing voice.
+            Press <kbd>Esc</kbd> to clear selection.
+          </p>
         </section>
       ) : null}
 
       <section className="editor-grid">
         <PianoRoll
-          project={project}
+          project={displayedProject}
           selectedNoteId={selectedNoteId}
           onSelectedNoteChange={setSelectedNoteId}
         />
       </section>
 
-      <footer className="metrics-bar">{formatProjectSummary(project)}</footer>
+      <footer className="metrics-bar">{formatProjectSummary(displayedProject)}</footer>
     </main>
   );
 }

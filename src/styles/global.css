@@ -172,6 +172,19 @@ button {
   font-size: 13px;
 }
 
+.selection-details .keyboard-hint {
+  margin-top: 10px;
+}
+
+kbd {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font: inherit;
+  padding: 1px 5px;
+}
+
 .selection-details dl {
   display: grid;
   grid-template-columns: repeat(4, minmax(120px, 1fr));

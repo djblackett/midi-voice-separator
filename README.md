@@ -17,13 +17,15 @@ piano roll.
 - Basic canvas piano-roll rendering.
 - Voice-colored note display.
 - Single-note selection with selected-note details.
+- Frontend-only selected-note reassignment with number-key shortcuts.
 - Focused frontend and Rust tests.
 
 ## Non-capabilities
 
-This version does not yet perform editable voice reassignment, MIDI playback, DAW routing,
-audio separation, or machine learning. The current voice assignment is a deterministic
-first-pass heuristic, not a finished musical separation algorithm.
+This version does not yet export corrected voices, perform MIDI playback, DAW routing, audio
+separation, or machine learning. The current voice assignment is a deterministic first-pass
+heuristic, not a finished musical separation algorithm. Reassignment exists only in frontend
+state until export is implemented.
 
 ## Windows prerequisites
 
@@ -74,7 +76,11 @@ deterministic order, a compatible non-overlapping voice is reused when possible,
 closest prior pitch wins ties. This makes the first visual grouping repeatable without
 claiming final musical correctness.
 
+Manual corrections are currently represented as frontend-only note-to-voice overrides. The
+imported Rust DTO remains unchanged, and the displayed project is derived from the import plus
+those overrides.
+
 ## Next milestone
 
-The next milestone should introduce reassignment shortcuts and export to separate MIDI
-tracks.
+The next milestone should persist corrected assignments into an export command that writes
+separate MIDI tracks.
