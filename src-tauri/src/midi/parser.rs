@@ -445,4 +445,21 @@ mod tests {
         assert_eq!(project.notes[0].pitch, 60);
         assert_eq!(project.notes[1].pitch, 67);
     }
+
+    #[test]
+    fn parses_manual_smoke_fixture() {
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("two-note-smoke.mid");
+        let bytes = std::fs::read(&fixture_path).expect("manual fixture should be readable");
+        let project =
+            parse_midi_project(&fixture_path, &bytes).expect("manual fixture should parse");
+
+        assert_eq!(project.file_name, "two-note-smoke.mid");
+        assert_eq!(project.ppq, 480);
+        assert_eq!(project.notes.len(), 2);
+        assert_eq!(project.duration_ticks, 960);
+        assert!(project.warnings.is_empty());
+    }
 }

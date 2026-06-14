@@ -1,4 +1,19 @@
 # Fixtures
 
-No binary MIDI fixtures are checked in yet. Rust tests construct small Standard MIDI Files
-programmatically with `midly` so the cases are readable and legally safe.
+`two-note-smoke.mid` is a tiny, hand-authored Standard MIDI File for manual smoke testing.
+It is format 0, PPQ 480, with one track, a 120 BPM tempo event, a 4/4 time signature, and
+two quarter-note events:
+
+- C4, velocity 100, tick 0 to 480.
+- E4, velocity 90, tick 480 to 960. This note ends via note-on velocity zero.
+
+The fixture was generated from explicit SMF bytes in PowerShell, not copied from a song or
+third-party source:
+
+```powershell
+$bytes = [byte[]](0x4D,0x54,0x68,0x64,0x00,0x00,0x00,0x06,0x00,0x00,0x00,0x01,0x01,0xE0,0x4D,0x54,0x72,0x6B,0x00,0x00,0x00,0x25,0x00,0xFF,0x51,0x03,0x07,0xA1,0x20,0x00,0xFF,0x58,0x04,0x04,0x02,0x18,0x08,0x00,0x90,0x3C,0x64,0x83,0x60,0x80,0x3C,0x00,0x00,0x90,0x40,0x5A,0x83,0x60,0x90,0x40,0x00,0x00,0xFF,0x2F,0x00)
+Set-Content -LiteralPath fixtures\two-note-smoke.mid -Value $bytes -AsByteStream
+```
+
+Rust parser tests still construct their own small MIDI files programmatically with `midly`
+so unit-test cases stay readable.
