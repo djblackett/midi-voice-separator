@@ -8,8 +8,14 @@ import {
 } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
+import { MidiExportButton } from "../features/midi-export/MidiExportButton";
+import { selectAndExportMidi } from "../features/midi-export/exportMidi";
 import { PianoRoll } from "../features/piano-roll/PianoRoll";
-import { getBackendStatus, type AppCommandError } from "../lib/tauri/commands";
+import {
+  getBackendStatus,
+  type AppCommandError,
+  type ExportMidiResult,
+} from "../lib/tauri/commands";
 import {
   applyVoiceOverrides,
   voiceIdForNumber,
@@ -33,7 +39,10 @@ export default function App() {
   const [project, setProject] = useState<MidiProject | null>(null);
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<AppCommandError | null>(null);
+  const [exportError, setExportError] = useState<AppCommandError | null>(null);
+  const [exportResult, setExportResult] = useState<ExportMidiResult | null>(null);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [voiceOverrides, setVoiceOverrides] = useState<VoiceOverrides>({});
   const displayedProject = useMemo(
@@ -81,6 +90,7 @@ export default function App() {
         ...currentOverrides,
         [selectedNoteId]: targetVoiceId,
       }));
+      setExportResult(null);
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -97,6 +107,8 @@ export default function App() {
         setProject(importedProject);
         setSelectedNoteId(null);
         setVoiceOverrides({});
+        setExportResult(null);
+        setExportError(null);
       }
     } catch (commandError) {
       setError(
@@ -114,6 +126,36 @@ export default function App() {
     }
   }
 
+  async function handleExport() {
+    if (!displayedProject) {
+      return;
+    }
+
+    setIsExporting(true);
+    setExportError(null);
+    setExportResult(null);
+
+    try {
+      const result = await selectAndExportMidi(displayedProject);
+      if (result) {
+        setExportResult(result);
+      }
+    } catch (commandError) {
+      setExportError(
+        typeof commandError === "object" &&
+          commandError !== null &&
+          "code" in commandError &&
+          "message" in commandError &&
+          typeof commandError.code === "string" &&
+          typeof commandError.message === "string"
+          ? { code: commandError.code, message: commandError.message }
+          : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) },
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -121,12 +163,23 @@ export default function App() {
           <h1>Chiptune Voice Separator</h1>
           <p>{status}</p>
         </div>
-        <MidiImportButton disabled={isImporting} onImport={() => void handleImport()} />
+        <div className="header-actions">
+          <MidiImportButton
+            disabled={isImporting || isExporting}
+            onImport={() => void handleImport()}
+          />
+          <MidiExportButton
+            disabled={!displayedProject || isImporting || isExporting}
+            onExport={() => void handleExport()}
+          />
+        </div>
       </header>
 
       <section className="summary-bar" aria-live="polite">
         {isImporting ? (
           <span>Importing MIDI...</span>
+        ) : isExporting ? (
+          <span>Exporting corrected MIDI...</span>
         ) : project ? (
           <span>Loaded {project.fileName}</span>
         ) : (
@@ -138,6 +191,20 @@ export default function App() {
         <section className="inline-error" role="alert">
           <strong>{error.code}</strong>
           <span>{error.message}</span>
+        </section>
+      ) : null}
+
+      {exportError ? (
+        <section className="inline-error" role="alert">
+          <strong>{exportError.code}</strong>
+          <span>{exportError.message}</span>
+        </section>
+      ) : null}
+
+      {exportResult ? (
+        <section className="export-success" aria-live="polite">
+          Exported {exportResult.noteCount} notes across {exportResult.trackCount} tracks to{" "}
+          {exportResult.path}.
         </section>
       ) : null}
 

@@ -9,8 +9,10 @@ pub enum AppErrorCode {
     FileNotFound,
     PermissionDenied,
     UnreadableFile,
+    WriteFailed,
     InvalidMidi,
     UnsupportedTimingFormat,
+    ExportTimingOutOfRange,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +27,13 @@ impl AppError {
         Self {
             code: AppErrorCode::EmptyPath,
             message: "Select a MIDI file before importing.".to_string(),
+        }
+    }
+
+    pub fn empty_export_path() -> Self {
+        Self {
+            code: AppErrorCode::EmptyPath,
+            message: "Choose a destination path before exporting.".to_string(),
         }
     }
 
@@ -53,6 +62,20 @@ impl AppError {
         }
     }
 
+    pub fn from_write_io(error: &io::Error) -> Self {
+        match error.kind() {
+            io::ErrorKind::PermissionDenied => Self {
+                code: AppErrorCode::PermissionDenied,
+                message: "The MIDI export could not be written because permission was denied."
+                    .to_string(),
+            },
+            _ => Self {
+                code: AppErrorCode::WriteFailed,
+                message: "The MIDI export could not be written.".to_string(),
+            },
+        }
+    }
+
     pub fn invalid_midi() -> Self {
         Self {
             code: AppErrorCode::InvalidMidi,
@@ -64,6 +87,14 @@ impl AppError {
         Self {
             code: AppErrorCode::UnsupportedTimingFormat,
             message: "This MIDI file uses SMPTE/timecode timing, which is not supported yet."
+                .to_string(),
+        }
+    }
+
+    pub fn export_timing_out_of_range() -> Self {
+        Self {
+            code: AppErrorCode::ExportTimingOutOfRange,
+            message: "A MIDI event delta is too large to encode in a Standard MIDI File."
                 .to_string(),
         }
     }

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getBackendStatus, importMidi } from "./commands";
+import { exportMidi, getBackendStatus, importMidi } from "./commands";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -31,6 +31,25 @@ describe("tauri command adapter", () => {
       notes: [],
     });
     expect(invokeMock).toHaveBeenCalledWith("import_midi", { path: "C:\\music\\song.mid" });
+  });
+
+  it("maps export success", async () => {
+    const project = { fileName: "song.mid", notes: [] };
+    invokeMock.mockResolvedValue({
+      path: "C:\\music\\song-voices.mid",
+      trackCount: 3,
+      noteCount: 12,
+    });
+
+    await expect(exportMidi("C:\\music\\song-voices.mid", project as never)).resolves.toEqual({
+      path: "C:\\music\\song-voices.mid",
+      trackCount: 3,
+      noteCount: 12,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("export_midi", {
+      path: "C:\\music\\song-voices.mid",
+      project,
+    });
   });
 
   it("preserves structured command errors", async () => {

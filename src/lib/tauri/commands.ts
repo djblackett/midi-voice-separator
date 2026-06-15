@@ -4,6 +4,7 @@ import type { MidiProject } from "../../domain/midi/midiProject";
 const COMMANDS = {
   backendStatus: "backend_status",
   importMidi: "import_midi",
+  exportMidi: "export_midi",
 } as const;
 
 export interface BackendStatus {
@@ -14,6 +15,12 @@ export interface BackendStatus {
 export interface AppCommandError {
   code: string;
   message: string;
+}
+
+export interface ExportMidiResult {
+  path: string;
+  trackCount: number;
+  noteCount: number;
 }
 
 function toCommandError(error: unknown): AppCommandError {
@@ -45,6 +52,14 @@ export async function getBackendStatus(): Promise<BackendStatus> {
 export async function importMidi(path: string): Promise<MidiProject> {
   try {
     return await invoke<MidiProject>(COMMANDS.importMidi, { path });
+  } catch (error) {
+    throw toCommandError(error);
+  }
+}
+
+export async function exportMidi(path: string, project: MidiProject): Promise<ExportMidiResult> {
+  try {
+    return await invoke<ExportMidiResult>(COMMANDS.exportMidi, { path, project });
   } catch (error) {
     throw toCommandError(error);
   }

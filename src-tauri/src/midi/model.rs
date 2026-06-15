@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiProjectDto {
     pub file_name: String,
@@ -15,7 +15,7 @@ pub struct MidiProjectDto {
     pub warnings: Vec<MidiWarningDto>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiNoteDto {
     pub id: String,
@@ -29,7 +29,7 @@ pub struct MidiNoteDto {
     pub duration_ticks: u64,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiVoiceDto {
     pub id: String,
@@ -39,14 +39,14 @@ pub struct MidiVoiceDto {
     pub highest_pitch: u8,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TempoChangeDto {
     pub tick: u64,
     pub microseconds_per_quarter: u32,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeSignatureDto {
     pub tick: u64,
@@ -54,7 +54,7 @@ pub struct TimeSignatureDto {
     pub denominator: u8,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiWarningDto {
     pub code: MidiWarningCode,
@@ -63,10 +63,18 @@ pub struct MidiWarningDto {
     pub tick: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MidiWarningCode {
     UnmatchedNoteOff,
     DanglingNoteOn,
     ZeroLengthNote,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportMidiResultDto {
+    pub path: String,
+    pub track_count: usize,
+    pub note_count: usize,
 }

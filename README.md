@@ -18,14 +18,14 @@ piano roll.
 - Voice-colored note display.
 - Single-note selection with selected-note details.
 - Frontend-only selected-note reassignment with number-key shortcuts.
+- Export of current corrected voice assignments to a new Standard MIDI File.
 - Focused frontend and Rust tests.
 
 ## Non-capabilities
 
-This version does not yet export corrected voices, perform MIDI playback, DAW routing, audio
-separation, or machine learning. The current voice assignment is a deterministic first-pass
-heuristic, not a finished musical separation algorithm. Reassignment exists only in frontend
-state until export is implemented.
+This version does not yet perform MIDI playback, DAW routing, audio separation, or machine
+learning. The current voice assignment is a deterministic first-pass heuristic, not a
+finished musical separation algorithm.
 
 ## Windows prerequisites
 
@@ -78,9 +78,9 @@ claiming final musical correctness.
 
 Manual corrections are currently represented as frontend-only note-to-voice overrides. The
 imported Rust DTO remains unchanged, and the displayed project is derived from the import plus
-those overrides.
+those overrides. Export sends that derived project back to Rust, which writes a format-1
+Standard MIDI File with a conductor track and one note track per voice.
 
 ## Next milestone
 
-The next milestone should persist corrected assignments into an export command that writes
-separate MIDI tracks.
+The next milestone should add multi-note selection and faster reassignment gestures.
