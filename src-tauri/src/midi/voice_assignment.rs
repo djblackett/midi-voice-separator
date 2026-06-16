@@ -49,6 +49,42 @@ pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
         .collect()
 }
 
+pub fn summarize_assigned_voices(notes: &[MidiNoteDto]) -> Vec<MidiVoiceDto> {
+    let mut voice_ids = notes
+        .iter()
+        .filter(|note| !note.voice_id.is_empty())
+        .map(|note| note.voice_id.clone())
+        .collect::<Vec<_>>();
+    voice_ids.sort_by(|left, right| voice_order_key(left).cmp(&voice_order_key(right)));
+    voice_ids.dedup();
+
+    voice_ids
+        .iter()
+        .enumerate()
+        .map(|(index, voice_id)| {
+            let voice_notes = notes
+                .iter()
+                .filter(|note| note.voice_id == *voice_id)
+                .collect::<Vec<_>>();
+            MidiVoiceDto {
+                id: voice_id.clone(),
+                label: format!("Voice {}", index + 1),
+                note_count: voice_notes.len(),
+                lowest_pitch: voice_notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .min()
+                    .unwrap_or_default(),
+                highest_pitch: voice_notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .max()
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
 fn best_voice_index(voices: &[VoiceState], note: &MidiNoteDto) -> Option<usize> {
     voices
         .iter()
@@ -62,6 +98,14 @@ fn best_voice_index(voices: &[VoiceState], note: &MidiNoteDto) -> Option<usize> 
             )
         })
         .map(|(index, _)| index)
+}
+
+fn voice_order_key(voice_id: &str) -> (usize, &str) {
+    let numeric_suffix = voice_id
+        .strip_prefix("voice-")
+        .and_then(|suffix| suffix.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    (numeric_suffix, voice_id)
 }
 
 #[cfg(test)]
@@ -133,5 +177,20 @@ mod tests {
         let first_assignments: Vec<_> = first.iter().map(|note| note.voice_id.clone()).collect();
         let second_assignments: Vec<_> = second.iter().map(|note| note.voice_id.clone()).collect();
         assert_eq!(first_assignments, second_assignments);
+    }
+
+    #[test]
+    fn summarizes_existing_assignments_in_voice_order() {
+        let mut notes = vec![note("a", 72, 0, 120), note("b", 60, 0, 120)];
+        notes[0].voice_id = "voice-2".to_string();
+        notes[1].voice_id = "voice-1".to_string();
+
+        let voices = summarize_assigned_voices(&notes);
+
+        assert_eq!(voices.len(), 2);
+        assert_eq!(voices[0].id, "voice-1");
+        assert_eq!(voices[0].lowest_pitch, 60);
+        assert_eq!(voices[1].id, "voice-2");
+        assert_eq!(voices[1].highest_pitch, 72);
     }
 }

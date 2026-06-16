@@ -7,7 +7,7 @@ use midly::{
 
 use crate::error::AppError;
 
-use super::model::MidiProjectDto;
+use super::{model::MidiProjectDto, EXPORTED_VOICE_TRACK_NAME};
 
 const MAX_MIDI_DELTA: u64 = 0x0fff_ffff;
 
@@ -129,7 +129,13 @@ fn build_voice_track(
         });
     }
 
-    events_to_track(events, duration_ticks)
+    let mut track = vec![TrackEvent {
+        delta: u28::new(0),
+        kind: TrackEventKind::Meta(MetaMessage::TrackName(EXPORTED_VOICE_TRACK_NAME)),
+    }];
+    track.extend(events_to_track(events, duration_ticks)?);
+
+    Ok(track)
 }
 
 fn events_to_track(
@@ -186,6 +192,8 @@ mod tests {
     use crate::midi::model::{
         MidiNoteDto, MidiProjectDto, MidiVoiceDto, TempoChangeDto, TimeSignatureDto,
     };
+    use crate::midi::parser::parse_midi_project;
+    use std::path::Path;
 
     fn note(id: &str, voice_id: &str, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
         MidiNoteDto {
@@ -255,8 +263,38 @@ mod tests {
         let first_voice_track = &smf.tracks[1];
 
         assert_eq!(first_voice_track[0].delta.as_int(), 0);
-        assert_eq!(first_voice_track[1].delta.as_int(), 480);
+        assert!(matches!(
+            first_voice_track[0].kind,
+            TrackEventKind::Meta(MetaMessage::TrackName(EXPORTED_VOICE_TRACK_NAME))
+        ));
+        assert_eq!(first_voice_track[1].delta.as_int(), 0);
         assert_eq!(first_voice_track[2].delta.as_int(), 480);
+        assert_eq!(first_voice_track[3].delta.as_int(), 480);
+    }
+
+    #[test]
+    fn preserves_exported_voice_assignments_when_reimported() {
+        let mut project = project();
+        project.notes[0].voice_id = "voice-2".to_string();
+        project.notes[1].voice_id = "voice-1".to_string();
+
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let imported = parse_midi_project(Path::new("roundtrip.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        let low_note = imported
+            .notes
+            .iter()
+            .find(|note| note.pitch == 60)
+            .expect("low note should import");
+        let high_note = imported
+            .notes
+            .iter()
+            .find(|note| note.pitch == 72)
+            .expect("high note should import");
+
+        assert_eq!(low_note.voice_id, "voice-2");
+        assert_eq!(high_note.voice_id, "voice-1");
     }
 
     #[test]

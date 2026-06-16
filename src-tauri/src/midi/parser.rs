@@ -10,7 +10,8 @@ use crate::error::AppError;
 use super::model::{
     MidiNoteDto, MidiProjectDto, MidiWarningCode, MidiWarningDto, TempoChangeDto, TimeSignatureDto,
 };
-use super::voice_assignment::assign_heuristic_voices;
+use super::voice_assignment::{assign_heuristic_voices, summarize_assigned_voices};
+use super::EXPORTED_VOICE_TRACK_NAME;
 
 #[derive(Debug, Clone)]
 struct ActiveNote {
@@ -23,6 +24,14 @@ struct ActiveNote {
 struct NoteKey {
     channel: u8,
     pitch: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NoteEventContext<'a> {
+    track_index: usize,
+    channel: u8,
+    pitch: u8,
+    voice_id: Option<&'a str>,
 }
 
 pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, AppError> {
@@ -38,8 +47,15 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
     let mut warnings = Vec::new();
     let mut max_tick = 0_u64;
     let mut sequence = 0_u64;
+    let mut exported_voice_track_count = 0_usize;
 
     for (track_index, track) in smf.tracks.iter().enumerate() {
+        let track_voice_id = if is_exported_voice_track(track) {
+            exported_voice_track_count += 1;
+            Some(format!("voice-{exported_voice_track_count}"))
+        } else {
+            None
+        };
         let mut absolute_tick = 0_u64;
         let mut active_notes: HashMap<NoteKey, VecDeque<ActiveNote>> = HashMap::new();
 
@@ -69,9 +85,12 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
                             &mut active_notes,
                             &mut notes,
                             &mut warnings,
-                            track_index,
-                            channel.as_int(),
-                            key.as_int(),
+                            NoteEventContext {
+                                track_index,
+                                channel: channel.as_int(),
+                                pitch: key.as_int(),
+                                voice_id: track_voice_id.as_deref(),
+                            },
                             absolute_tick,
                         );
                     }
@@ -80,9 +99,12 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
                             &mut active_notes,
                             &mut notes,
                             &mut warnings,
-                            track_index,
-                            channel.as_int(),
-                            key.as_int(),
+                            NoteEventContext {
+                                track_index,
+                                channel: channel.as_int(),
+                                pitch: key.as_int(),
+                                voice_id: track_voice_id.as_deref(),
+                            },
                             absolute_tick,
                         );
                     }
@@ -124,11 +146,14 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
                     tick: Some(absolute_tick),
                 });
                 push_note(
-                    notes.as_mut(),
-                    warnings.as_mut(),
-                    track_index,
-                    note_key.channel,
-                    note_key.pitch,
+                    &mut notes,
+                    &mut warnings,
+                    NoteEventContext {
+                        track_index,
+                        channel: note_key.channel,
+                        pitch: note_key.pitch,
+                        voice_id: track_voice_id.as_deref(),
+                    },
                     active_note,
                     absolute_tick,
                 );
@@ -145,7 +170,11 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
             .then(left.channel.cmp(&right.channel))
             .then(left.id.cmp(&right.id))
     });
-    let voices = assign_heuristic_voices(&mut notes);
+    let voices = if !notes.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty()) {
+        summarize_assigned_voices(&notes)
+    } else {
+        assign_heuristic_voices(&mut notes)
+    };
 
     Ok(MidiProjectDto {
         file_name: path
@@ -165,26 +194,36 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
     })
 }
 
+fn is_exported_voice_track(track: &[midly::TrackEvent<'_>]) -> bool {
+    track.iter().any(|event| {
+        matches!(
+            &event.kind,
+            TrackEventKind::Meta(MetaMessage::TrackName(name)) if *name == EXPORTED_VOICE_TRACK_NAME
+        )
+    })
+}
+
 fn end_note(
     active_notes: &mut HashMap<NoteKey, VecDeque<ActiveNote>>,
     notes: &mut Vec<MidiNoteDto>,
     warnings: &mut Vec<MidiWarningDto>,
-    track_index: usize,
-    channel: u8,
-    pitch: u8,
+    context: NoteEventContext<'_>,
     end_tick: u64,
 ) {
-    let note_key = NoteKey { channel, pitch };
+    let note_key = NoteKey {
+        channel: context.channel,
+        pitch: context.pitch,
+    };
     let Some(active_queue) = active_notes.get_mut(&note_key) else {
         warnings.push(MidiWarningDto {
             code: MidiWarningCode::UnmatchedNoteOff,
             message: format!(
                 "Ignored unmatched note-off in track {}, channel {}, pitch {}.",
-                track_index,
-                channel + 1,
-                pitch
+                context.track_index,
+                context.channel + 1,
+                context.pitch
             ),
-            track_index: Some(track_index),
+            track_index: Some(context.track_index),
             tick: Some(end_tick),
         });
         return;
@@ -196,11 +235,11 @@ fn end_note(
             code: MidiWarningCode::UnmatchedNoteOff,
             message: format!(
                 "Ignored unmatched note-off in track {}, channel {}, pitch {}.",
-                track_index,
-                channel + 1,
-                pitch
+                context.track_index,
+                context.channel + 1,
+                context.pitch
             ),
-            track_index: Some(track_index),
+            track_index: Some(context.track_index),
             tick: Some(end_tick),
         });
         return;
@@ -210,23 +249,13 @@ fn end_note(
         active_notes.remove(&note_key);
     }
 
-    push_note(
-        notes,
-        warnings,
-        track_index,
-        channel,
-        pitch,
-        active_note,
-        end_tick,
-    );
+    push_note(notes, warnings, context, active_note, end_tick);
 }
 
 fn push_note(
     notes: &mut Vec<MidiNoteDto>,
     warnings: &mut Vec<MidiWarningDto>,
-    track_index: usize,
-    channel: u8,
-    pitch: u8,
+    context: NoteEventContext<'_>,
     active_note: ActiveNote,
     end_tick: u64,
 ) {
@@ -235,11 +264,11 @@ fn push_note(
             code: MidiWarningCode::ZeroLengthNote,
             message: format!(
                 "Imported zero-length note in track {}, channel {}, pitch {}.",
-                track_index,
-                channel + 1,
-                pitch
+                context.track_index,
+                context.channel + 1,
+                context.pitch
             ),
-            track_index: Some(track_index),
+            track_index: Some(context.track_index),
             tick: Some(end_tick),
         });
     }
@@ -248,12 +277,16 @@ fn push_note(
     notes.push(MidiNoteDto {
         id: format!(
             "t{track_index}-c{channel}-p{pitch}-s{}-e{end_tick}-n{}",
-            active_note.start_tick, active_note.sequence
+            active_note.start_tick,
+            active_note.sequence,
+            track_index = context.track_index,
+            channel = context.channel,
+            pitch = context.pitch
         ),
-        voice_id: String::new(),
-        source_track_index: track_index,
-        channel,
-        pitch,
+        voice_id: context.voice_id.unwrap_or_default().to_string(),
+        source_track_index: context.track_index,
+        channel: context.channel,
+        pitch: context.pitch,
         velocity: active_note.velocity,
         start_tick: active_note.start_tick,
         end_tick,
