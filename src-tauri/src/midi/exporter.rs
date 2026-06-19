@@ -190,7 +190,8 @@ fn denominator_power(denominator: u8) -> u8 {
 mod tests {
     use super::*;
     use crate::midi::model::{
-        MidiNoteDto, MidiProjectDto, MidiVoiceDto, TempoChangeDto, TimeSignatureDto,
+        AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, SeparationSummaryDto,
+        TempoChangeDto, TimeSignatureDto,
     };
     use crate::midi::parser::parse_midi_project;
     use std::path::Path;
@@ -206,6 +207,8 @@ mod tests {
             start_tick,
             end_tick,
             duration_ticks: end_tick - start_tick,
+            assignment_confidence: 1.0,
+            assignment_reason: AssignmentReason::Imported,
         }
     }
 
@@ -246,6 +249,11 @@ mod tests {
                 denominator: 4,
             }],
             warnings: Vec::new(),
+            separation_summary: SeparationSummaryDto {
+                mean_confidence: 1.0,
+                low_confidence_note_count: 0,
+                voice_count: 2,
+            },
         }
     }
 

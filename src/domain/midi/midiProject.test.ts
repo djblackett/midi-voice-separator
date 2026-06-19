@@ -4,6 +4,7 @@ import {
   formatMidiWarningLocation,
   formatProjectSummary,
   formatSelectedNote,
+  formatSeparationSummary,
   type MidiProject,
 } from "./midiProject";
 
@@ -41,11 +42,14 @@ describe("formatProjectSummary", () => {
           startTick: 0,
           endTick: 240,
           durationTicks: 240,
+          assignmentConfidence: 1,
+          assignmentReason: "IMPORTED",
         },
       ],
       tempoChanges: [],
       timeSignatures: [{ tick: 0, numerator: 4, denominator: 4 }],
       warnings: [],
+      separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 },
     };
 
     expect(formatProjectSummary(project)).toBe(
@@ -95,11 +99,45 @@ describe("note formatting", () => {
         startTick: 120,
         endTick: 360,
         durationTicks: 240,
+        assignmentConfidence: 0.8,
+        assignmentReason: "CLOSEST_PITCH",
       }),
     ).toBe("Pitch 64 | Channel 2 | 120-360 ticks | voice-2");
   });
 
   it("formats the empty selected-note state", () => {
     expect(formatSelectedNote(null)).toBe("No note selected");
+  });
+});
+
+describe("formatSeparationSummary", () => {
+  it("reports mean confidence and flagged-note count", () => {
+    expect(
+      formatSeparationSummary(
+        { meanConfidence: 0.91, lowConfidenceNoteCount: 14, voiceCount: 3 },
+        200,
+      ),
+    ).toBe("91% mean assignment confidence — 14 notes flagged for review.");
+  });
+
+  it("uses singular phrasing for exactly one flagged note", () => {
+    expect(
+      formatSeparationSummary(
+        { meanConfidence: 0.95, lowConfidenceNoteCount: 1, voiceCount: 2 },
+        50,
+      ),
+    ).toBe("95% mean assignment confidence — 1 note flagged for review.");
+  });
+
+  it("reports no flagged notes", () => {
+    expect(
+      formatSeparationSummary({ meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 }, 10),
+    ).toBe("100% mean assignment confidence — no notes flagged for review.");
+  });
+
+  it("handles an empty project", () => {
+    expect(
+      formatSeparationSummary({ meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 0 }, 0),
+    ).toBe("No notes to separate.");
   });
 });

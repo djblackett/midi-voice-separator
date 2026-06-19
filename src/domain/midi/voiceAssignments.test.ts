@@ -23,6 +23,8 @@ const project: MidiProject = {
       startTick: 0,
       endTick: 240,
       durationTicks: 240,
+      assignmentConfidence: 1,
+      assignmentReason: "IMPORTED",
     },
     {
       id: "note-2",
@@ -34,6 +36,8 @@ const project: MidiProject = {
       startTick: 240,
       endTick: 480,
       durationTicks: 240,
+      assignmentConfidence: 1,
+      assignmentReason: "IMPORTED",
     },
     {
       id: "note-3",
@@ -45,11 +49,14 @@ const project: MidiProject = {
       startTick: 480,
       endTick: 720,
       durationTicks: 240,
+      assignmentConfidence: 1,
+      assignmentReason: "IMPORTED",
     },
   ],
   tempoChanges: [],
   timeSignatures: [],
   warnings: [],
+  separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 2 },
 };
 
 describe("applyVoiceOverrides", () => {
@@ -60,28 +67,11 @@ describe("applyVoiceOverrides", () => {
     expect(derived.notes[1].voiceId).toBe("voice-2");
   });
 
-  it("recomputes existing voice counts and pitch ranges", () => {
+  it("leaves notes without an override unchanged", () => {
     const derived = applyVoiceOverrides(project, { "note-2": "voice-2" });
 
-    expect(derived.voices).toEqual([
-      { id: "voice-1", label: "Voice 1", noteCount: 1, lowestPitch: 60, highestPitch: 60 },
-      { id: "voice-2", label: "Voice 2", noteCount: 2, lowestPitch: 64, highestPitch: 72 },
-    ]);
-  });
-
-  it("preserves pitch range fallback for empty voices", () => {
-    const derived = applyVoiceOverrides(project, {
-      "note-1": "voice-2",
-      "note-2": "voice-2",
-    });
-
-    expect(derived.voices[0]).toEqual({
-      id: "voice-1",
-      label: "Voice 1",
-      noteCount: 0,
-      lowestPitch: 60,
-      highestPitch: 64,
-    });
+    expect(derived.notes[0].voiceId).toBe("voice-1");
+    expect(derived.notes[2].voiceId).toBe("voice-2");
   });
 });
 

@@ -9,7 +9,19 @@ export interface MidiProject {
   tempoChanges: TempoChange[];
   timeSignatures: TimeSignature[];
   warnings: MidiWarning[];
+  separationSummary: SeparationSummary;
 }
+
+export type AssignmentReason =
+  | "IMPORTED"
+  | "CHANNEL_CONTINUITY"
+  | "CLOSEST_PITCH"
+  | "NEW_VOICE_NO_FIT";
+
+// Mirrors the Rust heuristic's LOW_CONFIDENCE_THRESHOLD. Kept as the single
+// frontend source of truth for "is this note flagged for review" so the
+// dashed canvas outline and the review-mode queue always agree.
+export const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
 export interface MidiNote {
   id: string;
@@ -21,6 +33,14 @@ export interface MidiNote {
   startTick: number;
   endTick: number;
   durationTicks: number;
+  assignmentConfidence: number;
+  assignmentReason: AssignmentReason;
+}
+
+export interface SeparationSummary {
+  meanConfidence: number;
+  lowConfidenceNoteCount: number;
+  voiceCount: number;
 }
 
 export interface MidiVoice {
@@ -81,4 +101,27 @@ export function formatSelectedNote(note: MidiNote | null): string {
   }
 
   return `Pitch ${note.pitch} | ${formatMidiChannel(note.channel)} | ${note.startTick}-${note.endTick} ticks | ${note.voiceId}`;
+}
+
+export function formatSeparationSummary(summary: SeparationSummary, noteCount: number): string {
+  if (noteCount === 0) {
+    return "No notes to separate.";
+  }
+
+  const highConfidencePercent = Math.round(summary.meanConfidence * 100);
+
+  return summary.lowConfidenceNoteCount > 0
+    ? `${highConfidencePercent}% mean assignment confidence — ${summary.lowConfidenceNoteCount} note${summary.lowConfidenceNoteCount === 1 ? "" : "s"} flagged for review.`
+    : `${highConfidencePercent}% mean assignment confidence — no notes flagged for review.`;
+}
+
+export function formatSelectionSummary(notes: MidiNote[]): string {
+  if (notes.length === 0) {
+    return "No note selected";
+  }
+
+  const pitches = notes.map((note) => note.pitch);
+  const voiceCount = new Set(notes.map((note) => note.voiceId)).size;
+
+  return `${notes.length} notes selected | ${voiceCount} voice${voiceCount === 1 ? "" : "s"} | pitches ${Math.min(...pitches)}-${Math.max(...pitches)}`;
 }

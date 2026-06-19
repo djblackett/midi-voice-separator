@@ -1,4 +1,8 @@
-import type { MidiProject } from "../../domain/midi/midiProject";
+import {
+  LOW_CONFIDENCE_THRESHOLD,
+  type MidiNote,
+  type MidiProject,
+} from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 
@@ -51,11 +55,58 @@ export function buildViewport(
   };
 }
 
+export interface MarqueeRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface NoteRenderStyle {
+  fillColor: string;
+  strokeColor: string;
+  isSelected: boolean;
+  isDimmed: boolean;
+  isLowConfidence: boolean;
+}
+
+export interface NoteRenderContext {
+  selectedNoteIds: ReadonlySet<string>;
+  soloVoiceId: string | null;
+  paintPreview: ReadonlyMap<string, string>;
+}
+
+/**
+ * Pure per-note render decision, extracted from the draw loop so the
+ * selection/solo/paint-preview/confidence logic is unit-testable without a
+ * canvas. `drawPianoRoll` just issues the canvas calls this describes.
+ */
+export function resolveNoteRenderStyle(
+  note: MidiNote,
+  { selectedNoteIds, soloVoiceId, paintPreview }: NoteRenderContext,
+): NoteRenderStyle {
+  const effectiveVoiceId = paintPreview.get(note.id) ?? note.voiceId;
+  const isSelected = selectedNoteIds.has(note.id);
+  const isDimmed = soloVoiceId !== null && effectiveVoiceId !== soloVoiceId;
+  const isLowConfidence = note.assignmentConfidence < LOW_CONFIDENCE_THRESHOLD;
+
+  return {
+    fillColor: getVoiceFillColor(effectiveVoiceId),
+    strokeColor: isSelected ? "#f8fafc" : getVoiceStrokeColor(effectiveVoiceId),
+    isSelected,
+    isDimmed,
+    isLowConfidence,
+  };
+}
+
 export function drawPianoRoll(
   context: CanvasRenderingContext2D,
   project: MidiProject | null,
   viewport: PianoRollViewport,
-  selectedNoteId: string | null = null,
+  selectedNoteIds: ReadonlySet<string> = new Set(),
+  marqueeRect: MarqueeRect | null = null,
+  soloVoiceId: string | null = null,
+  paintPreview: ReadonlyMap<string, string> = new Map(),
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -122,12 +173,33 @@ export function drawPianoRoll(
     const width = Math.max(2, endX - x);
     const height = Math.max(2, rowHeight - 2);
 
-    context.fillStyle = getVoiceFillColor(note.voiceId);
+    const style = resolveNoteRenderStyle(note, { selectedNoteIds, soloVoiceId, paintPreview });
+    context.globalAlpha = style.isDimmed ? 0.25 : 1;
+    context.fillStyle = style.fillColor;
     context.fillRect(x, y + 1, width, height);
-    context.strokeStyle =
-      note.id === selectedNoteId ? "#f8fafc" : getVoiceStrokeColor(note.voiceId);
-    context.lineWidth = note.id === selectedNoteId ? 3 : 1;
+    context.strokeStyle = style.strokeColor;
+    context.lineWidth = style.isSelected ? 3 : 1;
+    if (style.isLowConfidence && !style.isSelected) {
+      context.setLineDash([3, 2]);
+    }
     context.strokeRect(x, y + 1, width, height);
+    context.setLineDash([]);
     context.lineWidth = 1;
+    context.globalAlpha = 1;
+  }
+
+  if (marqueeRect) {
+    const left = Math.min(marqueeRect.x0, marqueeRect.x1);
+    const top = Math.min(marqueeRect.y0, marqueeRect.y1);
+    const width = Math.abs(marqueeRect.x1 - marqueeRect.x0);
+    const height = Math.abs(marqueeRect.y1 - marqueeRect.y0);
+
+    context.fillStyle = "rgba(56, 189, 248, 0.15)";
+    context.fillRect(left, top, width, height);
+    context.strokeStyle = "#38bdf8";
+    context.lineWidth = 1;
+    context.setLineDash([4, 3]);
+    context.strokeRect(left, top, width, height);
+    context.setLineDash([]);
   }
 }

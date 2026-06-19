@@ -5,14 +5,17 @@ import {
   formatMidiWarningLocation,
   formatProjectSummary,
   formatSelectedNote,
+  formatSelectionSummary,
+  formatSeparationSummary,
 } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
 import { MidiExportButton } from "../features/midi-export/MidiExportButton";
 import { selectAndExportMidi } from "../features/midi-export/exportMidi";
-import { PianoRoll } from "../features/piano-roll/PianoRoll";
+import { PianoRoll, type InteractionMode } from "../features/piano-roll/PianoRoll";
 import {
   getBackendStatus,
+  reassignVoices,
   type AppCommandError,
   type ExportMidiResult,
 } from "../lib/tauri/commands";
@@ -21,6 +24,20 @@ import {
   voiceIdForNumber,
   type VoiceOverrides,
 } from "../domain/midi/voiceAssignments";
+import {
+  buildVoiceList,
+  mergeVoiceOrder,
+  mergeVoiceOverrides,
+  nextVoiceId,
+} from "../domain/midi/voiceManagement";
+import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
+import {
+  createEditorHistory,
+  pushHistory,
+  redoHistory,
+  undoHistory,
+  type EditorHistoryState,
+} from "./editorHistory";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -40,16 +57,38 @@ export default function App() {
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isReassigning, setIsReassigning] = useState(false);
   const [error, setError] = useState<AppCommandError | null>(null);
   const [exportError, setExportError] = useState<AppCommandError | null>(null);
+  const [reassignError, setReassignError] = useState<AppCommandError | null>(null);
   const [exportResult, setExportResult] = useState<ExportMidiResult | null>(null);
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [voiceOverrides, setVoiceOverrides] = useState<VoiceOverrides>({});
-  const displayedProject = useMemo(
-    () => (project ? applyVoiceOverrides(project, voiceOverrides) : null),
-    [project, voiceOverrides],
+  const [voiceOrder, setVoiceOrder] = useState<string[]>([]);
+  const [voiceLabels, setVoiceLabels] = useState<Record<string, string>>({});
+  const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
+  const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
+  const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
+  const displayedProject = useMemo(() => {
+    if (!project) {
+      return null;
+    }
+    const withOverrides = applyVoiceOverrides(project, voiceOverrides);
+    return {
+      ...withOverrides,
+      voices: buildVoiceList(voiceOrder, voiceLabels, withOverrides.notes),
+    };
+  }, [project, voiceOverrides, voiceOrder, voiceLabels]);
+  const selectedNotes = useMemo(
+    () => displayedProject?.notes.filter((note) => selectedNoteIds.has(note.id)) ?? [],
+    [displayedProject, selectedNoteIds],
   );
-  const selectedNote = displayedProject?.notes.find((note) => note.id === selectedNoteId) ?? null;
+  const selectedNote = selectedNotes.length === 1 ? selectedNotes[0] : null;
+  const flaggedNotes = useMemo(
+    () => buildFlaggedNoteQueue(displayedProject?.notes ?? []),
+    [displayedProject],
+  );
 
   useEffect(() => {
     void getBackendStatus()
@@ -71,12 +110,36 @@ export default function App() {
         return;
       }
 
-      if (event.key === "Escape") {
-        setSelectedNoteId(null);
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
         return;
       }
 
-      if (!selectedNoteId || !displayedProject || !/^[1-9]$/.test(event.key)) {
+      if (event.key === "Escape") {
+        setSelectedNoteIds(new Set());
+        return;
+      }
+
+      if (event.key === "Tab" && flaggedNotes.length > 0) {
+        event.preventDefault();
+        const currentStartTick = selectedNote ? selectedNote.startTick : null;
+        const nextId = findNextFlaggedNoteId(
+          flaggedNotes,
+          currentStartTick,
+          event.shiftKey ? -1 : 1,
+        );
+        if (nextId) {
+          setSelectedNoteIds(new Set([nextId]));
+        }
+        return;
+      }
+
+      if (!displayedProject || !/^[1-9]$/.test(event.key)) {
         return;
       }
 
@@ -86,16 +149,40 @@ export default function App() {
       }
 
       event.preventDefault();
-      setVoiceOverrides((currentOverrides) => ({
-        ...currentOverrides,
-        [selectedNoteId]: targetVoiceId,
-      }));
+
+      if (interactionMode === "paint") {
+        setActiveVoiceId(targetVoiceId);
+        return;
+      }
+
+      if (selectedNoteIds.size === 0) {
+        return;
+      }
+
+      pushHistorySnapshot();
+      setVoiceOverrides((currentOverrides) => {
+        const nextOverrides = { ...currentOverrides };
+        for (const noteId of selectedNoteIds) {
+          nextOverrides[noteId] = targetVoiceId;
+        }
+        return nextOverrides;
+      });
       setExportResult(null);
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [displayedProject, selectedNoteId]);
+  }, [
+    displayedProject,
+    selectedNoteIds,
+    selectedNote,
+    flaggedNotes,
+    interactionMode,
+    history,
+    voiceOverrides,
+    voiceOrder,
+    voiceLabels,
+  ]);
 
   async function handleImport() {
     setIsImporting(true);
@@ -105,8 +192,14 @@ export default function App() {
       const importedProject = await selectAndImportMidi();
       if (importedProject) {
         setProject(importedProject);
-        setSelectedNoteId(null);
+        setSelectedNoteIds(new Set());
         setVoiceOverrides({});
+        setVoiceOrder(importedProject.voices.map((voice) => voice.id));
+        setVoiceLabels({});
+        setActiveVoiceId(null);
+        setSoloVoiceId(null);
+        setInteractionMode("select");
+        setHistory(createEditorHistory());
         setExportResult(null);
         setExportError(null);
       }
@@ -156,6 +249,162 @@ export default function App() {
     }
   }
 
+  async function handleReassign() {
+    if (!project) {
+      return;
+    }
+
+    setIsReassigning(true);
+    setReassignError(null);
+
+    try {
+      const reassignedProject = await reassignVoices(project, voiceOverrides);
+      setProject(reassignedProject);
+      setVoiceOrder((currentOrder) =>
+        mergeVoiceOrder(
+          currentOrder,
+          reassignedProject.notes.map((note) => note.voiceId),
+        ),
+      );
+      setExportResult(null);
+    } catch (commandError) {
+      setReassignError(
+        typeof commandError === "object" &&
+          commandError !== null &&
+          "code" in commandError &&
+          "message" in commandError &&
+          typeof commandError.code === "string" &&
+          typeof commandError.message === "string"
+          ? { code: commandError.code, message: commandError.message }
+          : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) },
+      );
+    } finally {
+      setIsReassigning(false);
+    }
+  }
+
+  function pushHistorySnapshot() {
+    setHistory((currentHistory) =>
+      pushHistory(currentHistory, { voiceOverrides, voiceOrder, voiceLabels }),
+    );
+  }
+
+  function handleUndo() {
+    const result = undoHistory(history, { voiceOverrides, voiceOrder, voiceLabels });
+    if (!result) {
+      return;
+    }
+    setHistory(result.history);
+    setVoiceOverrides(result.snapshot.voiceOverrides);
+    setVoiceOrder(result.snapshot.voiceOrder);
+    setVoiceLabels(result.snapshot.voiceLabels);
+    setExportResult(null);
+  }
+
+  function handleRedo() {
+    const result = redoHistory(history, { voiceOverrides, voiceOrder, voiceLabels });
+    if (!result) {
+      return;
+    }
+    setHistory(result.history);
+    setVoiceOverrides(result.snapshot.voiceOverrides);
+    setVoiceOrder(result.snapshot.voiceOrder);
+    setVoiceLabels(result.snapshot.voiceLabels);
+    setExportResult(null);
+  }
+
+  function handleCreateVoice() {
+    pushHistorySnapshot();
+    const newVoiceId = nextVoiceId(voiceOrder);
+    setVoiceOrder((currentOrder) => [...currentOrder, newVoiceId]);
+
+    if (selectedNoteIds.size > 0) {
+      setVoiceOverrides((currentOverrides) => {
+        const nextOverrides = { ...currentOverrides };
+        for (const noteId of selectedNoteIds) {
+          nextOverrides[noteId] = newVoiceId;
+        }
+        return nextOverrides;
+      });
+    }
+
+    setExportResult(null);
+  }
+
+  function handleRenameVoice(voiceId: string, label: string) {
+    setVoiceLabels((currentLabels) => ({ ...currentLabels, [voiceId]: label }));
+  }
+
+  function handleMergeVoice(fromVoiceId: string, toVoiceId: string) {
+    if (!displayedProject || fromVoiceId === toVoiceId || toVoiceId === "") {
+      return;
+    }
+
+    pushHistorySnapshot();
+    const patch = mergeVoiceOverrides(displayedProject.notes, fromVoiceId, toVoiceId);
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...patch }));
+    setVoiceOrder((currentOrder) => currentOrder.filter((voiceId) => voiceId !== fromVoiceId));
+    setActiveVoiceId((current) => (current === fromVoiceId ? null : current));
+    setSoloVoiceId((current) => (current === fromVoiceId ? null : current));
+    setExportResult(null);
+  }
+
+  function handleReorderVoice(voiceId: string, direction: -1 | 1) {
+    pushHistorySnapshot();
+    setVoiceOrder((currentOrder) => {
+      const index = currentOrder.indexOf(voiceId);
+      const targetIndex = index + direction;
+      if (index < 0 || targetIndex < 0 || targetIndex >= currentOrder.length) {
+        return currentOrder;
+      }
+      const nextOrder = [...currentOrder];
+      [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+      return nextOrder;
+    });
+  }
+
+  function handleToggleSolo(voiceId: string) {
+    setSoloVoiceId((current) => (current === voiceId ? null : voiceId));
+  }
+
+  function handlePaintNotes(noteIds: string[]) {
+    if (!activeVoiceId) {
+      return;
+    }
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => {
+      const nextOverrides = { ...currentOverrides };
+      for (const noteId of noteIds) {
+        nextOverrides[noteId] = activeVoiceId;
+      }
+      return nextOverrides;
+    });
+    setExportResult(null);
+  }
+
+  function handleToggleInteractionMode() {
+    setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
+  }
+
+  function handleReviewStep(direction: 1 | -1) {
+    const currentStartTick = selectedNote ? selectedNote.startTick : null;
+    const nextId = findNextFlaggedNoteId(flaggedNotes, currentStartTick, direction);
+    if (nextId) {
+      setSelectedNoteIds(new Set([nextId]));
+    }
+  }
+
+  function handleSelectVoiceSwatch(voiceId: string) {
+    setActiveVoiceId((current) => (current === voiceId ? null : voiceId));
+    if (!displayedProject) {
+      return;
+    }
+    const voiceNoteIds = displayedProject.notes
+      .filter((note) => note.voiceId === voiceId)
+      .map((note) => note.id);
+    setSelectedNoteIds(new Set(voiceNoteIds));
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -164,12 +413,28 @@ export default function App() {
           <p>{status}</p>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleUndo}
+            disabled={history.past.length === 0 || isReassigning}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleRedo}
+            disabled={history.future.length === 0 || isReassigning}
+          >
+            Redo
+          </button>
           <MidiImportButton
-            disabled={isImporting || isExporting}
+            disabled={isImporting || isExporting || isReassigning}
             onImport={() => void handleImport()}
           />
           <MidiExportButton
-            disabled={!displayedProject || isImporting || isExporting}
+            disabled={!displayedProject || isImporting || isExporting || isReassigning}
             onExport={() => void handleExport()}
           />
         </div>
@@ -201,10 +466,50 @@ export default function App() {
         </section>
       ) : null}
 
+      {reassignError ? (
+        <section className="inline-error" role="alert">
+          <strong>{reassignError.code}</strong>
+          <span>{reassignError.message}</span>
+        </section>
+      ) : null}
+
       {exportResult ? (
         <section className="export-success" aria-live="polite">
           Exported {exportResult.noteCount} notes across {exportResult.trackCount} tracks to{" "}
           {exportResult.path}.
+        </section>
+      ) : null}
+
+      {displayedProject ? (
+        <section className="separation-summary" aria-live="polite">
+          <span>
+            {isReassigning
+              ? "Re-running separation..."
+              : formatSeparationSummary(
+                  displayedProject.separationSummary,
+                  displayedProject.notes.length,
+                )}
+          </span>
+          <div className="separation-summary-actions">
+            {flaggedNotes.length > 0 ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleReviewStep(1)}
+                disabled={isReassigning}
+              >
+                Review flagged notes ({flaggedNotes.length})
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleReassign()}
+              disabled={isImporting || isExporting || isReassigning}
+            >
+              Re-run separation
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -253,29 +558,82 @@ export default function App() {
         </section>
       ) : null}
 
-      {displayedProject && displayedProject.voices.length > 0 ? (
-        <section className="voice-legend" aria-label="Suggested voice assignments">
-          <h2>Suggested voices</h2>
+      {displayedProject ? (
+        <section className="voice-legend" aria-label="Voice assignments">
+          <h2>Voices</h2>
           <ul>
             {displayedProject.voices.map((voice, index) => (
-              <li key={voice.id}>
-                <span
+              <li key={voice.id} className={activeVoiceId === voice.id ? "active" : undefined}>
+                <button
+                  type="button"
                   className="voice-swatch"
                   style={{ backgroundColor: `var(--voice-${(index % 6) + 1})` }}
+                  aria-label={`Select notes in ${voice.label}`}
+                  onClick={() => handleSelectVoiceSwatch(voice.id)}
                 />
-                <span>{voice.label}</span>
+                <input
+                  className="voice-name-input"
+                  value={voice.label}
+                  onFocus={pushHistorySnapshot}
+                  onChange={(event) => handleRenameVoice(voice.id, event.target.value)}
+                  aria-label={`Rename ${voice.label}`}
+                />
                 <span>
                   {voice.noteCount} notes, pitches {voice.lowestPitch}-{voice.highestPitch}
                 </span>
+                <button
+                  type="button"
+                  className={soloVoiceId === voice.id ? "voice-solo active" : "voice-solo"}
+                  onClick={() => handleToggleSolo(voice.id)}
+                  aria-pressed={soloVoiceId === voice.id ? "true" : "false"}
+                >
+                  Solo
+                </button>
+                <button
+                  type="button"
+                  className="voice-reorder"
+                  onClick={() => handleReorderVoice(voice.id, -1)}
+                  disabled={index === 0}
+                  aria-label={`Move ${voice.label} up`}
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  className="voice-reorder"
+                  onClick={() => handleReorderVoice(voice.id, 1)}
+                  disabled={index === displayedProject.voices.length - 1}
+                  aria-label={`Move ${voice.label} down`}
+                >
+                  ▼
+                </button>
+                <select
+                  className="voice-merge-select"
+                  value=""
+                  onChange={(event) => handleMergeVoice(voice.id, event.target.value)}
+                  aria-label={`Merge ${voice.label} into another voice`}
+                >
+                  <option value="">Merge into...</option>
+                  {displayedProject.voices
+                    .filter((otherVoice) => otherVoice.id !== voice.id)
+                    .map((otherVoice) => (
+                      <option key={otherVoice.id} value={otherVoice.id}>
+                        {otherVoice.label}
+                      </option>
+                    ))}
+                </select>
               </li>
             ))}
           </ul>
+          <button type="button" className="secondary-button" onClick={handleCreateVoice}>
+            + New voice
+          </button>
         </section>
       ) : null}
 
       {displayedProject ? (
         <section className="selection-details" aria-label="Selected note details">
-          <h2>Selected note</h2>
+          <h2>Selected note{selectedNotes.length === 1 ? "" : "s"}</h2>
           {selectedNote ? (
             <dl>
               <div>
@@ -297,21 +655,53 @@ export default function App() {
                 </dd>
               </div>
             </dl>
+          ) : selectedNotes.length > 1 ? (
+            <p>{formatSelectionSummary(selectedNotes)}</p>
           ) : (
             <p>{formatSelectedNote(null)}</p>
           )}
           <p className="keyboard-hint">
-            Select a note, then press <kbd>1</kbd>-<kbd>9</kbd> to assign it to an existing voice.
-            Press <kbd>Esc</kbd> to clear selection.
+            Click a note, shift-click to add or remove one, or drag a marquee over many. Press{" "}
+            <kbd>1</kbd>-<kbd>9</kbd> to assign the selection to an existing voice. Press{" "}
+            <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to step through flagged notes. Press{" "}
+            <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to undo or
+            redo a correction. Press <kbd>Esc</kbd> to clear selection.
           </p>
+        </section>
+      ) : null}
+
+      {displayedProject ? (
+        <section className="piano-roll-toolbar">
+          <button
+            type="button"
+            className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}
+            onClick={handleToggleInteractionMode}
+            aria-pressed={interactionMode === "paint" ? "true" : "false"}
+          >
+            {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
+          </button>
+          {interactionMode === "paint" ? (
+            <span className="piano-roll-toolbar-hint">
+              {activeVoiceId
+                ? `Click or drag to paint notes into ${
+                    displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
+                    activeVoiceId
+                  }.`
+                : "Click a voice swatch above to choose what to paint."}
+            </span>
+          ) : null}
         </section>
       ) : null}
 
       <section className="editor-grid">
         <PianoRoll
           project={displayedProject}
-          selectedNoteId={selectedNoteId}
-          onSelectedNoteChange={setSelectedNoteId}
+          selectedNoteIds={selectedNoteIds}
+          onSelectionChange={setSelectedNoteIds}
+          soloVoiceId={soloVoiceId}
+          interactionMode={interactionMode}
+          activeVoiceId={activeVoiceId}
+          onPaintNotes={handlePaintNotes}
         />
       </section>
 

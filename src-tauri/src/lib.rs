@@ -10,7 +10,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::backend_status,
             commands::midi::import_midi,
-            commands::midi::export_midi
+            commands::midi::export_midi,
+            commands::midi::reassign_voices
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

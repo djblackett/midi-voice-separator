@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { exportMidi, getBackendStatus, importMidi } from "./commands";
+import { exportMidi, getBackendStatus, importMidi, reassignVoices } from "./commands";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -50,6 +50,18 @@ describe("tauri command adapter", () => {
       path: "C:\\music\\song-voices.mid",
       project,
     });
+  });
+
+  it("maps reassign-voices success", async () => {
+    const project = { fileName: "song.mid", notes: [] };
+    const locked = { "note-1": "voice-2" };
+    invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
+
+    await expect(reassignVoices(project as never, locked)).resolves.toEqual({
+      fileName: "song.mid",
+      notes: [],
+    });
+    expect(invokeMock).toHaveBeenCalledWith("reassign_voices", { project, locked });
   });
 
   it("preserves structured command errors", async () => {

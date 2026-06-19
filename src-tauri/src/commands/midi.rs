@@ -1,10 +1,12 @@
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 use crate::{
     error::AppError,
     midi::{
-        exporter::export_midi_bytes, parser::parse_midi_project, ExportMidiResultDto,
-        MidiProjectDto,
+        exporter::export_midi_bytes,
+        parser::parse_midi_project,
+        voice_assignment::{assign_heuristic_voices_with_locks, summarize_separation_quality},
+        ExportMidiResultDto, MidiProjectDto,
     },
 };
 
@@ -68,4 +70,14 @@ pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiRe
         track_count: project.voices.len() + 1,
         note_count: project.notes.len(),
     })
+}
+
+#[tauri::command]
+pub fn reassign_voices(
+    mut project: MidiProjectDto,
+    locked: HashMap<String, String>,
+) -> Result<MidiProjectDto, AppError> {
+    project.voices = assign_heuristic_voices_with_locks(&mut project.notes, &locked);
+    project.separation_summary = summarize_separation_quality(&project.notes);
+    Ok(project)
 }

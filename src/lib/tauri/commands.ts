@@ -5,6 +5,7 @@ const COMMANDS = {
   backendStatus: "backend_status",
   importMidi: "import_midi",
   exportMidi: "export_midi",
+  reassignVoices: "reassign_voices",
 } as const;
 
 export interface BackendStatus {
@@ -60,6 +61,17 @@ export async function importMidi(path: string): Promise<MidiProject> {
 export async function exportMidi(path: string, project: MidiProject): Promise<ExportMidiResult> {
   try {
     return await invoke<ExportMidiResult>(COMMANDS.exportMidi, { path, project });
+  } catch (error) {
+    throw toCommandError(error);
+  }
+}
+
+export async function reassignVoices(
+  project: MidiProject,
+  locked: Record<string, string>,
+): Promise<MidiProject> {
+  try {
+    return await invoke<MidiProject>(COMMANDS.reassignVoices, { project, locked });
   } catch (error) {
     throw toCommandError(error);
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MidiProject } from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
-import { hitTestPianoRollNote } from "./hitTest";
+import { hitTestPianoRollNote, hitTestPianoRollNotesInRect } from "./hitTest";
 
 const viewport: PianoRollViewport = {
   width: 1056,
@@ -30,6 +30,8 @@ const project: MidiProject = {
       startTick: 0,
       endTick: 800,
       durationTicks: 800,
+      assignmentConfidence: 1,
+      assignmentReason: "IMPORTED",
     },
     {
       id: "short",
@@ -41,11 +43,14 @@ const project: MidiProject = {
       startTick: 100,
       endTick: 200,
       durationTicks: 100,
+      assignmentConfidence: 1,
+      assignmentReason: "IMPORTED",
     },
   ],
   tempoChanges: [],
   timeSignatures: [],
   warnings: [],
+  separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 },
 };
 
 describe("hitTestPianoRollNote", () => {
@@ -63,5 +68,49 @@ describe("hitTestPianoRollNote", () => {
 
   it("returns null without a project", () => {
     expect(hitTestPianoRollNote({ x: 180, y: 2 }, null, viewport)).toBeNull();
+  });
+});
+
+describe("hitTestPianoRollNotesInRect", () => {
+  it("finds every note intersecting the rectangle", () => {
+    const notes = hitTestPianoRollNotesInRect(
+      { x0: 60, y0: 0, x1: 1056, y1: 260 },
+      project,
+      viewport,
+    );
+
+    expect(notes.map((note) => note.id).sort()).toEqual(["long", "short"]);
+  });
+
+  it("excludes notes outside the rectangle", () => {
+    const notes = hitTestPianoRollNotesInRect(
+      { x0: 900, y0: 0, x1: 1056, y1: 10 },
+      project,
+      viewport,
+    );
+
+    expect(notes).toEqual([]);
+  });
+
+  it("normalizes inverted drag coordinates", () => {
+    const notes = hitTestPianoRollNotesInRect(
+      { x0: 1056, y0: 260, x1: 60, y1: 0 },
+      project,
+      viewport,
+    );
+
+    expect(notes.map((note) => note.id).sort()).toEqual(["long", "short"]);
+  });
+
+  it("returns an empty array without a project", () => {
+    expect(
+      hitTestPianoRollNotesInRect({ x0: 60, y0: 0, x1: 1056, y1: 260 }, null, viewport),
+    ).toEqual([]);
+  });
+
+  it("returns an empty array entirely within the piano-key label area", () => {
+    expect(
+      hitTestPianoRollNotesInRect({ x0: 0, y0: 0, x1: 40, y1: 260 }, project, viewport),
+    ).toEqual([]);
   });
 });

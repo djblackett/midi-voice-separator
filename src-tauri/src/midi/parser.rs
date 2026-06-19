@@ -8,9 +8,12 @@ use midly::{Format, MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use crate::error::AppError;
 
 use super::model::{
-    MidiNoteDto, MidiProjectDto, MidiWarningCode, MidiWarningDto, TempoChangeDto, TimeSignatureDto,
+    AssignmentReason, MidiNoteDto, MidiProjectDto, MidiWarningCode, MidiWarningDto, TempoChangeDto,
+    TimeSignatureDto,
 };
-use super::voice_assignment::{assign_heuristic_voices, summarize_assigned_voices};
+use super::voice_assignment::{
+    assign_heuristic_voices, summarize_assigned_voices, summarize_separation_quality,
+};
 use super::EXPORTED_VOICE_TRACK_NAME;
 
 #[derive(Debug, Clone)]
@@ -175,6 +178,7 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
     } else {
         assign_heuristic_voices(&mut notes)
     };
+    let separation_summary = summarize_separation_quality(&notes);
 
     Ok(MidiProjectDto {
         file_name: path
@@ -191,6 +195,7 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
         tempo_changes,
         time_signatures,
         warnings,
+        separation_summary,
     })
 }
 
@@ -274,6 +279,11 @@ fn push_note(
     }
 
     let duration_ticks = end_tick.saturating_sub(active_note.start_tick);
+    let (assignment_confidence, assignment_reason) = if context.voice_id.is_some() {
+        (1.0, AssignmentReason::Imported)
+    } else {
+        (0.0, AssignmentReason::ClosestPitch)
+    };
     notes.push(MidiNoteDto {
         id: format!(
             "t{track_index}-c{channel}-p{pitch}-s{}-e{end_tick}-n{}",
@@ -291,6 +301,8 @@ fn push_note(
         start_tick: active_note.start_tick,
         end_tick,
         duration_ticks,
+        assignment_confidence,
+        assignment_reason,
     });
 }
 

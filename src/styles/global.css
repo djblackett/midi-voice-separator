@@ -107,6 +107,26 @@ button {
   font-size: 13px;
 }
 
+.separation-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 24px 0;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+  color: #cbd5e1;
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+.separation-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .inline-error,
 .warnings,
 .voice-legend,
@@ -173,12 +193,71 @@ button {
   gap: 7px;
   color: #cbd5e1;
   font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+
+.voice-legend li.active {
+  background: #1e293b;
 }
 
 .voice-swatch {
   width: 12px;
   height: 12px;
   border-radius: 3px;
+  border: 1px solid rgba(248, 250, 252, 0.4);
+  cursor: pointer;
+  padding: 0;
+}
+
+.voice-name-input {
+  width: 72px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+
+.voice-name-input:hover,
+.voice-name-input:focus {
+  border-color: #475569;
+  background: #0f172a;
+}
+
+.voice-solo,
+.voice-reorder {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 6px;
+}
+
+.voice-solo.active {
+  border-color: #38bdf8;
+  background: #0c4a6e;
+  color: #f0f9ff;
+}
+
+.voice-reorder:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.voice-merge-select {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 4px;
 }
 
 .selection-details {
@@ -285,6 +364,24 @@ kbd {
 .warning-list p {
   margin: 4px 0 0;
   color: #fde68a;
+  font-size: 13px;
+}
+
+.piano-roll-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 24px 0;
+}
+
+.piano-roll-toolbar .secondary-button.active {
+  border-color: #38bdf8;
+  background: #0c4a6e;
+  color: #f0f9ff;
+}
+
+.piano-roll-toolbar-hint {
+  color: #94a3b8;
   font-size: 13px;
 }
 
