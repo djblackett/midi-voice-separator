@@ -88,14 +88,15 @@ Primary stack:
 
 ## Active Plan
 
-The 7-phase implementation plan for the heuristic voice-separation engine
-and its correction UX is complete (all 7 phases done — see Progress Log
-below). It lived at
+The original 7-phase implementation plan for the heuristic voice-separation
+engine and its correction UX is complete (all 7 phases done — see Progress
+Log below). A follow-on roadmap plan now lives at the same path,
 `C:\Users\davej\.claude\plans\sequential-watching-sprout.md` (outside this
-repo). Phases: (1) multi-select + bulk reassignment, (2) voice management
-(create/merge/rename/solo/reorder), (3) heuristic confidence scoring +
-reason codes, (4) flagged-note review mode, (5) paint mode, (6) locking +
-constrained re-run, (7) undo/redo.
+repo): Phase 1 closes the testing gap (in progress — see Progress Log),
+Phase 2 is a README catch-up, Phase 3 is the two items the original plan
+deferred (`max_voice_count` soft cap, undoable re-run), Phase 4 is piano
+roll pan/zoom, Phase 5 is playback (scoped as its own future plan), Phase 6
+is performance validation on real dense files.
 
 ## Progress Log
 
@@ -351,6 +352,98 @@ constrained re-run, (7) undo/redo.
   - All 7 phases of the original plan are now implemented. Future work
     (pan/zoom viewport, the deferred `max_voice_count` soft cap, undoable
     re-run) would be a new plan, not a continuation of this one.
+
+- **Roadmap Phase 1 (close the testing gap) — done, including the manual
+  verification pass deferred since the original Phase 1.**
+  - Extracted `resolveNoteRenderStyle` (pure) from `drawPianoRoll.ts`'s
+    draw loop — fill/stroke color, selected/dimmed/low-confidence flags,
+    given a note plus `{ selectedNoteIds, soloVoiceId, paintPreview }`.
+    `drawPianoRoll` now calls it instead of inlining the logic. New tests
+    in `drawPianoRoll.test.ts` cover every flag independently and in
+    combination (e.g. paint-preview overriding which voice solo-dimming
+    checks against).
+  - Added `commands/midi.rs` tests (previously zero): `import_midi`/
+    `export_midi` empty-path and bad-extension rejection, a real
+    `import_midi` round-trip against `fixtures/two-note-smoke.mid`, an
+    `export_midi` round-trip that writes to `std::env::temp_dir()` and
+    cleans up after itself, and a `reassign_voices` test exercising the
+    full command function (not just `assign_heuristic_voices_with_locks`
+    underneath it).
+  - Added `importMidi.test.ts`/`exportMidi.test.ts` for
+    `selectAndImportMidi`/`selectAndExportMidi`, mocking
+    `@tauri-apps/plugin-dialog`'s `open`/`save` the same way
+    `commands.test.ts` already mocks `invoke`. Covers dialog-cancel
+    (returns `null`, never calls the underlying command) and
+    `exportMidi.ts`'s previously-untested `defaultExportName` `-voices.mid`
+    suffixing for both `.mid` and `.midi` source names.
+  - Deliberately did not add `jsdom`/React Testing Library for `App.tsx`/
+    `PianoRoll.tsx` — see the roadmap plan file for the reasoning. Closed
+    that gap instead by actually running the app (next bullet).
+  - **Executed the manual verification pass.** No `tauri-driver`/WebDriver
+    setup exists for this project, so real native-window automation
+    wasn't available; instead, faked the Tauri IPC boundary
+    (`window.__TAURI_INTERNALS__.invoke`, matching `@tauri-apps/api/core`'s
+    `invoke(cmd, args)` → `window.__TAURI_INTERNALS__.invoke(cmd, args)`
+    contract, plus `plugin:dialog|open`/`plugin:dialog|save` for the
+    dialog plugin) and drove the **real** Vite dev server bundle
+    (`pnpm tauri dev`'s `localhost:1420`) with Playwright/Chromium. This
+    exercises the actual production frontend code, not a reimplementation
+    — only the native OS boundary (file dialog, Rust IPC) is substituted.
+    Confirmed working end-to-end with zero browser console errors: marquee
+    multi-select ("5 notes selected | 2 voices..."), bulk `1`-`9`
+    reassignment, voice create/rename/solo (with correct dimming),
+    confidence banner text and dashed low-confidence outlines (visually
+    confirmed in screenshots), `Tab` review-stepping landing on a
+    different flagged note each time, paint-mode drag actually reassigning
+    notes crossed by the stroke, "Re-run separation" updating the
+    confidence banner, voice rename + `Ctrl+Z`/`Ctrl+Shift+Z` round-
+    tripping the label, and export producing the success banner.
+  - **Two real findings from actually running it** (neither is a
+    regression — both are existing, working-as-coded behavior worth
+    knowing about):
+    1. "+ New voice" assigns the _current selection_ to the new voice if
+       one is active (`handleCreateVoice` in `App.tsx`) — and selection is
+       **not** cleared by a prior `1`-`9` bulk reassignment. So
+       marquee-select-all → press `1` → click "+ New voice" moves
+       everything into the brand-new voice, not voice 1, because the same
+       5-note selection was still active. This is the documented Phase 2
+       behavior working correctly, but it's easy to trip over in a real
+       editing session — worth keeping in mind, not a bug to fix.
+    2. `.voice-name-input` (`global.css`) is a fixed `width: 72px` with no
+       `text-overflow: ellipsis` — a label longer than that (e.g. "Renamed
+       Voice") visually clips mid-character with no ellipsis cue, even
+       though the underlying input value is correct (confirmed via
+       `inputValue()`, not just the rendered text). Minor, cosmetic, real
+       — candidate for a follow-up CSS tweak (`text-overflow: ellipsis`
+       at minimum, or a wider/auto-growing input).
+  - Verified: `pnpm test` (86/86 — up from 71, all new tests above),
+    `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm rust:test`
+    (37/37 — up from 30), `pnpm rust:clippy -D warnings`,
+    `cargo fmt --check`, plus the from-scratch manual pass described
+    above (scratch driver script and screenshots were not committed —
+    they were temporary verification scaffolding, not part of the app).
+  - Next: roadmap Phase 2 (README catch-up), or pick from Phase 3/4/5/6.
+
+- **Roadmap Phase 2 (README catch-up) — done.** `README.md` no longer
+  describes the pre-Phase-1 "first milestone" (single-note selection, no
+  voice management, no confidence scoring). Rewrote "Current capabilities"
+  to list everything through the 7-phase plan plus roadmap Phase 1's
+  testing work, "Non-capabilities" to add the pan/zoom and
+  undoable-re-run gaps (in addition to the still-true playback/DAW/audio-
+  separation/ML deferral), the "Architecture" section's voice-assignment
+  paragraph to describe the cost-based heuristic and locked re-run instead
+  of the old single-pass nearest-pitch description, and "Next milestone"
+  to point at the roadmap's remaining phases (pan/zoom, playback, the two
+  deferred items) instead of the now-long-done "multi-note selection."
+  `agents.md` remains the detailed agent-facing history; `README.md` is
+  the human-facing summary and intentionally doesn't duplicate the
+  Progress Log's level of detail.
+  - Verified: `npx prettier --check README.md`; proofread against this
+    Progress Log section by section per the roadmap plan's verification
+    note.
+  - Next: roadmap Phase 3 (the two deferred items), Phase 4 (pan/zoom),
+    Phase 5 (playback — scope as its own plan), or Phase 6 (performance
+    validation).
 
 ## Architecture Invariants
 

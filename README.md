@@ -2,30 +2,43 @@
 
 ## Purpose
 
-Chiptune Voice Separator is intended to turn dense MIDI transcriptions into separate,
-editable musical voices. This first milestone is deliberately limited to importing a Standard
-MIDI File, normalizing its note data in Rust, and visualizing the result in a React canvas
-piano roll.
+Chiptune Voice Separator turns dense MIDI transcriptions into separate, editable musical
+voices. It imports a Standard MIDI File, normalizes its note data in Rust, runs a heuristic
+that guesses a per-note voice assignment with a confidence score, and gives the user a fast,
+keyboard-and-mouse-driven editor to correct that guess before exporting clean, separated
+tracks.
 
 ## Current capabilities
 
 - Native Tauri 2 desktop window.
 - MIDI-file selection through the Tauri dialog plugin.
-- Rust MIDI parsing with `midly`.
-- Owned, serializable MIDI DTOs returned to the frontend.
-- Deterministic heuristic voice assignment for imported notes.
-- Basic canvas piano-roll rendering.
-- Voice-colored note display.
-- Single-note selection with selected-note details.
-- Frontend-only selected-note reassignment with number-key shortcuts.
-- Export of current corrected voice assignments to a new Standard MIDI File.
-- Focused frontend and Rust tests.
+- Rust MIDI parsing with `midly`; owned, serializable MIDI DTOs returned to the frontend.
+- Heuristic voice assignment with a per-note confidence score and reason code (channel
+  continuity, closest pitch, forced new voice, imported, or user-locked).
+- Canvas piano-roll rendering: voice-colored notes, a dashed outline on low-confidence notes,
+  and a confidence summary banner ("N% mean assignment confidence — M notes flagged for
+  review").
+- Multi-note selection: click, shift-click to add/remove, or drag a marquee over many.
+- Bulk voice reassignment with `1`-`9` keyboard shortcuts.
+- Voice management: create, inline-rename, merge, solo (dim other voices), and reorder voices.
+- Flagged-note review mode: `Tab`/`Shift+Tab` step through low-confidence notes, or use the
+  "Review flagged notes" button.
+- Paint mode: toggle, pick an active voice, then click-drag across notes to repaint them.
+- "Re-run separation": re-runs the heuristic while treating every manual correction as a
+  locked constraint, so corrections survive a re-run.
+- Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, and
+  paint actions.
+- Export of corrected voice assignments to a new Standard MIDI File (one track per voice).
+- Frontend (Vitest) and Rust (`cargo test`) test suites.
 
 ## Non-capabilities
 
 This version does not yet perform MIDI playback, DAW routing, audio separation, or machine
-learning. The current voice assignment is a deterministic first-pass heuristic, not a
-finished musical separation algorithm.
+learning. The current voice assignment is a heuristic, not a finished musical separation
+algorithm. The piano roll has no pan/zoom yet — the full project duration is always
+compressed into the canvas width, so review-mode jumps can land on a thin sliver on a long
+file. "Re-run separation" is not undoable (it replaces the whole project, not just the
+tracked correction state that undo/redo covers).
 
 ## Windows prerequisites
 
@@ -71,16 +84,28 @@ zooming, scrolling, selection, and editing can be added without rewriting the re
 parser converts those borrowed structures into owned application DTOs before returning them
 through Tauri.
 
-The current voice assignment is a simple monophonic-lane heuristic: notes are processed in
-deterministic order, a compatible non-overlapping voice is reused when possible, and the
-closest prior pitch wins ties. This makes the first visual grouping repeatable without
-claiming final musical correctness.
+Voice assignment is a deterministic cost-based heuristic: notes are processed in time order,
+and each note is scored against every non-overlapping ("compatible") existing voice on pitch
+distance, a silence-gap penalty, and a channel-continuity bonus. The lowest-cost voice wins;
+the gap between the winner and the runner-up becomes that note's confidence score. A note
+locked by a manual correction skips scoring entirely and is pinned directly to its voice,
+which still updates that voice's pitch/channel/timing state so unlocked neighbors keep being
+pulled toward a correction rather than ignoring it. This makes the heuristic explainable and
+its corrections durable across a re-run, without claiming final musical correctness.
 
-Manual corrections are currently represented as frontend-only note-to-voice overrides. The
-imported Rust DTO remains unchanged, and the displayed project is derived from the import plus
-those overrides. Export sends that derived project back to Rust, which writes a format-1
-Standard MIDI File with a conductor track and one note track per voice.
+Manual corrections are represented as a frontend-only note-to-voice override map layered on
+top of the immutable imported project; voice identity, order, and labels are separate
+frontend state, not solely derived from whatever the heuristic produced. "Re-run separation"
+sends the original imported notes plus the current override map (as a lock set) back to
+Rust, which re-runs the heuristic respecting those locks and returns an updated project.
+Export sends the current corrected project to Rust, which writes a format-1 Standard MIDI
+File with a conductor track and one note track per voice.
 
 ## Next milestone
 
-The next milestone should add multi-note selection and faster reassignment gestures.
+The correction-UX plan (multi-select, voice management, confidence scoring, review mode,
+paint mode, locked re-run, undo/redo) is complete. Candidates for the next milestone: piano
+roll pan/zoom (the full timeline is always compressed into the canvas width today), MIDI
+playback so corrections can be checked by ear instead of only by eye, or the two items the
+correction-UX plan deferred (an optional max-voice-count cap on re-run, and making "Re-run
+separation" itself undoable).
