@@ -10,6 +10,27 @@ const GAP_WEIGHT: f32 = 4.0;
 const CHANNEL_CONTINUITY_BONUS: f32 = 3.0;
 const CONFIDENCE_SCALE: f32 = 6.0;
 const LOW_CONFIDENCE_THRESHOLD: f32 = 0.5;
+/// Weight applied to how far a note falls outside a voice's established
+/// pitch range (its lowest/highest pitch so far), on top of the plain
+/// distance from the voice's *last* note. Without this, a voice is scored
+/// only against its most recent note, so a long melodic line can drift
+/// across the entire pitch range one cheap small step at a time — each
+/// individual step looks like a good match, but the voice ends up spanning
+/// several octaves. This term makes reusing a voice progressively more
+/// expensive the further a note falls beyond the range it's already
+/// established, so an already-correct, register-matching voice is
+/// preferred over one that merely happens to have a nearby last note.
+/// Deliberately large relative to `CHANNEL_CONTINUITY_BONUS`/`GAP_WEIGHT`:
+/// a small weight barely affects real (highly polyphonic, single-channel)
+/// chiptune files, since the gradual drift this guards against is made of
+/// many individually-cheap steps.
+const REGISTER_DRIFT_WEIGHT: f32 = 1.5;
+/// A voice's range is a single point until it has at least this many
+/// notes, which would make the register-distance term above identical to
+/// the plain last-pitch distance and double-count it. Below this count,
+/// there isn't really an "established range" yet, so the term is skipped
+/// entirely rather than scored against a degenerate one-note range.
+const REGISTER_ESTABLISHED_NOTE_COUNT: usize = 2;
 
 #[derive(Debug, Clone)]
 struct VoiceState {
@@ -271,6 +292,15 @@ fn score_candidates(
         .filter(|(_, voice)| !require_compatible || voice.last_end_tick <= note.start_tick)
         .map(|(index, voice)| {
             let pitch_distance = f32::from(voice.last_pitch.abs_diff(note.pitch));
+            let register_distance = if voice.note_count >= REGISTER_ESTABLISHED_NOTE_COUNT {
+                f32::from(
+                    note.pitch
+                        .saturating_sub(voice.highest_pitch)
+                        .max(voice.lowest_pitch.saturating_sub(note.pitch)),
+                )
+            } else {
+                0.0
+            };
             let gap = note.start_tick.saturating_sub(voice.last_end_tick);
             let normalized_gap = (gap as f32 / GAP_NORMALIZATION_TICKS).min(1.0);
             let channel_match = voice.last_channel == note.channel;
@@ -281,7 +311,10 @@ fn score_candidates(
             };
             Candidate {
                 index,
-                cost: pitch_distance + normalized_gap * GAP_WEIGHT - channel_bonus,
+                cost: pitch_distance
+                    + register_distance * REGISTER_DRIFT_WEIGHT
+                    + normalized_gap * GAP_WEIGHT
+                    - channel_bonus,
                 channel_match,
             }
         })
@@ -554,6 +587,36 @@ mod tests {
 
         assert_eq!(notes[0].voice_id, "voice-1");
         assert_eq!(notes[0].assignment_reason, AssignmentReason::NewVoiceNoFit);
+    }
+
+    #[test]
+    fn register_drift_prefers_a_voice_already_covering_the_pitch_over_a_nearer_last_note() {
+        // Build two established voices via locks: "wide" has drifted across
+        // a full register (40-90) but its *last* note happens to sit at the
+        // low edge (40); "narrow" is tight (66-68) with a last note (68)
+        // that's numerically closer to the upcoming test note (88) than
+        // wide's last note (40) is. Plain last-pitch distance would prefer
+        // "narrow" (20 away) over "wide" (48 away) — but 88 already falls
+        // within "wide"'s established range while it would stretch
+        // "narrow"'s range by a lot, so the register-aware cost should
+        // flip the choice to "wide".
+        let mut notes = vec![
+            note("w1", 90, 0, 100),
+            note("w2", 40, 100, 200),
+            note("n1", 66, 0, 100),
+            note("n2", 68, 100, 200),
+            note("t", 88, 200, 300),
+        ];
+        let locked = HashMap::from([
+            ("w1".to_string(), "voice-wide".to_string()),
+            ("w2".to_string(), "voice-wide".to_string()),
+            ("n1".to_string(), "voice-narrow".to_string()),
+            ("n2".to_string(), "voice-narrow".to_string()),
+        ]);
+
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
+
+        assert_eq!(notes[4].voice_id, "voice-wide");
     }
 
     #[test]

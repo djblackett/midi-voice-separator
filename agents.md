@@ -868,6 +868,66 @@ legend directly on the canvas:
 - Verified: `pnpm test` (150/150, unchanged), `pnpm lint`,
   `pnpm format:check`, `pnpm build` all clean. No Rust changes.
 
+### Register-aware voice assignment cost (heuristic drift)
+
+User report: re-running on `midi-files/egypt - chiptune.mid`, a single
+voice held both pitch 28 and pitch 91 (a 5+ octave span) with other
+voices interleaved in the pitch range between them — clearly not the
+intended "separate musical lines" outcome. Asked the user how they'd
+like it fixed; they chose adding a register-aware cost term over a
+rolling-average alternative.
+
+- Root cause, confirmed against the real fixture before changing
+  anything: the cost model in `voice_assignment.rs` only scores a
+  candidate voice against its _last_ note's pitch, with no penalty for
+  how far that note is from the voice's overall established range.
+  A melodic line can therefore drift across the full pitch range one
+  cheap small step at a time — no single step looks wrong, but the
+  voice ends up spanning octaves. Made worse by the fact the source
+  file's channel 0 alone holds 1671 of 2328 notes spanning pitch 24-95
+  (channels aren't a reliable separation signal for this file either,
+  so the heuristic has to do real work here).
+- Fix: `score_candidates` now adds `register_distance *
+REGISTER_DRIFT_WEIGHT` to the cost, where `register_distance` is how
+  far a note falls outside a voice's `[lowest_pitch, highest_pitch]`
+  envelope (0 if already inside it) — using the `VoiceState` fields
+  already tracked for the voice-summary legend. Skipped entirely for
+  voices with fewer than `REGISTER_ESTABLISHED_NOTE_COUNT = 2` notes,
+  since a 1-note voice's "range" is just its last note's pitch and
+  would otherwise double-count plain pitch distance — this is what let
+  `REGISTER_DRIFT_WEIGHT` go as high as `1.5` (an earlier, naive version
+  without the note-count guard had to stay below `0.5` to avoid
+  flipping `channel_continuity_outweighs_pure_pitch_proximity`, which
+  was nowhere near enough to matter against real data).
+- New test `register_drift_prefers_a_voice_already_covering_the_pitch_over_a_nearer_last_note`:
+  constructs (via locks, to set up state deterministically) a voice
+  that's drifted across 40-90 but whose _last_ note sits at 40, plus a
+  tight 66-68 voice whose last note (68) is numerically closer to a new
+  pitch-88 note than 40 is. Plain last-pitch distance would pick the
+  tight voice (and stretch it further); the register-aware cost picks
+  the wide voice instead, since 88 already falls inside its established
+  range.
+- **Measured effect, honestly**: re-ran the same channel/voice-span
+  analysis used to diagnose this. Uncapped on the real fixture, the
+  weight change shifted the _distribution_ (several voices got much
+  tighter — e.g. one dropped from a 51-semitone span to 10) but barely
+  moved the _worst case_ (max span 67 → 58), because once two voices
+  are both "compatible" (non-overlapping) candidates the term can only
+  pick the better of the available options — it can't invent a third
+  option, and at the user's actual repro setting (max voices capped at
+  4 against this file's true ~22-note polyphony) all 4 voices still
+  end up spanning 65-71 semitones regardless of cost-model tuning,
+  because 4 containers mathematically cannot hold ~22 simultaneous
+  musical lines without some container absorbing very different
+  pitches at different times. Reported this to the user rather than
+  overstating the fix — the register term helps the heuristic make
+  better choices when there's room to choose, but a tight cap on a
+  highly polyphonic file is a capacity problem, not a tuning problem.
+- Verified: `pnpm rust:test` (42/42, 1 new), `pnpm rust:clippy`,
+  `cargo fmt --check`. `pnpm test`/`lint`/`format:check`/`build` for the
+  frontend re-run for safety (150/150, all clean) though nothing
+  frontend-facing changed.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to
