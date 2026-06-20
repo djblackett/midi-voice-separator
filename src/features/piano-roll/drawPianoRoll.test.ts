@@ -15,7 +15,14 @@ describe("voice colors", () => {
   });
 
   it("wraps voice colors deterministically", () => {
-    expect(getVoiceFillColor("voice-7")).toBe("#38bdf8");
+    expect(getVoiceFillColor("voice-13")).toBe("#38bdf8");
+  });
+
+  it("gives the first 12 voices distinct fill colors", () => {
+    const colors = Array.from({ length: 12 }, (_, index) =>
+      getVoiceFillColor(`voice-${index + 1}`),
+    );
+    expect(new Set(colors).size).toBe(12);
   });
 });
 

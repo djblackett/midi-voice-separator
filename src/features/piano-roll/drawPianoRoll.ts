@@ -8,8 +8,34 @@ import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 
 export const PIANO_ROLL_LABEL_WIDTH = 56;
-const VOICE_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#f472b6"];
-const VOICE_STROKES = ["#7dd3fc", "#c4b5fd", "#86efac", "#fde68a", "#fda4af", "#f9a8d4"];
+const VOICE_COLORS = [
+  "#38bdf8",
+  "#a78bfa",
+  "#34d399",
+  "#fbbf24",
+  "#fb7185",
+  "#f472b6",
+  "#fb923c",
+  "#a3e635",
+  "#22d3ee",
+  "#818cf8",
+  "#e879f9",
+  "#2dd4bf",
+];
+const VOICE_STROKES = [
+  "#7dd3fc",
+  "#c4b5fd",
+  "#86efac",
+  "#fde68a",
+  "#fda4af",
+  "#f9a8d4",
+  "#fdba74",
+  "#bef264",
+  "#67e8f9",
+  "#a5b4fc",
+  "#f0abfc",
+  "#5eead6",
+];
 
 /**
  * Maps a voice id to a stable small index, shared by color (here) and

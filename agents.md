@@ -1017,6 +1017,39 @@ one-line fix).
   vs. source file mtimes), so the live app has them active for a
   direct visual check against the real fixture.
 
+### Expanded voice color palette (6 → 12)
+
+User feedback while manually validating the strategy selector: with 8
+voices, multiple voices shared a color, since `VOICE_COLORS`/
+`VOICE_STROKES` in `drawPianoRoll.ts` only had 6 entries and
+`voiceColorIndex` wraps with `% VOICE_COLORS.length`.
+
+- Extended both arrays to 12 entries (added orange, lime, cyan, indigo,
+  fuchsia, teal to the existing sky/violet/emerald/amber/rose/pink),
+  keeping the first 6 values unchanged so existing low-voice-count
+  projects see no color shift.
+- Mirrored the same 12 colors into `global.css`'s `--voice-1`
+  through `--voice-12` (previously only 1-6), and bumped `App.tsx`'s
+  voice-swatch modulo from `% 6` to `% 12` to match. These two color
+  sources (canvas/legend by `voiceColorIndex(voiceId)`, the "Voices"
+  panel swatch by list index) were already independent before this
+  change — not unified here, since that's a bigger pre-existing
+  inconsistency the user didn't ask to fix, just kept both palettes the
+  same size.
+- `waveformForVoice` (`scheduledNotes.ts`) still cycles
+  `% WAVEFORMS.length` (3) independently of the color array length, so
+  playback timbre assignment is unaffected.
+- Updated the one test that asserted the old 6-color wraparound
+  (`voice-7` → back to color 0) to wrap at `voice-13` instead, and
+  added a test asserting all 12 colors are distinct.
+- Verified with a throwaway Playwright script + screenshot (8 synthetic
+  voices, faked Tauri IPC, real dev-server bundle): confirmed visually
+  that all 8 voices render in distinct colors in both the canvas and
+  the new bottom-right legend, then deleted the script, not committed.
+- Verified: `pnpm test` (151/151, 2 new in `drawPianoRoll.test.ts`),
+  `pnpm lint`, `pnpm format:check`, `pnpm build` all clean. No Rust
+  changes.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

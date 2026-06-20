@@ -728,7 +728,7 @@ export default function App() {
                 <button
                   type="button"
                   className="voice-swatch"
-                  style={{ backgroundColor: `var(--voice-${(index % 6) + 1})` }}
+                  style={{ backgroundColor: `var(--voice-${(index % 12) + 1})` }}
                   aria-label={`Select notes in ${voice.label}`}
                   onClick={() => handleSelectVoiceSwatch(voice.id)}
                 />
