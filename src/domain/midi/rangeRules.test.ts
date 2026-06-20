@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MidiNote } from "./midiProject";
 import {
+  applyRangePatchPreservingHandCorrections,
   buildDefaultPitchMarkers,
   buildDefaultVoiceRangeRules,
   buildVoiceOverridesFromRangeRules,
@@ -126,6 +127,49 @@ describe("buildVoiceOverridesFromRangeRules", () => {
       middle: "voice-2",
       low: "voice-3",
     });
+  });
+});
+
+describe("applyRangePatchPreservingHandCorrections", () => {
+  it("applies the patch when there are no prior overrides", () => {
+    const result = applyRangePatchPreservingHandCorrections({}, new Set(), {
+      a: "voice-1",
+      b: "voice-2",
+    });
+
+    expect(result.overrides).toEqual({ a: "voice-1", b: "voice-2" });
+    expect(result.rangeAssignedNoteIds).toEqual(new Set(["a", "b"]));
+  });
+
+  it("reapplies onto notes the previous range application itself assigned", () => {
+    const result = applyRangePatchPreservingHandCorrections({ a: "voice-1" }, new Set(["a"]), {
+      a: "voice-2",
+    });
+
+    expect(result.overrides).toEqual({ a: "voice-2" });
+    expect(result.rangeAssignedNoteIds).toEqual(new Set(["a"]));
+  });
+
+  it("skips a note that was hand-corrected after the last range application", () => {
+    const result = applyRangePatchPreservingHandCorrections(
+      { a: "voice-hand-corrected" },
+      new Set(),
+      { a: "voice-1", b: "voice-2" },
+    );
+
+    expect(result.overrides).toEqual({ a: "voice-hand-corrected", b: "voice-2" });
+    expect(result.rangeAssignedNoteIds).toEqual(new Set(["b"]));
+  });
+
+  it("leaves previously range-assigned ids alone when the new patch doesn't touch them", () => {
+    const result = applyRangePatchPreservingHandCorrections(
+      { a: "voice-1", c: "voice-3" },
+      new Set(["a", "c"]),
+      { a: "voice-2" },
+    );
+
+    expect(result.overrides).toEqual({ a: "voice-2", c: "voice-3" });
+    expect(result.rangeAssignedNoteIds).toEqual(new Set(["a", "c"]));
   });
 });
 

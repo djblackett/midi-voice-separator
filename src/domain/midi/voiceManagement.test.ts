@@ -5,6 +5,7 @@ import {
   mergeVoiceOrder,
   mergeVoiceOverrides,
   nextVoiceId,
+  reconcileVoiceOrderAfterReassign,
 } from "./voiceManagement";
 
 function note(id: string, voiceId: string, pitch: number): MidiNote {
@@ -76,6 +77,34 @@ describe("mergeVoiceOrder", () => {
 
   it("leaves the order unchanged when there are no new ids", () => {
     expect(mergeVoiceOrder(["voice-1", "voice-2"], ["voice-1"])).toEqual(["voice-1", "voice-2"]);
+  });
+});
+
+describe("reconcileVoiceOrderAfterReassign", () => {
+  it("drops voice ids no note is assigned to anymore", () => {
+    expect(
+      reconcileVoiceOrderAfterReassign(
+        ["voice-1", "voice-2", "voice-3", "voice-4"],
+        ["voice-1", "voice-2", "voice-1"],
+      ),
+    ).toEqual(["voice-1", "voice-2"]);
+  });
+
+  it("appends brand-new voice ids the reassignment introduced", () => {
+    expect(reconcileVoiceOrderAfterReassign(["voice-1"], ["voice-1", "voice-2"])).toEqual([
+      "voice-1",
+      "voice-2",
+    ]);
+  });
+
+  it("preserves existing relative order for ids that survive", () => {
+    expect(
+      reconcileVoiceOrderAfterReassign(["voice-3", "voice-1", "voice-2"], ["voice-1", "voice-2"]),
+    ).toEqual(["voice-1", "voice-2"]);
+  });
+
+  it("returns an empty order when no notes remain", () => {
+    expect(reconcileVoiceOrderAfterReassign(["voice-1", "voice-2"], [])).toEqual([]);
   });
 });
 

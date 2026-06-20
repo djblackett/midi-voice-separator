@@ -85,25 +85,50 @@ Primary stack:
   `assign_heuristic_voices_with_locks` (locked-note-aware re-run, used by
   the `reassign_voices` Tauri command) and the private `allocate_new_voice_id`
   collision-avoiding id allocator it depends on.
-- `src/domain/midi/voiceManagement.ts`: also holds `mergeVoiceOrder`, used
-  after a "re-run separation" to fold any brand-new voice ids the backend
-  allocated into the frontend's `voiceOrder`.
+- `src/domain/midi/voiceManagement.ts`: also holds `mergeVoiceOrder`
+  (append-only: folds brand-new voice ids into `voiceOrder` for
+  incremental corrections that never remove notes from a voice
+  wholesale) and `reconcileVoiceOrderAfterReassign` (used only after
+  "re-run separation": same append behavior, but also drops any voice
+  id no note is assigned to anymore, since a full re-run decides the
+  entire voice structure fresh and a no-longer-used id shouldn't
+  linger in the legend as an empty row).
 - `src/app/editorHistory.ts`: pure full-snapshot undo/redo stack
   (`createEditorHistory`, `pushHistory`, `undoHistory`, `redoHistory`) over
   `{ voiceOverrides, voiceOrder, voiceLabels }`. Kept separate from `App.tsx`
   so the stack-manipulation logic is unit-testable without React.
+- `src/domain/midi/tempoMap.ts`: pure tick/seconds conversion
+  (`buildTempoMap`, `tickToSeconds`, `secondsToTick`) — a piecewise-linear
+  map built from a project's `tempoChanges`, defaulting to 120 BPM if none
+  exists at tick 0. Used by both the time readout and playback scheduling.
+- `src/features/playback/`: the playback feature, frontend-only (Web Audio,
+  no Rust/Tauri involvement). Pure and unit-tested: `frequency.ts`
+  (`midiPitchToFrequency`), `scheduledNotes.ts` (`buildScheduledNotes` —
+  the only function that decides what should play: filters notes already
+  past the resume point, truncates a mid-note resume instead of skipping
+  or mistiming it, filters to a soloed voice, picks a waveform per voice
+  via `drawPianoRoll.ts`'s exported `voiceColorIndex` so a voice sounds
+  consistent with how it looks), `formatPlaybackTime.ts`. Thin and
+  untested (real audio I/O, same category as `PianoRoll.tsx`'s
+  pointer-event glue): `playbackEngine.ts` (a small `PlaybackEngine` class
+  wrapping one `AudioContext`; `play()` creates an oscillator+gain-envelope
+  node pair per scheduled note and tracks all of them so `stop()` can
+  immediately silence everything including notes scheduled in the future,
+  not just whatever's currently sounding) and `usePlaybackEngine.ts` (the
+  React hook tying the engine to `isPlaying`/`currentTick` state, polled
+  every 50ms rather than via `requestAnimationFrame` — simpler and
+  sufficient at this update rate).
 
 ## Active Plan
 
 The original 7-phase implementation plan for the heuristic voice-separation
 engine and its correction UX is complete (all 7 phases done — see Progress
-Log below). A follow-on roadmap plan now lives at the same path,
+Log below). The follow-on roadmap (testing gap, README catch-up, the two
+deferred items, piano-roll pan/zoom, MIDI playback) is also complete —
+Phase 5 (playback) had its own dedicated plan, written at the same path
 `C:\Users\davej\.claude\plans\sequential-watching-sprout.md` (outside this
-repo): Phase 1 closes the testing gap (in progress — see Progress Log),
-Phase 2 is a README catch-up, Phase 3 is the two items the original plan
-deferred (`max_voice_count` soft cap, undoable re-run), Phase 4 is piano
-roll pan/zoom, Phase 5 is playback (scoped as its own future plan), Phase 6
-is performance validation on real dense files.
+repo) once selected. Only roadmap Phase 6 (performance validation on real
+dense files) remains.
 
 ## Progress Log
 
@@ -580,6 +605,231 @@ is performance validation on real dense files.
     screenshots, with zero console errors after the passive-listener fix.
   - Next: roadmap Phase 5 (playback — scope as its own plan) or Phase 6
     (performance validation on real dense files).
+
+- **Roadmap Phase 5 (MIDI playback) — done.** Got its own dedicated plan
+  first (per the roadmap's recommendation, given its size relative to
+  every other phase) before implementation — see Code Map above for the
+  new `tempoMap.ts` and `src/features/playback/` files. Frontend-only: no
+  Rust/Tauri changes, since Web Audio runs entirely in the WebView.
+  Square/triangle/sawtooth oscillator synthesis cycling by voice index (no
+  sample playback/soundfont) — simple and on-theme. All of a play-from-tick
+  call's notes are scheduled up front via Web Audio's own sample-accurate
+  scheduling (not a rolling lookahead scheduler) — correct and simple at
+  chiptune-file scale. Respects the existing `soloVoiceId` (only the
+  soloed voice is audible) instead of adding new per-voice mute UI. The
+  existing minimap (Phase 4) is now also a playback seek control —
+  clicking it pans the view (existing behavior) and calls the new
+  `onSeek` prop. `PianoRoll.tsx` draws the playhead
+  (`drawPianoRoll.ts`'s new `playheadTick` parameter) and page-follows it
+  during playback by reusing Phase 4's `panToReveal`, the same way
+  review-mode Tab-stepping already does — only while `isPlaying`, so a
+  paused/stopped playhead doesn't fight a manual scroll. Play/Pause/Stop
+  and a `mm:ss / mm:ss` readout live in `App.tsx`'s existing
+  `.piano-roll-toolbar` section, next to the Paint-mode/Range-markers
+  toggles. **Real Web Audio gotcha caught before it could bite**: a
+  freshly-created `AudioContext` can be left `"suspended"` by the
+  browser's autoplay policy even when constructed inside a user-gesture
+  handler (the Play button's click) — `playbackEngine.ts` explicitly
+  calls `context.resume()` when suspended, otherwise playback would
+  silently produce no sound rather than erroring.
+  - Verified: `pnpm test` (142/142, including new `tempoMap.test.ts`,
+    `frequency.test.ts`, `scheduledNotes.test.ts`, and
+    `formatPlaybackTime.test.ts`), `pnpm lint`, `pnpm format:check`,
+    `pnpm build`, `pnpm rust:check`/`rust:clippy`/`cargo fmt --check`
+    (all untouched, still clean — no Rust files changed this phase).
+    Manually drove the real running app (same faked-IPC Playwright
+    technique as Phases 1 and 4): Play/Pause/Stop, the time readout
+    advancing while playing and freezing while paused, resuming from the
+    paused tick instead of restarting, minimap-click seeking both the
+    view and the readout, and Solo-then-Play running without errors —
+    all with zero console errors. **Stated limitation, as planned**: this
+    confirms the engine runs and schedules without erroring and that UI
+    state is correct, but cannot verify the audio actually _sounds_
+    correct (right pitches, no clipping) without a human listening.
+  - All items in the original "where to go from here" roadmap are now
+    complete except Phase 6 (performance validation on real dense files),
+    which was never blocked on anything else and can be picked up
+    independently whenever real chiptune fixtures are available to test
+    against.
+
+- **Roadmap Phase 6 (performance validation on real dense files) — done.
+  This completes the entire roadmap.** No real dense chiptune `.mid` file
+  exists in `fixtures/`, so validated against synthetic data at a
+  realistic-and-beyond scale instead, the same way every other phase's
+  manual pass already worked (faked-IPC Playwright for the frontend; for
+  Rust, a temporary `#[ignore]`d timing test, run once via
+  `cargo test --release ... -- --ignored --nocapture` and then deleted —
+  scratch code, not a permanent addition, since this phase is a
+  measurement, not new functionality).
+  - **Rust**: `assign_heuristic_voices` on 2000 overlapping notes forced
+    into 48 simultaneous voices (worst case for the O(notes × voices) cost
+    model — a monophonic 2000-note run was tried first and degenerated to
+    1 voice, so it was rebuilt as 16-wide advancing chords to actually
+    stress candidate-scoring) took **392.5µs**. No performance concern
+    whatsoever at any realistic chiptune scale.
+  - **Frontend**: a synthetic 600-note, 6-voice, 86-flagged-note project
+    (chiptune-scale and then some) driven through marquee-select-all,
+    bulk reassign, a paint-mode drag stroke, 20 Tab-steps through flagged
+    notes, 10 Ctrl+wheel zoom notches, 20 plain-wheel pans, a "Re-run
+    separation" call, and a second of Play — every single operation
+    completed in under 700ms end-to-end (most under 500ms), including
+    Playwright's own dispatch overhead. No throttling or memoization was
+    added, per the plan's "only optimize if the pass actually shows a
+    problem" — it didn't.
+  - **Real bug found by this pass, unrelated to performance**: the
+    Phase-4 minimap (`.piano-roll-minimap`, `top: 0; height: 6px; z-index: 1`)
+    sits on top of the canvas's first 6 logical pixels. A marquee drag
+    _starting_ inside that 6px band lands on the minimap instead of the
+    canvas — the minimap's own `onPointerDown` (`handleMinimapClick`)
+    fires instead of the canvas's, so `dragStartRef.current` never gets
+    set and the gesture silently does nothing (no error, just no
+    selection). Confirmed via direct pixel-sampling and DOM
+    `elementFromPoint` inspection that this was a real interaction gap,
+    not a test-script targeting mistake, before concluding it — moving
+    the marquee's start point a few pixels lower immediately fixed it.
+    **Left as-is, not fixed**, since it's a narrow, low-probability edge
+    case (a user would have to start a drag in literally the top 6
+    pixels of the roll) and this phase's mandate was measurement, not
+    new fixes — noting it here as a candidate for a future tiny
+    polish pass (e.g. starting the canvas's own hit-test area below the
+    minimap strip, or giving the minimap a `pointer-events: none` zone
+    outside its own narrow drag handle).
+  - Verified: `pnpm test` (142/142, unchanged — no new permanent code),
+    `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm rust:test`/
+    `rust:clippy`/`cargo fmt --check` (all clean, `voice_assignment.rs`
+    confirmed back to its pre-investigation state — the scratch timing
+    test and temporary debug `console.log`s in `PianoRoll.tsx` were both
+    removed after use, not committed).
+
+This completes every phase of both the original 7-phase plan and the
+follow-on roadmap. Future work (the minimap edge case above, a
+performance pass against a _real_ dense `.mid` file if one becomes
+available, or any of the README's "Next milestone" candidates) would
+start a new plan.
+
+### Pitch-range provenance tracking — done
+
+Picked up the other README "Next milestone" candidate: reapplying
+pitch-range rules (after nudging a marker) used to blindly overwrite
+every matching note's override, including notes a user had since
+hand-corrected by number-key reassignment, paint, or merge — silently
+discarding that correction.
+
+- Added `applyRangePatchPreservingHandCorrections` to `rangeRules.ts`:
+  a pure function that merges a freshly computed range patch into the
+  current override map, but skips a note if it already has an
+  override that the _previous_ range application didn't itself write
+  (i.e. someone hand-corrected it since). Notes the patch newly
+  assigns become range-controlled themselves, so a later reapply can
+  still adjust them — provenance isn't permanent, only "since the last
+  apply."
+- `App.tsx` now carries a `rangeAssignedNoteIds` set alongside
+  `voiceOverrides`, tracking which override entries the last pitch-range
+  apply wrote. Every other override-writing action (number-key
+  reassign, paint, merge, create-voice-from-selection) removes the
+  notes it touches from that set, marking them hand-corrected.
+  `handleApplyPitchRanges` runs the new merge function instead of a
+  blind object spread.
+- `rangeAssignedNoteIds` joins `EditorSnapshot` in `editorHistory.ts`
+  so undo/redo restores provenance correctly, not just the override
+  values — otherwise undoing past a range-apply could leave a note
+  marked range-controlled when it shouldn't be (or vice versa).
+- A fresh import resets `rangeAssignedNoteIds` to empty, same as every
+  other per-project correction state.
+- New tests in `rangeRules.test.ts` cover: no prior overrides (patch
+  applies normally), reapplying onto previously range-assigned notes
+  (still applies), skipping a hand-corrected note while still applying
+  to untouched notes in the same patch, and leaving untouched
+  range-assigned notes alone when a later patch doesn't mention them.
+- Hit one build error along the way: `Object.hasOwn` isn't available
+  at this project's TS lib target; switched to
+  `Object.prototype.hasOwnProperty.call` instead of bumping the lib
+  target for one call site.
+- Verified: `pnpm test` (146/146, 4 new), `pnpm lint`, `pnpm format:check`,
+  `pnpm build` all clean. No Rust changes — this is frontend-only
+  override bookkeeping, so the Rust suite wasn't re-run.
+
+### Minimap/marquee top-6px overlap — fixed
+
+The last open item from Phase 6 (see above): the Phase-4 minimap
+overlaid the canvas's top 6 logical pixels with `position: absolute;
+top: 0; z-index: 1`, so a marquee drag starting there hit the
+minimap's `onPointerDown` instead of the canvas's, silently producing
+no selection.
+
+- Fix: gave `.piano-roll-shell` a `padding-top: 6px` in
+  `global.css`, so the minimap (still `position: absolute; top: 0`)
+  now sits in that reserved padding band, and the canvas — a normal
+  flow child, sized off the container's `ResizeObserver` content-box
+  rect, which already excludes padding — starts right below it. The
+  two regions no longer overlap, so there's nothing left to fight over
+  pointer events; no JS/TSX changes were needed; `PianoRoll.tsx`'s
+  coordinate math is already canvas-relative via
+  `getBoundingClientRect()`, so it picked up the new offset for free.
+- Verified with a throwaway Playwright script (faked Tauri IPC, real
+  dev-server bundle, same technique as every other manual pass): built
+  a 60-note/3-voice synthetic fixture, confirmed a marquee drag
+  starting at the canvas's old y+2 (inside the former danger zone)
+  now selects the same 12 notes as an identical drag starting at
+  y+30, and that the minimap (now measured 6px above the canvas, not
+  overlapping it) still seeks/pans on click with zero console errors.
+  Script and its npx-cache copy were both deleted after use, not
+  committed.
+- Verified: `pnpm test` (146/146, unchanged), `pnpm lint`,
+  `pnpm format:check`, `pnpm build` all clean. No Rust changes.
+
+This closes every item from the original 7-phase plan, the follow-on
+roadmap, and both of the README's former "Next milestone" candidates.
+No open work is currently tracked; a new task would start a new plan.
+
+### Created MANUAL_TEST_CASES.md
+
+A checklist of every implemented use case (import, viewing, selection,
+bulk reassignment, voice management, review mode, paint mode,
+pitch-range mode, re-run separation, undo/redo, pan/zoom, playback,
+export, cross-cutting edge cases), grouped by feature area, for manual
+`pnpm tauri dev` verification passes. No code changes.
+
+### Stale empty voices after "Re-run separation" with a lower max-voice cap — fixed
+
+User report: lowering "Max voices" to 4 and re-running appeared to
+only use 2 voices, with most of the rest "visible but empty." Used the
+user-provided real fixture (`midi-files/egypt - chiptune.mid`, 2328
+notes, 22-note max polyphony) to investigate with a throwaway
+`#[ignore]` Rust test before concluding anything:
+
+- The Rust heuristic itself is correct: capping at 4 against this real
+  file produces exactly 4 distinct voice ids in use, not 2 — confirmed
+  via `assign_heuristic_voices_with_locks`, both `voices.len()` and the
+  actual distinct `voice_id`s on the notes. The cap logic (Phase 3 of
+  the original roadmap) has no bug.
+- The actual bug is in the frontend's voice bookkeeping:
+  `handleReassign` (`App.tsx`) updated `voiceOrder` with
+  `mergeVoiceOrder`, which only appends new ids and never removes ones
+  that no longer have notes. A full re-run, unlike incremental
+  corrections, redetermines the entire voice structure — any
+  previously-existing voice id the new result doesn't use anymore
+  should drop out of the legend, not linger as a 0-note row forever.
+  That's what produced the "visible but empty" voices the user saw;
+  the piano roll canvas itself was already correct (it draws from
+  actual note `voiceId`s, not `voiceOrder`), so the confusing legend
+  was likely what made the canvas seem wrong too.
+- Fix: added `reconcileVoiceOrderAfterReassign(voiceOrder,
+noteVoiceIds)` to `voiceManagement.ts` — appends brand-new ids like
+  `mergeVoiceOrder` still does, but also filters the result down to
+  only ids actually present in `noteVoiceIds`. `handleReassign` now
+  calls this instead of `mergeVoiceOrder`. Every other caller of voice
+  order updates (create voice, merge, paint, reassign-by-number) is
+  untouched, since those are incremental corrections where pruning
+  would be wrong (e.g. creating an empty voice on purpose).
+- 4 new tests in `voiceManagement.test.ts`: drops unused ids, appends
+  new ones, preserves relative order for survivors, and handles the
+  all-notes-gone-empty-order edge case.
+- Verified: `pnpm test` (150/150, 4 new), `pnpm lint`,
+  `pnpm format:check`, `pnpm build`, `pnpm rust:test` (41/41,
+  confirmed back to its pre-investigation count — the scratch
+  `#[ignore]` test was deleted after use, not committed),
+  `pnpm rust:clippy`, `cargo fmt --check` all clean.
 
 ## Architecture Invariants
 

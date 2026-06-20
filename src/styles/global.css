@@ -474,6 +474,12 @@ kbd {
   font-size: 13px;
 }
 
+.playback-time {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 .editor-grid {
   min-height: 360px;
   padding: 16px 24px 20px;
@@ -484,6 +490,11 @@ kbd {
   width: 100%;
   height: 100%;
   min-height: 360px;
+  /* Reserves a dedicated band for the minimap above the canvas, so the
+     two never visually overlap and can't fight over the same pointer
+     events (a marquee drag used to land on the minimap instead of the
+     canvas if it started in this strip). */
+  padding-top: 6px;
   border: 1px solid #334155;
   border-radius: 6px;
   overflow: hidden;

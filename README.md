@@ -26,22 +26,31 @@ tracks.
 - Paint mode: toggle, pick an active voice, then click-drag across notes to repaint them.
 - Pitch-range mode: drag horizontal marker handles in the piano-roll label gutter, then
   apply them to bulk-assign notes to voices by pitch band (above/between/below markers).
+  Reapplying after nudging a marker only touches notes still under range control — any note
+  since reassigned, painted, merged, or otherwise hand-corrected is left alone.
 - "Re-run separation": re-runs the heuristic while treating every manual correction as a
   locked constraint (so corrections survive a re-run), with an optional max-voice-count cap.
+  The voice legend reflects exactly the voices the new result actually uses — a voice the
+  re-run no longer needs (e.g. after lowering the cap) drops out instead of lingering as an
+  empty row.
 - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, paint,
   pitch-range, and re-run-separation actions.
 - Piano-roll pan/zoom: `Ctrl`/`Cmd`+wheel zooms anchored at the cursor, plain wheel pans, a
   minimap shows the current window against the full timeline, and review-mode `Tab`-stepping
   auto-pans (without changing zoom) to bring an off-screen flagged note into view.
+- MIDI playback: Play/Pause/Stop and a time readout, synthesized with square/triangle/
+  sawtooth oscillators cycling by voice (so a voice sounds consistent with how it looks), a
+  playhead that page-follows during playback, and a minimap that doubles as a seek control.
+  Respects the existing voice Solo toggle (only the soloed voice is audible).
 - Export of corrected voice assignments to a new Standard MIDI File (one track per voice).
 - Frontend (Vitest) and Rust (`cargo test`) test suites.
 
 ## Non-capabilities
 
-This version does not yet perform MIDI playback, DAW routing, audio separation, or machine
-learning. The current voice assignment is a heuristic, not a finished musical separation
-algorithm. Pitch-range rules don't yet track provenance, so reapplying them overwrites
-matching notes' voice assignments even if they were since hand-corrected.
+This version does not yet perform DAW routing, audio separation, or machine learning.
+Playback is synthesized tones, not sample/soundfont-based, and has no looping or per-voice
+volume beyond the existing Solo toggle. The current voice assignment is a heuristic, not a
+finished musical separation algorithm.
 
 ## Windows prerequisites
 
@@ -78,13 +87,22 @@ Tauri commands form the boundary between those processes: the frontend selects a
 the dialog plugin, passes that path to Rust with `invoke`, and receives owned serializable
 DTOs.
 
-Ticks are the canonical timing coordinate. The frontend can eventually derive seconds for
-display or playback, but the imported model keeps PPQ tick positions so MIDI timing remains
-lossless. The piano roll is a single HTML Canvas with coordinate math isolated from React, so
-pan/zoom is a separate `ViewportWindow` (zoom level + pan position) resolved against the
-project's duration into a concrete tick range each render, rather than the canvas always
-spanning the whole project — `drawPianoRoll`/hit-testing don't know the difference, since both
-already work in terms of an arbitrary `{ startTick, endTick }` window.
+Ticks are the canonical timing coordinate; a `TempoMap` (a piecewise-linear tick/seconds
+mapping built from the project's tempo changes, defaulting to 120 BPM if none is present)
+converts to/from seconds for the playback time readout and audio scheduling, without making
+seconds the canonical unit anywhere else. The piano roll is a single HTML Canvas with
+coordinate math isolated from React, so pan/zoom is a separate `ViewportWindow` (zoom level +
+pan position) resolved against the project's duration into a concrete tick range each render,
+rather than the canvas always spanning the whole project — `drawPianoRoll`/hit-testing don't
+know the difference, since both already work in terms of an arbitrary
+`{ startTick, endTick }` window.
+
+Playback runs entirely in the frontend via the Web Audio API — no Rust/Tauri involvement.
+A pure function decides what should play (which notes, truncated correctly for a mid-note
+resume, filtered to a soloed voice, with a waveform assigned per voice); a thin engine class
+just iterates that decision and issues real `AudioContext` calls, scheduling every note for a
+play-from-tick call up front rather than with a rolling lookahead scheduler — simple and
+sufficient at chiptune-file scale.
 
 `midly` parses SMF data into structures that borrow from the input byte buffer. The Rust
 parser converts those borrowed structures into owned application DTOs before returning them
@@ -101,7 +119,11 @@ its corrections durable across a re-run, without claiming final musical correctn
 
 Manual corrections are represented as a frontend-only note-to-voice override map layered on
 top of the immutable imported project; voice identity, order, and labels are separate
-frontend state, not solely derived from whatever the heuristic produced. "Re-run separation"
+frontend state, not solely derived from whatever the heuristic produced. A parallel set of
+note IDs tracks which entries in that override map were written by the last pitch-range
+application (as opposed to a click reassignment, paint stroke, or merge); reapplying pitch
+ranges after nudging a marker only overwrites notes still in that set, so a hand correction
+made after the last apply survives a later one. "Re-run separation"
 sends the original imported notes plus the current override map (as a lock set) back to
 Rust, which re-runs the heuristic respecting those locks and an optional voice-count cap
 (forcing reuse of the lowest-cost existing voice, marked at zero confidence for review,
@@ -114,7 +136,13 @@ per voice.
 
 The correction-UX plan (multi-select, voice management, confidence scoring, review mode,
 paint mode, locked re-run, undo/redo), both items it originally deferred (the
-max-voice-count cap, undoable re-run), and piano-roll pan/zoom are complete. Candidates for
-the next milestone: MIDI playback so corrections can be checked by ear instead of only by
-eye, a performance pass on real dense chiptune files, or provenance tracking for
-pitch-range-generated overrides so reapplying ranges doesn't clobber hand corrections.
+max-voice-count cap, undoable re-run), piano-roll pan/zoom, MIDI playback, a performance
+validation pass, and pitch-range provenance tracking are all complete — the Rust heuristic
+handles thousands of overlapping notes in well under a millisecond, every frontend interaction
+stayed fast against a synthetic 600-note/6-voice/86-flagged-note project (no real dense
+chiptune `.mid` fixture exists yet to validate against directly), and reapplying pitch ranges
+no longer clobbers hand corrections made since the last apply. The minimap/marquee top-pixel
+interaction gap found during performance validation is also fixed: the minimap now occupies
+its own reserved band above the canvas instead of overlaying its top 6 pixels, so a
+marquee-select drag starting there reaches the canvas instead of the minimap. There is no
+open candidate left from this roadmap; the next milestone would start a fresh plan.

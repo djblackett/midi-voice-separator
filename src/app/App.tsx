@@ -26,12 +26,13 @@ import {
 } from "../domain/midi/voiceAssignments";
 import {
   buildVoiceList,
-  mergeVoiceOrder,
   mergeVoiceOverrides,
   nextVoiceId,
+  reconcileVoiceOrderAfterReassign,
 } from "../domain/midi/voiceManagement";
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
+  applyRangePatchPreservingHandCorrections,
   buildDefaultPitchMarkers,
   buildDefaultVoiceRangeRules,
   buildVoiceOverridesFromRangeRules,
@@ -46,6 +47,9 @@ import {
   undoHistory,
   type EditorHistoryState,
 } from "./editorHistory";
+import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
+import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
+import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -78,6 +82,7 @@ export default function App() {
   const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
+  const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const displayedProject = useMemo(() => {
@@ -103,6 +108,13 @@ export default function App() {
     () => buildDefaultVoiceRangeRules(displayedProject?.voices.map((voice) => voice.id) ?? []),
     [displayedProject],
   );
+  const playback = usePlaybackEngine(displayedProject, soloVoiceId);
+  const tempoMap = useMemo(
+    () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
+    [displayedProject],
+  );
+  const playbackCurrentSeconds = tickToSeconds(tempoMap, playback.currentTick);
+  const playbackDurationSeconds = tickToSeconds(tempoMap, displayedProject?.durationTicks ?? 0);
 
   useEffect(() => {
     void getBackendStatus()
@@ -181,6 +193,13 @@ export default function App() {
         }
         return nextOverrides;
       });
+      setRangeAssignedNoteIds((current) => {
+        const next = new Set(current);
+        for (const noteId of selectedNoteIds) {
+          next.delete(noteId);
+        }
+        return next;
+      });
       setExportResult(null);
     }
 
@@ -214,6 +233,7 @@ export default function App() {
         setSoloVoiceId(null);
         setInteractionMode("select");
         setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
+        setRangeAssignedNoteIds(new Set());
         setHistory(createEditorHistory());
         setMaxVoiceCountInput("");
         setExportResult(null);
@@ -284,7 +304,7 @@ export default function App() {
       pushHistorySnapshot();
       setProject(reassignedProject);
       setVoiceOrder((currentOrder) =>
-        mergeVoiceOrder(
+        reconcileVoiceOrderAfterReassign(
           currentOrder,
           reassignedProject.notes.map((note) => note.voiceId),
         ),
@@ -308,12 +328,24 @@ export default function App() {
 
   function pushHistorySnapshot() {
     setHistory((currentHistory) =>
-      pushHistory(currentHistory, { project, voiceOverrides, voiceOrder, voiceLabels }),
+      pushHistory(currentHistory, {
+        project,
+        voiceOverrides,
+        voiceOrder,
+        voiceLabels,
+        rangeAssignedNoteIds,
+      }),
     );
   }
 
   function handleUndo() {
-    const result = undoHistory(history, { project, voiceOverrides, voiceOrder, voiceLabels });
+    const result = undoHistory(history, {
+      project,
+      voiceOverrides,
+      voiceOrder,
+      voiceLabels,
+      rangeAssignedNoteIds,
+    });
     if (!result) {
       return;
     }
@@ -322,11 +354,18 @@ export default function App() {
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
+    setRangeAssignedNoteIds(result.snapshot.rangeAssignedNoteIds);
     setExportResult(null);
   }
 
   function handleRedo() {
-    const result = redoHistory(history, { project, voiceOverrides, voiceOrder, voiceLabels });
+    const result = redoHistory(history, {
+      project,
+      voiceOverrides,
+      voiceOrder,
+      voiceLabels,
+      rangeAssignedNoteIds,
+    });
     if (!result) {
       return;
     }
@@ -335,6 +374,7 @@ export default function App() {
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
+    setRangeAssignedNoteIds(result.snapshot.rangeAssignedNoteIds);
     setExportResult(null);
   }
 
@@ -350,6 +390,13 @@ export default function App() {
           nextOverrides[noteId] = newVoiceId;
         }
         return nextOverrides;
+      });
+      setRangeAssignedNoteIds((current) => {
+        const next = new Set(current);
+        for (const noteId of selectedNoteIds) {
+          next.delete(noteId);
+        }
+        return next;
       });
     }
 
@@ -368,6 +415,13 @@ export default function App() {
     pushHistorySnapshot();
     const patch = mergeVoiceOverrides(displayedProject.notes, fromVoiceId, toVoiceId);
     setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...patch }));
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of Object.keys(patch)) {
+        next.delete(noteId);
+      }
+      return next;
+    });
     setVoiceOrder((currentOrder) => currentOrder.filter((voiceId) => voiceId !== fromVoiceId));
     setActiveVoiceId((current) => (current === fromVoiceId ? null : current));
     setSoloVoiceId((current) => (current === fromVoiceId ? null : current));
@@ -404,6 +458,13 @@ export default function App() {
       }
       return nextOverrides;
     });
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of noteIds) {
+        next.delete(noteId);
+      }
+      return next;
+    });
     setExportResult(null);
   }
 
@@ -433,8 +494,12 @@ export default function App() {
       return;
     }
 
+    const { overrides, rangeAssignedNoteIds: nextRangeAssignedNoteIds } =
+      applyRangePatchPreservingHandCorrections(voiceOverrides, rangeAssignedNoteIds, rangePatch);
+
     pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...rangePatch }));
+    setVoiceOverrides(overrides);
+    setRangeAssignedNoteIds(nextRangeAssignedNoteIds);
     setSelectedNoteIds(new Set(Object.keys(rangePatch)));
     setExportResult(null);
   }
@@ -797,6 +862,26 @@ export default function App() {
         <section className="piano-roll-toolbar">
           <button
             type="button"
+            className="secondary-button"
+            onClick={playback.isPlaying ? playback.pause : playback.play}
+            disabled={isImporting || isExporting || isReassigning}
+          >
+            {playback.isPlaying ? "Pause" : "Play"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={playback.stop}
+            disabled={isImporting || isExporting || isReassigning}
+          >
+            Stop
+          </button>
+          <span className="playback-time">
+            {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
+            {formatPlaybackTime(playbackDurationSeconds)}
+          </span>
+          <button
+            type="button"
             className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}
             onClick={handleTogglePaintMode}
             aria-pressed={interactionMode === "paint" ? "true" : "false"}
@@ -839,6 +924,9 @@ export default function App() {
           onPaintNotes={handlePaintNotes}
           pitchMarkers={pitchMarkers}
           onPitchMarkersChange={setPitchMarkers}
+          currentPlaybackTick={playback.currentTick}
+          isPlaying={playback.isPlaying}
+          onSeek={playback.seek}
         />
       </section>
 

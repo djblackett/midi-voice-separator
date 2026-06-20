@@ -42,6 +42,9 @@ interface PianoRollProps {
   onPaintNotes?: (noteIds: string[]) => void;
   pitchMarkers?: readonly PitchMarker[];
   onPitchMarkersChange?: (next: PitchMarker[]) => void;
+  currentPlaybackTick?: number | null;
+  isPlaying?: boolean;
+  onSeek?: (tick: number) => void;
 }
 
 export function PianoRoll({
@@ -54,6 +57,9 @@ export function PianoRoll({
   onPaintNotes = () => {},
   pitchMarkers = [],
   onPitchMarkersChange = () => {},
+  currentPlaybackTick = null,
+  isPlaying = false,
+  onSeek = () => {},
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -128,6 +134,21 @@ export function PianoRoll({
     );
   }, [selectedNoteIds, project]);
 
+  // Page-follow the playhead during playback, panning only — never
+  // changes zoom, and only while actually playing (a paused/stopped
+  // playhead shouldn't fight a manual scroll).
+  useEffect(() => {
+    if (!project || !isPlaying || currentPlaybackTick === null) {
+      return;
+    }
+    setViewportWindow((current) =>
+      panToReveal(current, project.durationTicks, {
+        startTick: currentPlaybackTick,
+        endTick: currentPlaybackTick,
+      }),
+    );
+  }, [project, isPlaying, currentPlaybackTick]);
+
   const marqueePreviewIds = useMemo(() => {
     if (!marqueeRect) {
       return null;
@@ -164,6 +185,7 @@ export function PianoRoll({
       soloVoiceId,
       paintedNoteIdsRef.current,
       pitchMarkers,
+      currentPlaybackTick,
     );
   }
 
@@ -194,8 +216,18 @@ export function PianoRoll({
       soloVoiceId,
       paintedNoteIdsRef.current,
       pitchMarkers,
+      currentPlaybackTick,
     );
-  }, [project, viewport, effectiveSelection, marqueeRect, size, soloVoiceId, pitchMarkers]);
+  }, [
+    project,
+    viewport,
+    effectiveSelection,
+    marqueeRect,
+    size,
+    soloVoiceId,
+    pitchMarkers,
+    currentPlaybackTick,
+  ]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -418,6 +450,7 @@ export function PianoRoll({
     setViewportWindow((current) =>
       panToReveal(current, project.durationTicks, { startTick: targetTick, endTick: targetTick }),
     );
+    onSeek(targetTick);
   }
 
   return (

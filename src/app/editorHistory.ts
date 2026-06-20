@@ -6,6 +6,7 @@ export interface EditorSnapshot {
   voiceOverrides: VoiceOverrides;
   voiceOrder: string[];
   voiceLabels: Record<string, string>;
+  rangeAssignedNoteIds: ReadonlySet<string>;
 }
 
 export interface EditorHistoryState {

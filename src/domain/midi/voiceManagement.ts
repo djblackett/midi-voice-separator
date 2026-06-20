@@ -44,6 +44,25 @@ export function mergeVoiceOrder(
   return [...voiceOrder, ...newIds];
 }
 
+/**
+ * Reconciles the frontend's voice order against the result of a full
+ * re-run: appends any brand-new voice ids (like `mergeVoiceOrder`), but
+ * also drops ids no note is assigned to anymore. A re-run replaces the
+ * entire project and decides its own voice structure, so a voice that
+ * existed before but the heuristic no longer needs (e.g. after lowering
+ * the max-voice-count cap) shouldn't linger in the legend as an empty
+ * row forever — unlike `mergeVoiceOrder`'s append-only behavior, which
+ * is correct for incremental corrections that never remove notes from a
+ * voice wholesale.
+ */
+export function reconcileVoiceOrderAfterReassign(
+  voiceOrder: readonly string[],
+  noteVoiceIds: Iterable<string>,
+): string[] {
+  const present = new Set(noteVoiceIds);
+  return mergeVoiceOrder(voiceOrder, present).filter((voiceId) => present.has(voiceId));
+}
+
 export function mergeVoiceOverrides(
   notes: readonly MidiNote[],
   fromVoiceId: string,

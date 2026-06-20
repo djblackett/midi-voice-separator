@@ -11,7 +11,12 @@ export const PIANO_ROLL_LABEL_WIDTH = 56;
 const VOICE_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#f472b6"];
 const VOICE_STROKES = ["#7dd3fc", "#c4b5fd", "#86efac", "#fde68a", "#fda4af", "#f9a8d4"];
 
-function voiceColorIndex(voiceId: string): number {
+/**
+ * Maps a voice id to a stable small index, shared by color (here) and
+ * playback waveform (`scheduledNotes.ts`) so a voice stays recognizable
+ * by ear the same way it's recognizable by eye.
+ */
+export function voiceColorIndex(voiceId: string): number {
   const voiceNumber = Number.parseInt(voiceId.replace("voice-", ""), 10);
   return Number.isFinite(voiceNumber) && voiceNumber > 0
     ? (voiceNumber - 1) % VOICE_COLORS.length
@@ -115,6 +120,7 @@ export function drawPianoRoll(
   soloVoiceId: string | null = null,
   paintPreview: ReadonlyMap<string, string> = new Map(),
   pitchMarkers: readonly PitchMarker[] = [],
+  playheadTick: number | null = null,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -202,6 +208,7 @@ export function drawPianoRoll(
   }
 
   drawPitchMarkers(context, viewport, pitchMarkers);
+  drawPlayhead(context, rollViewport, viewport.height, playheadTick);
 
   if (marqueeRect) {
     const left = Math.min(marqueeRect.x0, marqueeRect.x1);
@@ -217,6 +224,32 @@ export function drawPianoRoll(
     context.strokeRect(left, top, width, height);
     context.setLineDash([]);
   }
+}
+
+function drawPlayhead(
+  context: CanvasRenderingContext2D,
+  rollViewport: PianoRollViewport,
+  height: number,
+  playheadTick: number | null,
+): void {
+  if (
+    playheadTick === null ||
+    playheadTick < rollViewport.startTick ||
+    playheadTick > rollViewport.endTick
+  ) {
+    return;
+  }
+
+  const x = PIANO_ROLL_LABEL_WIDTH + tickToX(playheadTick, rollViewport);
+  context.globalAlpha = 1;
+  context.strokeStyle = "#f8fafc";
+  context.lineWidth = 2;
+  context.setLineDash([]);
+  context.beginPath();
+  context.moveTo(x, 0);
+  context.lineTo(x, height);
+  context.stroke();
+  context.lineWidth = 1;
 }
 
 function drawPitchMarkers(

@@ -13,6 +13,7 @@ function snapshot(label: string): EditorSnapshot {
     voiceOverrides: { [label]: "voice-1" },
     voiceOrder: [label],
     voiceLabels: {},
+    rangeAssignedNoteIds: new Set(),
   };
 }
 

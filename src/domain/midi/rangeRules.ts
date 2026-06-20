@@ -158,3 +158,33 @@ export function buildVoiceOverridesFromRangeRules(
 
   return patch;
 }
+
+/**
+ * Merges a freshly computed range patch into the current overrides, but
+ * skips any note that already has an override the previous range
+ * application didn't make (i.e. a hand correction layered on top) — so
+ * nudging a marker and reapplying ranges doesn't silently undo edits the
+ * user made after the last apply. Notes the patch newly assigns become
+ * range-assigned themselves, so a later reapply can still adjust them.
+ */
+export function applyRangePatchPreservingHandCorrections(
+  currentOverrides: VoiceOverrides,
+  rangeAssignedNoteIds: ReadonlySet<string>,
+  rangePatch: VoiceOverrides,
+): { overrides: VoiceOverrides; rangeAssignedNoteIds: Set<string> } {
+  const overrides = { ...currentOverrides };
+  const nextRangeAssignedNoteIds = new Set(rangeAssignedNoteIds);
+
+  for (const [noteId, voiceId] of Object.entries(rangePatch)) {
+    const isHandCorrected =
+      Object.prototype.hasOwnProperty.call(currentOverrides, noteId) &&
+      !rangeAssignedNoteIds.has(noteId);
+    if (isHandCorrected) {
+      continue;
+    }
+    overrides[noteId] = voiceId;
+    nextRangeAssignedNoteIds.add(noteId);
+  }
+
+  return { overrides, rangeAssignedNoteIds: nextRangeAssignedNoteIds };
+}
