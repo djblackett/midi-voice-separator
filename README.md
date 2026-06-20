@@ -17,7 +17,8 @@ tracks.
   continuity, closest pitch, forced new voice, imported, or user-locked).
 - Canvas piano-roll rendering: voice-colored notes, a dashed outline on low-confidence notes,
   and a confidence summary banner ("N% mean assignment confidence — M notes flagged for
-  review").
+  review"). A collapsible color-to-voice legend sits in the piano roll's bottom-right corner so
+  you don't have to scroll up to the "Voices" panel to remember which color is which.
 - Multi-note selection: click, shift-click to add/remove, or drag a marquee over many.
 - Bulk voice reassignment with `1`-`9` keyboard shortcuts.
 - Voice management: create, inline-rename, merge, solo (dim other voices), and reorder voices.

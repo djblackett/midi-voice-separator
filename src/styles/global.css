@@ -537,3 +537,62 @@ kbd {
   padding: 4px 8px;
   cursor: pointer;
 }
+
+.piano-roll-legend {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 1;
+  max-width: 200px;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.92);
+  font-size: 12px;
+}
+
+.piano-roll-legend-toggle {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.piano-roll-legend.collapsed .piano-roll-legend-toggle {
+  border-radius: 4px;
+}
+
+.piano-roll-legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 6px;
+  max-height: 160px;
+  overflow-y: auto;
+  border-top: 1px solid #334155;
+}
+
+.piano-roll-legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.piano-roll-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(248, 250, 252, 0.4);
+  flex-shrink: 0;
+}
+
+.piano-roll-legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

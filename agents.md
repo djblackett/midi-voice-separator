@@ -830,6 +830,43 @@ noteVoiceIds)` to `voiceManagement.ts` — appends brand-new ids like
   confirmed back to its pre-investigation count — the scratch
   `#[ignore]` test was deleted after use, not committed),
   `pnpm rust:clippy`, `cargo fmt --check` all clean.
+- Follow-up: the user's "still only 2 voices" follow-up turned out to
+  be a misread of the already-correct 2-column legend grid (all 4
+  voices were there, just side-by-side in pairs) — no further bug.
+
+### Collapsible piano-roll legend
+
+While investigating the above, the user noted the "Voices" panel
+(color swatches + labels) lives well above the piano roll and scrolls
+out of view, making it easy to lose track of which color is which
+voice — exactly what caused the legend misread. Added a small overlay
+legend directly on the canvas:
+
+- `PianoRoll.tsx`: new `isLegendCollapsed` local state (ephemeral UI
+  state, not part of undo/redo or `EditorSnapshot` — it's a per-session
+  display preference, not corrigible project state). Renders a
+  `.piano-roll-legend` div in the shell's bottom-right corner (the
+  reset-zoom button already owns the top-right), listing every
+  `project.voices` entry with its swatch color from `drawPianoRoll.ts`'s
+  exported `getVoiceFillColor` — the same function the canvas itself
+  uses, so the legend's colors are guaranteed to match what's drawn,
+  not a separately-maintained, potentially-divergent color source (the
+  existing `App.tsx` voice-swatch legend uses a CSS-variable-by-list-
+  index scheme instead; this one deliberately doesn't, to stay tied to
+  the canvas's actual per-note color).
+- A toggle button collapses it to just a `Voices ▸`/`▾` header, per the
+  request that it not get in the way.
+- `global.css`: `.piano-roll-legend` and related styles, positioned
+  absolute with a max-height scrolling list for projects with many
+  voices.
+- No new unit tests — this is presentational glue in the same
+  untested-by-convention category as `PianoRoll.tsx`'s pointer-event
+  handling (see Architecture Invariants below); verified instead with
+  a throwaway Playwright script (faked Tauri IPC, real dev-server
+  bundle) confirming the legend renders with correct colors/labels and
+  the collapse toggle works, then deleted, not committed.
+- Verified: `pnpm test` (150/150, unchanged), `pnpm lint`,
+  `pnpm format:check`, `pnpm build` all clean. No Rust changes.
 
 ## Architecture Invariants
 

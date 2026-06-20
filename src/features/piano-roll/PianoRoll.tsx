@@ -11,6 +11,7 @@ import { pitchToY, xToTick, yToPitch } from "./coordinates";
 import {
   buildViewport,
   drawPianoRoll,
+  getVoiceFillColor,
   PIANO_ROLL_LABEL_WIDTH,
   type MarqueeRect,
 } from "./drawPianoRoll";
@@ -64,6 +65,7 @@ export function PianoRoll({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
   const dragStartRef = useRef<{ point: { x: number; y: number }; additive: boolean } | null>(null);
@@ -474,6 +476,31 @@ export function PianoRoll({
         <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>
           Reset zoom ({viewportWindow.zoomLevel.toFixed(1)}x)
         </button>
+      ) : null}
+      {project && project.voices.length > 0 ? (
+        <div className={isLegendCollapsed ? "piano-roll-legend collapsed" : "piano-roll-legend"}>
+          <button
+            type="button"
+            className="piano-roll-legend-toggle"
+            onClick={() => setIsLegendCollapsed((collapsed) => !collapsed)}
+            aria-expanded={isLegendCollapsed ? "false" : "true"}
+          >
+            {isLegendCollapsed ? "Voices ▸" : "Voices ▾"}
+          </button>
+          {!isLegendCollapsed ? (
+            <ul className="piano-roll-legend-list">
+              {project.voices.map((voice) => (
+                <li key={voice.id}>
+                  <span
+                    className="piano-roll-legend-swatch"
+                    style={{ backgroundColor: getVoiceFillColor(voice.id) }}
+                  />
+                  <span className="piano-roll-legend-label">{voice.label}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
