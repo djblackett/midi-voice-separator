@@ -76,8 +76,10 @@ pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiRe
 pub fn reassign_voices(
     mut project: MidiProjectDto,
     locked: HashMap<String, String>,
+    max_voice_count: Option<usize>,
 ) -> Result<MidiProjectDto, AppError> {
-    project.voices = assign_heuristic_voices_with_locks(&mut project.notes, &locked);
+    project.voices =
+        assign_heuristic_voices_with_locks(&mut project.notes, &locked, max_voice_count);
     project.separation_summary = summarize_separation_quality(&project.notes);
     Ok(project)
 }
@@ -209,7 +211,7 @@ mod tests {
         input.notes.push(note("b", "voice-1", 64, 480, 960));
         let locked = HashMap::from([("a".to_string(), "voice-9".to_string())]);
 
-        let result = reassign_voices(input, locked).expect("reassignment should succeed");
+        let result = reassign_voices(input, locked, None).expect("reassignment should succeed");
 
         let locked_note = result
             .notes
@@ -219,5 +221,19 @@ mod tests {
         assert_eq!(locked_note.voice_id, "voice-9");
         assert_eq!(locked_note.assignment_reason, AssignmentReason::UserLocked);
         assert_eq!(result.separation_summary.voice_count, result.voices.len());
+    }
+
+    #[test]
+    fn reassign_voices_respects_the_max_voice_count_cap_through_the_command() {
+        let mut input = project();
+        input.notes[0].start_tick = 0;
+        input.notes[0].end_tick = 240;
+        input.notes.push(note("b", "voice-1", 64, 120, 360));
+
+        let result =
+            reassign_voices(input, HashMap::new(), Some(1)).expect("reassignment should succeed");
+
+        assert_eq!(result.notes[0].voice_id, result.notes[1].voice_id);
+        assert_eq!(result.separation_summary.voice_count, 1);
     }
 }

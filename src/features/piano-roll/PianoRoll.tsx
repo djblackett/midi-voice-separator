@@ -6,14 +6,31 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { MidiProject } from "../../domain/midi/midiProject";
-import { buildViewport, drawPianoRoll, type MarqueeRect } from "./drawPianoRoll";
+import { clampMidiPitch, type PitchMarker } from "../../domain/midi/rangeRules";
+import { pitchToY, xToTick, yToPitch } from "./coordinates";
+import {
+  buildViewport,
+  drawPianoRoll,
+  PIANO_ROLL_LABEL_WIDTH,
+  type MarqueeRect,
+} from "./drawPianoRoll";
 import { hitTestPianoRollNote, hitTestPianoRollNotesInRect } from "./hitTest";
 import { shouldPaintNote } from "./paint";
 import { resolveSelection } from "./selection";
+import {
+  defaultViewportWindow,
+  panBy,
+  panToReveal,
+  visibleTickRange,
+  zoomAt,
+  type ViewportWindow,
+} from "./viewportWindow";
 
 const MARQUEE_THRESHOLD_PX = 4;
+const ZOOM_FACTOR_PER_WHEEL_NOTCH = 1.2;
+const MARKER_HIT_RADIUS_PX = 14;
 
-export type InteractionMode = "select" | "paint";
+export type InteractionMode = "select" | "paint" | "range";
 
 interface PianoRollProps {
   project: MidiProject | null;
@@ -23,6 +40,8 @@ interface PianoRollProps {
   interactionMode?: InteractionMode;
   activeVoiceId?: string | null;
   onPaintNotes?: (noteIds: string[]) => void;
+  pitchMarkers?: readonly PitchMarker[];
+  onPitchMarkersChange?: (next: PitchMarker[]) => void;
 }
 
 export function PianoRoll({
@@ -33,14 +52,19 @@ export function PianoRoll({
   interactionMode = "select",
   activeVoiceId = null,
   onPaintNotes = () => {},
+  pitchMarkers = [],
+  onPitchMarkersChange = () => {},
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
+  const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
   const dragStartRef = useRef<{ point: { x: number; y: number }; additive: boolean } | null>(null);
   const isPaintingRef = useRef(false);
   const paintedNoteIdsRef = useRef<Map<string, string>>(new Map());
+  const draggedMarkerIdRef = useRef<string | null>(null);
+  const lastDurationTicksRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -62,7 +86,47 @@ export function PianoRoll({
     return () => resizeObserver.disconnect();
   }, []);
 
-  const viewport = useMemo(() => buildViewport(project, size.width, size.height), [project, size]);
+  // Reset pan/zoom only when a genuinely new project is loaded (duration
+  // changes), not on every correction — corrections replace `project`
+  // with a new object reference but never change `durationTicks`.
+  useEffect(() => {
+    const durationTicks = project?.durationTicks ?? null;
+    if (durationTicks !== lastDurationTicksRef.current) {
+      lastDurationTicksRef.current = durationTicks;
+      setViewportWindow(defaultViewportWindow());
+    }
+  }, [project?.durationTicks]);
+
+  const tickRange = useMemo(() => {
+    if (!project) {
+      return undefined;
+    }
+    return visibleTickRange(project.durationTicks, viewportWindow);
+  }, [project, viewportWindow]);
+
+  const viewport = useMemo(
+    () => buildViewport(project, size.width, size.height, tickRange),
+    [project, size, tickRange],
+  );
+
+  // Bring a keyboard-selected note (e.g. review-mode Tab-stepping) into
+  // view, panning only — the user's chosen zoom level is left alone.
+  useEffect(() => {
+    if (!project || selectedNoteIds.size !== 1) {
+      return;
+    }
+    const [noteId] = selectedNoteIds;
+    const note = project.notes.find((candidate) => candidate.id === noteId);
+    if (!note) {
+      return;
+    }
+    setViewportWindow((current) =>
+      panToReveal(current, project.durationTicks, {
+        startTick: note.startTick,
+        endTick: note.endTick,
+      }),
+    );
+  }, [selectedNoteIds, project]);
 
   const marqueePreviewIds = useMemo(() => {
     if (!marqueeRect) {
@@ -99,6 +163,7 @@ export function PianoRoll({
       marqueeRect,
       soloVoiceId,
       paintedNoteIdsRef.current,
+      pitchMarkers,
     );
   }
 
@@ -128,12 +193,39 @@ export function PianoRoll({
       marqueeRect,
       soloVoiceId,
       paintedNoteIdsRef.current,
+      pitchMarkers,
     );
-  }, [project, viewport, effectiveSelection, marqueeRect, size, soloVoiceId]);
+  }, [project, viewport, effectiveSelection, marqueeRect, size, soloVoiceId, pitchMarkers]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+
+  function markerIdFromPoint(point: { x: number; y: number }): string | null {
+    if (point.x > PIANO_ROLL_LABEL_WIDTH || pitchMarkers.length === 0) {
+      return null;
+    }
+
+    const nearest = pitchMarkers
+      .map((marker) => ({
+        marker,
+        distance: Math.abs(point.y - pitchToY(marker.pitch, viewport)),
+      }))
+      .sort((a, b) => a.distance - b.distance)[0];
+
+    return nearest && nearest.distance <= MARKER_HIT_RADIUS_PX ? nearest.marker.id : null;
+  }
+
+  function updateMarkerPitch(markerId: string, point: { y: number }) {
+    const nextPitch = clampMidiPitch(
+      Math.max(viewport.lowestPitch, Math.min(viewport.highestPitch, yToPitch(point.y, viewport))),
+    );
+    onPitchMarkersChange(
+      pitchMarkers.map((marker) =>
+        marker.id === markerId ? { ...marker, pitch: nextPitch } : marker,
+      ),
+    );
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -142,6 +234,18 @@ export function PianoRoll({
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
+
+    if (interactionMode === "range") {
+      const point = pointFromEvent(event);
+      const markerId =
+        markerIdFromPoint(point) ??
+        (point.x <= PIANO_ROLL_LABEL_WIDTH ? (pitchMarkers[0]?.id ?? null) : null);
+      draggedMarkerIdRef.current = markerId;
+      if (markerId) {
+        updateMarkerPitch(markerId, point);
+      }
+      return;
+    }
 
     if (interactionMode === "paint") {
       if (!activeVoiceId) {
@@ -161,6 +265,14 @@ export function PianoRoll({
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (interactionMode === "range") {
+      const markerId = draggedMarkerIdRef.current;
+      if (markerId) {
+        updateMarkerPitch(markerId, pointFromEvent(event));
+      }
+      return;
+    }
+
     if (interactionMode === "paint") {
       if (!isPaintingRef.current || !activeVoiceId) {
         return;
@@ -189,6 +301,11 @@ export function PianoRoll({
   }
 
   function handlePointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (interactionMode === "range") {
+      draggedMarkerIdRef.current = null;
+      return;
+    }
+
     if (interactionMode === "paint") {
       if (isPaintingRef.current) {
         isPaintingRef.current = false;
@@ -236,8 +353,83 @@ export function PianoRoll({
     setMarqueeRect(null);
   }
 
+  // React's `onWheel` JSX prop attaches a passive native listener, so
+  // `preventDefault()` inside it is silently ignored and the page would
+  // still scroll/zoom natively alongside our pan/zoom. Attach a real,
+  // non-passive listener directly instead.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !project) {
+      return;
+    }
+
+    const targetCanvas = canvas;
+    const durationTicks = project.durationTicks;
+
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault();
+
+      if (event.ctrlKey || event.metaKey) {
+        const bounds = targetCanvas.getBoundingClientRect();
+        const x = event.clientX - bounds.left - PIANO_ROLL_LABEL_WIDTH;
+        const rollViewport = {
+          ...viewport,
+          width: Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH),
+        };
+        const anchorTick = xToTick(x, rollViewport);
+        const factor =
+          event.deltaY < 0 ? ZOOM_FACTOR_PER_WHEEL_NOTCH : 1 / ZOOM_FACTOR_PER_WHEEL_NOTCH;
+        setViewportWindow((current) => zoomAt(current, durationTicks, factor, anchorTick));
+        return;
+      }
+
+      const range = visibleTickRange(durationTicks, viewportWindow);
+      const windowTicks = range.endTick - range.startTick;
+      const rollWidth = Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH);
+      const delta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
+      const panDeltaTicks = (delta / rollWidth) * windowTicks;
+      setViewportWindow((current) => panBy(current, panDeltaTicks));
+    }
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, [project, viewport, viewportWindow]);
+
+  function handleResetZoom() {
+    setViewportWindow(defaultViewportWindow());
+  }
+
+  const minimap =
+    project && tickRange
+      ? {
+          leftPercent: (tickRange.startTick / Math.max(1, project.durationTicks)) * 100,
+          widthPercent:
+            ((tickRange.endTick - tickRange.startTick) / Math.max(1, project.durationTicks)) * 100,
+        }
+      : null;
+
+  function handleMinimapClick(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!project) {
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientX - bounds.left) / Math.max(1, bounds.width);
+    const targetTick = ratio * project.durationTicks;
+    setViewportWindow((current) =>
+      panToReveal(current, project.durationTicks, { startTick: targetTick, endTick: targetTick }),
+    );
+  }
+
   return (
     <div className="piano-roll-shell" ref={containerRef}>
+      {minimap ? (
+        <div className="piano-roll-minimap" onPointerDown={handleMinimapClick}>
+          <div
+            className="piano-roll-minimap-window"
+            style={{ left: `${minimap.leftPercent}%`, width: `${minimap.widthPercent}%` }}
+          />
+        </div>
+      ) : null}
       <canvas
         ref={canvasRef}
         aria-label="Piano roll note visualization"
@@ -245,6 +437,11 @@ export function PianoRoll({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       />
+      {viewportWindow.zoomLevel > 1 ? (
+        <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>
+          Reset zoom ({viewportWindow.zoomLevel.toFixed(1)}x)
+        </button>
+      ) : null}
     </div>
   );
 }

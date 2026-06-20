@@ -41,7 +41,14 @@ Primary stack:
 - `src/features/piano-roll/drawPianoRoll.ts`: canvas rendering.
 - `src/features/piano-roll/PianoRoll.tsx`: pointer-gesture handling
   (click/shift-click/marquee select, plus paint-mode click-drag) and canvas
-  lifecycle. Exports `InteractionMode = "select" | "paint"`.
+  lifecycle. Exports `InteractionMode = "select" | "paint" | "range"`.
+- `src/features/piano-roll/viewportWindow.ts`: pure pan/zoom math
+  (`ViewportWindow` = zoom level + raw pan position, resolved against a
+  project's `durationTicks` into a concrete clamped tick range via
+  `visibleTickRange`). `zoomAt` keeps an anchor tick stationary on screen;
+  `panToReveal` pans (never zooms) to bring a tick range into view with a
+  10% margin. Kept separate from `PianoRoll.tsx` for the same
+  unit-testability reason as `selection.ts`/`paint.ts`.
 - `src/features/piano-roll/paint.ts`: pure `shouldPaintNote` predicate used
   by `PianoRoll.tsx`'s paint-stroke logic (kept separate for the same
   unit-testability reason as `selection.ts`).
@@ -444,6 +451,135 @@ is performance validation on real dense files.
   - Next: roadmap Phase 3 (the two deferred items), Phase 4 (pan/zoom),
     Phase 5 (playback — scope as its own plan), or Phase 6 (performance
     validation).
+
+- **Roadmap Phase 3 (the two deferred items) — done.**
+  - **3a, `max_voice_count` soft cap.** `assign_heuristic_voices_with_locks`
+    in `voice_assignment.rs` gained a third parameter,
+    `max_voice_count: Option<usize>` (the unlocked wrapper
+    `assign_heuristic_voices` still calls it with `None`, unchanged
+    behavior). `compatible_candidates` was generalized into
+    `score_candidates(voices, note, require_compatible: bool)` so the same
+    scoring logic can run with or without the overlap filter. When an
+    unlocked note has no compatible (non-overlapping) voice **and** the
+    cap is already reached (`voices.len() >= max`, and at least one voice
+    already exists — the very first voice is always allowed regardless of
+    cap), it's forced into the lowest-cost existing voice anyway via
+    `score_candidates(..., false)`, rather than opening a new one. This is
+    a deliberate trade-off documented on the function: the voice now holds
+    two overlapping notes. New `AssignmentReason::VoiceCapReached` with
+    confidence `0.0` marks these, so a forced-overlap assignment always
+    surfaces in review mode rather than silently happening. Locked notes
+    are exempt from the cap entirely — a hard user constraint should never
+    be denied because of a soft heuristic cap. One subtlety: the shared
+    post-match code that updates `voice.last_end_tick` normally overwrites
+    it with `note.end_tick`; for the forced-overlap case specifically it
+    now takes `.max(note.end_tick)` instead, since a forced-overlap note
+    was never guaranteed to end after the voice's true latest note.
+    `reassign_voices` (`commands/midi.rs`) and `commands.ts`'s
+    `reassignVoices` both gained the matching `max_voice_count`/
+    `maxVoiceCount` parameter (sent as `null` when unset, since
+    `serde`/Tauri need an explicit `Option` on the Rust side rather than a
+    missing key). `App.tsx` added a small "Max voices" number input next
+    to "Re-run separation" (blank/`auto` = no cap), parsed defensively
+    (non-positive or non-integer input is treated as no cap, not an
+    error).
+  - **3b, undoable re-run.** `EditorSnapshot` in `editorHistory.ts` now
+    includes `project: MidiProject | null` alongside the three
+    already-tracked pieces of state, made non-optional (every snapshot
+    everywhere now captures all four fields together) rather than the
+    plan's originally-suggested "optionally include project" — simpler,
+    since conditional restore logic would have been more complex than
+    just always carrying the field. `handleReassign` now calls the same
+    `pushHistorySnapshot()` every other mutating action uses, right after
+    a successful `reassignVoices` call but before `setProject` applies the
+    result (so the snapshot captures the _pre_-reassign project via
+    closure, and a failed reassign no longer pollutes the undo stack with
+    a no-op entry).
+  - Verified: `pnpm rust:test` (41/41, including new
+    `voice_cap_forces_reuse_instead_of_opening_a_new_voice`,
+    `voice_cap_still_allows_the_very_first_voice`,
+    `voice_cap_does_not_block_locked_notes`, and a
+    `reassign_voices_respects_the_max_voice_count_cap_through_the_command`
+    command-level test), `cargo fmt --check`, `pnpm rust:check`,
+    `pnpm rust:clippy -D warnings`, `pnpm test` (87/87, including updated
+    `commands.test.ts` cases for the new `maxVoiceCount` argument),
+    `pnpm lint`, `pnpm format:check`, `pnpm build`.
+  - Not yet verified: manual `pnpm tauri dev` pass for the new "Max
+    voices" input and for confirming a `Ctrl+Z` right after "Re-run
+    separation" genuinely restores the prior project state (notes, voices,
+    and separation summary all reverted together).
+  - Next: roadmap Phase 4 (pan/zoom), Phase 5 (playback — scope as its own
+    plan), or Phase 6 (performance validation).
+
+- **Pitch range marker slice — in progress.** Added the first usable range-based
+  correction path requested by the user: two pitch markers are seeded on import
+  via `buildDefaultPitchMarkers`, rendered as draggable orange marker handles in
+  the piano-roll label gutter, and exposed in a compact `Pitch ranges` panel.
+  `rangeRules.ts` owns the pure range model (`PitchMarker`, `VoiceRangeRule`) and
+  builds an override patch from the default rule order: above Marker 1 -> voice
+  1, Marker 2 through Marker 1 -> voice 2, and below Marker 2 -> voice 3 when
+  those voices exist. `App.tsx` applies that patch by merging into the existing
+  `voiceOverrides` map after `pushHistorySnapshot()`, so the operation is
+  undoable and export continues to use the already-derived `displayedProject`.
+  Manual correction still happens afterward through the existing select/number
+  and paint-mode paths; reapplying ranges intentionally overwrites matching
+  notes because the app does not yet track provenance for range-generated vs.
+  hand-edited overrides.
+  - Files touched so far: `src/domain/midi/rangeRules.ts`,
+    `src/domain/midi/rangeRules.test.ts`, `src/app/App.tsx`,
+    `src/features/piano-roll/PianoRoll.tsx`,
+    `src/features/piano-roll/drawPianoRoll.ts`, `src/styles/global.css`,
+    and this `agents.md` note.
+  - Verified: `pnpm test` (116/116), `pnpm lint`, `pnpm build`, and
+    `pnpm format:check`.
+
+- **Roadmap Phase 4 (piano roll pan/zoom) — done.** New
+  `viewportWindow.ts` (see Code Map) is the pure pan/zoom model; it's
+  horizontal-only (time axis) by design — the pitch axis still auto-fits
+  to the note range as before, since the documented limitation was
+  specifically about the timeline being squashed into the canvas width,
+  not pitch. `drawPianoRoll.ts`'s `buildViewport` gained an optional
+  `tickWindow` parameter (defaults to the old full-project-span behavior
+  when omitted, so every existing call site/test stayed correct
+  unchanged); the beat-gridline loop was also fixed to start at the
+  nearest beat at-or-before the visible window instead of
+  unconditionally at tick 0, since looping from the project start on
+  every frame would scan far more beats than are ever drawn once a
+  zoomed-in sub-window is possible. `PianoRoll.tsx` owns a
+  `viewportWindow` state, reset only when `project.durationTicks`
+  changes (i.e. a genuinely new import — corrections replace `project`
+  with a new object reference but never change duration, so zoom/pan
+  intentionally survives every correction). Ctrl/Cmd+wheel zooms
+  anchored at the cursor tick; plain wheel pans; a "Reset zoom" button
+  appears once zoomed; a thin clickable minimap bar shows the current
+  window against the full duration. Most importantly, this phase closes
+  the loop on the original motivating complaint: a new effect watches
+  `selectedNoteIds` and auto-pans (never auto-zooms, so it doesn't fight
+  the user's chosen zoom level) to reveal a single keyboard-selected
+  note — so `Tab`-stepping through flagged notes (Phase 4 of the
+  original plan) now actually scrolls a long file into view instead of
+  just selecting an off-screen note.
+  **Bug caught only by manually driving the running app, not by unit
+  tests:** React's `onWheel` JSX prop attaches the underlying native
+  listener as passive, so `event.preventDefault()` inside it is silently
+  ignored — the browser's native scroll/zoom would still have fired
+  alongside ours in the real app (confirmed via 27
+  `"Unable to preventDefault inside passive event listener invocation"`
+  console errors during the verification pass below). Fixed by attaching
+  a real `wheel` listener directly via `canvas.addEventListener("wheel", handler, { passive: false })`
+  in a `useEffect` instead of the JSX prop. This is exactly the kind of
+  bug the recurring "manual pass" exists to catch — no unit test would
+  have exercised the browser's passive-listener semantics.
+  - Verified: `pnpm test` (104/104 before the range-rules slice landed
+    concurrently, 116/116 after merging with it), `pnpm lint`,
+    `pnpm format:check`, `pnpm build`, `pnpm rust:check` (untouched).
+    Manually drove the real running app (same faked-IPC Playwright
+    technique as roadmap Phase 1) for Ctrl+wheel zoom anchoring, plain-
+    wheel pan, the minimap, the reset button, and review-mode auto-pan
+    onto an off-screen flagged note — all confirmed working visually via
+    screenshots, with zero console errors after the passive-listener fix.
+  - Next: roadmap Phase 5 (playback — scope as its own plan) or Phase 6
+    (performance validation on real dense files).
 
 ## Architecture Invariants
 

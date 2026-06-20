@@ -3,6 +3,7 @@ import {
   type MidiNote,
   type MidiProject,
 } from "../../domain/midi/midiProject";
+import type { PitchMarker } from "../../domain/midi/rangeRules";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 
@@ -25,17 +26,23 @@ export function getVoiceStrokeColor(voiceId: string): string {
   return VOICE_STROKES[voiceColorIndex(voiceId)];
 }
 
+export interface TickWindow {
+  startTick: number;
+  endTick: number;
+}
+
 export function buildViewport(
   project: MidiProject | null,
   width: number,
   height: number,
+  tickWindow?: TickWindow,
 ): PianoRollViewport {
   if (!project || project.notes.length === 0) {
     return {
       width,
       height,
-      startTick: 0,
-      endTick: Math.max(1, project?.durationTicks ?? 1920),
+      startTick: tickWindow?.startTick ?? 0,
+      endTick: tickWindow?.endTick ?? Math.max(1, project?.durationTicks ?? 1920),
       lowestPitch: 48,
       highestPitch: 72,
     };
@@ -48,8 +55,8 @@ export function buildViewport(
   return {
     width,
     height,
-    startTick: 0,
-    endTick: Math.max(1, project.durationTicks),
+    startTick: tickWindow?.startTick ?? 0,
+    endTick: tickWindow?.endTick ?? Math.max(1, project.durationTicks),
     lowestPitch,
     highestPitch,
   };
@@ -107,6 +114,7 @@ export function drawPianoRoll(
   marqueeRect: MarqueeRect | null = null,
   soloVoiceId: string | null = null,
   paintPreview: ReadonlyMap<string, string> = new Map(),
+  pitchMarkers: readonly PitchMarker[] = [],
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -139,7 +147,12 @@ export function drawPianoRoll(
   }
 
   const beatTicks = Math.max(1, project?.ppq ?? 480);
-  for (let tick = 0; tick <= rollViewport.endTick; tick += beatTicks) {
+  // Start at the nearest beat at-or-before the visible window, not
+  // unconditionally at tick 0 — once the window can be a zoomed-in
+  // sub-range of a long project, looping from the very start every frame
+  // would scan far more beats than are ever drawn.
+  const firstBeatTick = Math.floor(rollViewport.startTick / beatTicks) * beatTicks;
+  for (let tick = firstBeatTick; tick <= rollViewport.endTick; tick += beatTicks) {
     const x = PIANO_ROLL_LABEL_WIDTH + tickToX(tick, rollViewport);
     context.strokeStyle = tick % (beatTicks * 4) === 0 ? "#475569" : "#263244";
     context.beginPath();
@@ -188,6 +201,8 @@ export function drawPianoRoll(
     context.globalAlpha = 1;
   }
 
+  drawPitchMarkers(context, viewport, pitchMarkers);
+
   if (marqueeRect) {
     const left = Math.min(marqueeRect.x0, marqueeRect.x1);
     const top = Math.min(marqueeRect.y0, marqueeRect.y1);
@@ -201,5 +216,44 @@ export function drawPianoRoll(
     context.setLineDash([4, 3]);
     context.strokeRect(left, top, width, height);
     context.setLineDash([]);
+  }
+}
+
+function drawPitchMarkers(
+  context: CanvasRenderingContext2D,
+  viewport: PianoRollViewport,
+  pitchMarkers: readonly PitchMarker[],
+): void {
+  if (pitchMarkers.length === 0) {
+    return;
+  }
+
+  for (const marker of pitchMarkers) {
+    if (marker.pitch < viewport.lowestPitch || marker.pitch > viewport.highestPitch) {
+      continue;
+    }
+
+    const y = pitchToY(marker.pitch, viewport);
+    context.globalAlpha = 1;
+    context.strokeStyle = "#f97316";
+    context.lineWidth = 1;
+    context.setLineDash([6, 4]);
+    context.beginPath();
+    context.moveTo(PIANO_ROLL_LABEL_WIDTH, y);
+    context.lineTo(viewport.width, y);
+    context.stroke();
+    context.setLineDash([]);
+
+    context.fillStyle = "#f97316";
+    context.beginPath();
+    context.moveTo(PIANO_ROLL_LABEL_WIDTH - 8, y);
+    context.lineTo(PIANO_ROLL_LABEL_WIDTH - 1, y - 5);
+    context.lineTo(PIANO_ROLL_LABEL_WIDTH - 1, y + 5);
+    context.closePath();
+    context.fill();
+
+    context.fillStyle = "#fed7aa";
+    context.font = "11px system-ui";
+    context.fillText(`${marker.label}: ${marker.pitch}`, 6, Math.max(12, y - 7));
   }
 }

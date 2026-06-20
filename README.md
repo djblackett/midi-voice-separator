@@ -24,10 +24,15 @@ tracks.
 - Flagged-note review mode: `Tab`/`Shift+Tab` step through low-confidence notes, or use the
   "Review flagged notes" button.
 - Paint mode: toggle, pick an active voice, then click-drag across notes to repaint them.
+- Pitch-range mode: drag horizontal marker handles in the piano-roll label gutter, then
+  apply them to bulk-assign notes to voices by pitch band (above/between/below markers).
 - "Re-run separation": re-runs the heuristic while treating every manual correction as a
-  locked constraint, so corrections survive a re-run.
-- Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, and
-  paint actions.
+  locked constraint (so corrections survive a re-run), with an optional max-voice-count cap.
+- Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, paint,
+  pitch-range, and re-run-separation actions.
+- Piano-roll pan/zoom: `Ctrl`/`Cmd`+wheel zooms anchored at the cursor, plain wheel pans, a
+  minimap shows the current window against the full timeline, and review-mode `Tab`-stepping
+  auto-pans (without changing zoom) to bring an off-screen flagged note into view.
 - Export of corrected voice assignments to a new Standard MIDI File (one track per voice).
 - Frontend (Vitest) and Rust (`cargo test`) test suites.
 
@@ -35,10 +40,8 @@ tracks.
 
 This version does not yet perform MIDI playback, DAW routing, audio separation, or machine
 learning. The current voice assignment is a heuristic, not a finished musical separation
-algorithm. The piano roll has no pan/zoom yet — the full project duration is always
-compressed into the canvas width, so review-mode jumps can land on a thin sliver on a long
-file. "Re-run separation" is not undoable (it replaces the whole project, not just the
-tracked correction state that undo/redo covers).
+algorithm. Pitch-range rules don't yet track provenance, so reapplying them overwrites
+matching notes' voice assignments even if they were since hand-corrected.
 
 ## Windows prerequisites
 
@@ -77,8 +80,11 @@ DTOs.
 
 Ticks are the canonical timing coordinate. The frontend can eventually derive seconds for
 display or playback, but the imported model keeps PPQ tick positions so MIDI timing remains
-lossless. The piano roll is a single HTML Canvas with coordinate math isolated from React so
-zooming, scrolling, selection, and editing can be added without rewriting the renderer.
+lossless. The piano roll is a single HTML Canvas with coordinate math isolated from React, so
+pan/zoom is a separate `ViewportWindow` (zoom level + pan position) resolved against the
+project's duration into a concrete tick range each render, rather than the canvas always
+spanning the whole project — `drawPianoRoll`/hit-testing don't know the difference, since both
+already work in terms of an arbitrary `{ startTick, endTick }` window.
 
 `midly` parses SMF data into structures that borrow from the input byte buffer. The Rust
 parser converts those borrowed structures into owned application DTOs before returning them
@@ -97,15 +103,18 @@ Manual corrections are represented as a frontend-only note-to-voice override map
 top of the immutable imported project; voice identity, order, and labels are separate
 frontend state, not solely derived from whatever the heuristic produced. "Re-run separation"
 sends the original imported notes plus the current override map (as a lock set) back to
-Rust, which re-runs the heuristic respecting those locks and returns an updated project.
-Export sends the current corrected project to Rust, which writes a format-1 Standard MIDI
-File with a conductor track and one note track per voice.
+Rust, which re-runs the heuristic respecting those locks and an optional voice-count cap
+(forcing reuse of the lowest-cost existing voice, marked at zero confidence for review,
+rather than exceeding the cap) and returns an updated project. That call is itself a single
+undo/redo step, like every other correction. Export sends the current corrected project to
+Rust, which writes a format-1 Standard MIDI File with a conductor track and one note track
+per voice.
 
 ## Next milestone
 
 The correction-UX plan (multi-select, voice management, confidence scoring, review mode,
-paint mode, locked re-run, undo/redo) is complete. Candidates for the next milestone: piano
-roll pan/zoom (the full timeline is always compressed into the canvas width today), MIDI
-playback so corrections can be checked by ear instead of only by eye, or the two items the
-correction-UX plan deferred (an optional max-voice-count cap on re-run, and making "Re-run
-separation" itself undoable).
+paint mode, locked re-run, undo/redo), both items it originally deferred (the
+max-voice-count cap, undoable re-run), and piano-roll pan/zoom are complete. Candidates for
+the next milestone: MIDI playback so corrections can be checked by ear instead of only by
+eye, a performance pass on real dense chiptune files, or provenance tracking for
+pitch-range-generated overrides so reapplying ranges doesn't clobber hand corrections.

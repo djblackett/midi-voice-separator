@@ -8,7 +8,12 @@ import {
 } from "./editorHistory";
 
 function snapshot(label: string): EditorSnapshot {
-  return { voiceOverrides: { [label]: "voice-1" }, voiceOrder: [label], voiceLabels: {} };
+  return {
+    project: null,
+    voiceOverrides: { [label]: "voice-1" },
+    voiceOrder: [label],
+    voiceLabels: {},
+  };
 }
 
 describe("pushHistory", () => {

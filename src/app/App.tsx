@@ -32,6 +32,14 @@ import {
 } from "../domain/midi/voiceManagement";
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
+  buildDefaultPitchMarkers,
+  buildDefaultVoiceRangeRules,
+  buildVoiceOverridesFromRangeRules,
+  clampMidiPitch,
+  describePitchRangeRule,
+  type PitchMarker,
+} from "../domain/midi/rangeRules";
+import {
   createEditorHistory,
   pushHistory,
   redoHistory,
@@ -69,7 +77,9 @@ export default function App() {
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
+  const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
+  const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -87,6 +97,10 @@ export default function App() {
   const selectedNote = selectedNotes.length === 1 ? selectedNotes[0] : null;
   const flaggedNotes = useMemo(
     () => buildFlaggedNoteQueue(displayedProject?.notes ?? []),
+    [displayedProject],
+  );
+  const voiceRangeRules = useMemo(
+    () => buildDefaultVoiceRangeRules(displayedProject?.voices.map((voice) => voice.id) ?? []),
     [displayedProject],
   );
 
@@ -199,7 +213,9 @@ export default function App() {
         setActiveVoiceId(null);
         setSoloVoiceId(null);
         setInteractionMode("select");
+        setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
         setHistory(createEditorHistory());
+        setMaxVoiceCountInput("");
         setExportResult(null);
         setExportError(null);
       }
@@ -254,11 +270,18 @@ export default function App() {
       return;
     }
 
+    const parsedMaxVoiceCount = Number.parseInt(maxVoiceCountInput, 10);
+    const maxVoiceCount =
+      Number.isInteger(parsedMaxVoiceCount) && parsedMaxVoiceCount > 0
+        ? parsedMaxVoiceCount
+        : undefined;
+
     setIsReassigning(true);
     setReassignError(null);
 
     try {
-      const reassignedProject = await reassignVoices(project, voiceOverrides);
+      const reassignedProject = await reassignVoices(project, voiceOverrides, maxVoiceCount);
+      pushHistorySnapshot();
       setProject(reassignedProject);
       setVoiceOrder((currentOrder) =>
         mergeVoiceOrder(
@@ -285,16 +308,17 @@ export default function App() {
 
   function pushHistorySnapshot() {
     setHistory((currentHistory) =>
-      pushHistory(currentHistory, { voiceOverrides, voiceOrder, voiceLabels }),
+      pushHistory(currentHistory, { project, voiceOverrides, voiceOrder, voiceLabels }),
     );
   }
 
   function handleUndo() {
-    const result = undoHistory(history, { voiceOverrides, voiceOrder, voiceLabels });
+    const result = undoHistory(history, { project, voiceOverrides, voiceOrder, voiceLabels });
     if (!result) {
       return;
     }
     setHistory(result.history);
+    setProject(result.snapshot.project);
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
@@ -302,11 +326,12 @@ export default function App() {
   }
 
   function handleRedo() {
-    const result = redoHistory(history, { voiceOverrides, voiceOrder, voiceLabels });
+    const result = redoHistory(history, { project, voiceOverrides, voiceOrder, voiceLabels });
     if (!result) {
       return;
     }
     setHistory(result.history);
+    setProject(result.snapshot.project);
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
@@ -382,8 +407,44 @@ export default function App() {
     setExportResult(null);
   }
 
-  function handleToggleInteractionMode() {
+  function handleMarkerPitchChange(markerId: string, pitch: number) {
+    if (!Number.isFinite(pitch)) {
+      return;
+    }
+
+    setPitchMarkers((currentMarkers) =>
+      currentMarkers.map((marker) =>
+        marker.id === markerId ? { ...marker, pitch: clampMidiPitch(pitch) } : marker,
+      ),
+    );
+  }
+
+  function handleApplyPitchRanges() {
+    if (!displayedProject || voiceRangeRules.length === 0) {
+      return;
+    }
+
+    const rangePatch = buildVoiceOverridesFromRangeRules(
+      displayedProject.notes,
+      pitchMarkers,
+      voiceRangeRules,
+    );
+    if (Object.keys(rangePatch).length === 0) {
+      return;
+    }
+
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...rangePatch }));
+    setSelectedNoteIds(new Set(Object.keys(rangePatch)));
+    setExportResult(null);
+  }
+
+  function handleTogglePaintMode() {
     setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
+  }
+
+  function handleToggleRangeMode() {
+    setInteractionMode((mode) => (mode === "range" ? "select" : "range"));
   }
 
   function handleReviewStep(direction: 1 | -1) {
@@ -501,6 +562,18 @@ export default function App() {
                 Review flagged notes ({flaggedNotes.length})
               </button>
             ) : null}
+            <label className="max-voice-count-label">
+              Max voices
+              <input
+                type="number"
+                className="max-voice-count-input"
+                min={1}
+                placeholder="auto"
+                value={maxVoiceCountInput}
+                onChange={(event) => setMaxVoiceCountInput(event.target.value)}
+                aria-label="Maximum voice count for re-run separation"
+              />
+            </label>
             <button
               type="button"
               className="secondary-button"
@@ -632,6 +705,56 @@ export default function App() {
       ) : null}
 
       {displayedProject ? (
+        <section className="range-rules" aria-label="Pitch range voice rules">
+          <div className="range-rules-header">
+            <h2>Pitch ranges</h2>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleApplyPitchRanges}
+              disabled={voiceRangeRules.length === 0}
+            >
+              Apply ranges
+            </button>
+          </div>
+          <div className="pitch-marker-list">
+            {pitchMarkers.map((marker) => (
+              <label key={marker.id} className="pitch-marker-control">
+                {marker.label}
+                <input
+                  type="number"
+                  min={0}
+                  max={127}
+                  value={marker.pitch}
+                  onChange={(event) =>
+                    handleMarkerPitchChange(marker.id, Number.parseInt(event.target.value, 10))
+                  }
+                />
+              </label>
+            ))}
+          </div>
+          {voiceRangeRules.length > 0 ? (
+            <ul className="range-rule-list">
+              {voiceRangeRules.map((rule) => {
+                const voiceLabel =
+                  displayedProject.voices.find((voice) => voice.id === rule.voiceId)?.label ??
+                  rule.voiceId;
+                return (
+                  <li key={rule.id}>
+                    <span>{rule.label}</span>
+                    <strong>{voiceLabel}</strong>
+                    <span>{describePitchRangeRule(rule, pitchMarkers)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="range-rules-empty">Create at least one voice before applying ranges.</p>
+          )}
+        </section>
+      ) : null}
+
+      {displayedProject ? (
         <section className="selection-details" aria-label="Selected note details">
           <h2>Selected note{selectedNotes.length === 1 ? "" : "s"}</h2>
           {selectedNote ? (
@@ -675,10 +798,18 @@ export default function App() {
           <button
             type="button"
             className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}
-            onClick={handleToggleInteractionMode}
+            onClick={handleTogglePaintMode}
             aria-pressed={interactionMode === "paint" ? "true" : "false"}
           >
             {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
+          </button>
+          <button
+            type="button"
+            className={interactionMode === "range" ? "secondary-button active" : "secondary-button"}
+            onClick={handleToggleRangeMode}
+            aria-pressed={interactionMode === "range" ? "true" : "false"}
+          >
+            {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
           </button>
           {interactionMode === "paint" ? (
             <span className="piano-roll-toolbar-hint">
@@ -688,6 +819,10 @@ export default function App() {
                     activeVoiceId
                   }.`
                 : "Click a voice swatch above to choose what to paint."}
+            </span>
+          ) : interactionMode === "range" ? (
+            <span className="piano-roll-toolbar-hint">
+              Drag marker handles in the left piano-roll gutter, then apply the pitch ranges.
             </span>
           ) : null}
         </section>
@@ -702,6 +837,8 @@ export default function App() {
           interactionMode={interactionMode}
           activeVoiceId={activeVoiceId}
           onPaintNotes={handlePaintNotes}
+          pitchMarkers={pitchMarkers}
+          onPitchMarkersChange={setPitchMarkers}
         />
       </section>
 

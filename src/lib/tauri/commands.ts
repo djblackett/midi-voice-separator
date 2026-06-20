@@ -69,9 +69,14 @@ export async function exportMidi(path: string, project: MidiProject): Promise<Ex
 export async function reassignVoices(
   project: MidiProject,
   locked: Record<string, string>,
+  maxVoiceCount?: number,
 ): Promise<MidiProject> {
   try {
-    return await invoke<MidiProject>(COMMANDS.reassignVoices, { project, locked });
+    return await invoke<MidiProject>(COMMANDS.reassignVoices, {
+      project,
+      locked,
+      maxVoiceCount: maxVoiceCount ?? null,
+    });
   } catch (error) {
     throw toCommandError(error);
   }

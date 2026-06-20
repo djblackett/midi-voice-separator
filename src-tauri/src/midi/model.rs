@@ -40,6 +40,7 @@ pub enum AssignmentReason {
     ClosestPitch,
     NewVoiceNoFit,
     UserLocked,
+    VoiceCapReached,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]

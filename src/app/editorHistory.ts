@@ -1,6 +1,8 @@
+import type { MidiProject } from "../domain/midi/midiProject";
 import type { VoiceOverrides } from "../domain/midi/voiceAssignments";
 
 export interface EditorSnapshot {
+  project: MidiProject | null;
   voiceOverrides: VoiceOverrides;
   voiceOrder: string[];
   voiceLabels: Record<string, string>;
@@ -27,6 +29,10 @@ export function createEditorHistory(): EditorHistoryState {
  * the undo stack and clears the redo stack, since a new action invalidates
  * whatever was previously undone. Caps depth at MAX_HISTORY_DEPTH — chiptune
  * files are small enough that full snapshots, not diffs, are cheap.
+ *
+ * `project` is part of the snapshot too (not just the override/order/label
+ * state) so a "Re-run separation" call, which replaces `project` wholesale,
+ * is undoable like every other correction.
  */
 export function pushHistory(
   history: EditorHistoryState,

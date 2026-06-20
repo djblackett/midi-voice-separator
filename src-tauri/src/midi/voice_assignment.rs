@@ -30,7 +30,7 @@ struct Candidate {
 }
 
 pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
-    assign_heuristic_voices_with_locks(notes, &HashMap::new())
+    assign_heuristic_voices_with_locks(notes, &HashMap::new(), None)
 }
 
 /// Same heuristic as `assign_heuristic_voices`, except any note present in
@@ -38,9 +38,20 @@ pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
 /// scored by the cost model. Locked notes still update their voice's
 /// running pitch/channel/end-tick state, so unlocked neighbors are pulled
 /// toward a manually corrected voice rather than ignoring it.
+///
+/// `max_voice_count`, if set, caps how many voices the unlocked path may
+/// open. Once at the cap, a note with no non-overlapping ("compatible")
+/// voice is forced into the lowest-cost existing voice anyway rather than
+/// opening a new one, even though that means the voice now has two notes
+/// overlapping in time. This is a deliberate trade-off of enabling the cap
+/// at all: forced-overlap assignments get confidence `0.0` (reason
+/// `VoiceCapReached`) so they always surface in review mode. Locked notes
+/// are exempt from the cap, since they're a hard user constraint, not a
+/// heuristic guess.
 pub fn assign_heuristic_voices_with_locks(
     notes: &mut [MidiNoteDto],
     locked: &HashMap<String, String>,
+    max_voice_count: Option<usize>,
 ) -> Vec<MidiVoiceDto> {
     let reserved_voice_ids: HashSet<&str> = locked.values().map(String::as_str).collect();
     let mut voices: Vec<VoiceState> = Vec::new();
@@ -93,6 +104,25 @@ pub fn assign_heuristic_voices_with_locks(
                 };
                 (best.index, confidence, reason)
             }
+            None if !voices.is_empty()
+                && max_voice_count.is_some_and(|max| voices.len() >= max) =>
+            {
+                // At the cap with no compatible voice: force the
+                // lowest-cost existing voice anyway rather than exceed the
+                // cap. `require_compatible: false` scores every voice
+                // regardless of overlap.
+                let forced_candidates = score_candidates(&voices, note, false);
+                let best = forced_candidates
+                    .iter()
+                    .min_by(|left, right| {
+                        left.cost
+                            .partial_cmp(&right.cost)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then(left.index.cmp(&right.index))
+                    })
+                    .expect("voices is non-empty when at the voice cap");
+                (best.index, 0.0, AssignmentReason::VoiceCapReached)
+            }
             None => {
                 let new_id = allocate_new_voice_id(&voice_index_by_id, &reserved_voice_ids);
                 let next_index = voices.len();
@@ -114,7 +144,14 @@ pub fn assign_heuristic_voices_with_locks(
         note.voice_id.clone_from(&voice.id);
         note.assignment_confidence = confidence;
         note.assignment_reason = reason;
-        voice.last_end_tick = note.end_tick;
+        // A forced-overlap assignment may end earlier than the voice's
+        // true latest note (it was never compatible to begin with), so
+        // only extend `last_end_tick`, never roll it back.
+        voice.last_end_tick = if reason == AssignmentReason::VoiceCapReached {
+            voice.last_end_tick.max(note.end_tick)
+        } else {
+            note.end_tick
+        };
         voice.last_pitch = note.pitch;
         voice.last_channel = note.channel;
         voice.note_count += 1;
@@ -215,10 +252,23 @@ pub fn summarize_separation_quality(notes: &[MidiNoteDto]) -> SeparationSummaryD
 }
 
 fn compatible_candidates(voices: &[VoiceState], note: &MidiNoteDto) -> Vec<Candidate> {
+    score_candidates(voices, note, true)
+}
+
+/// Scores every voice against `note`. When `require_compatible` is true,
+/// only non-overlapping ("compatible") voices are scored — this is the
+/// normal heuristic path. When false, every voice is scored regardless of
+/// overlap, used only for the forced-reuse path once a voice-count cap is
+/// reached and no compatible voice exists.
+fn score_candidates(
+    voices: &[VoiceState],
+    note: &MidiNoteDto,
+    require_compatible: bool,
+) -> Vec<Candidate> {
     voices
         .iter()
         .enumerate()
-        .filter(|(_, voice)| voice.last_end_tick <= note.start_tick)
+        .filter(|(_, voice)| !require_compatible || voice.last_end_tick <= note.start_tick)
         .map(|(index, voice)| {
             let pitch_distance = f32::from(voice.last_pitch.abs_diff(note.pitch));
             let gap = note.start_tick.saturating_sub(voice.last_end_tick);
@@ -437,7 +487,7 @@ mod tests {
         ];
         let locked = HashMap::from([("b".to_string(), "voice-9".to_string())]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked);
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
 
         assert_eq!(notes[1].voice_id, "voice-9");
         assert_eq!(notes[1].assignment_reason, AssignmentReason::UserLocked);
@@ -455,7 +505,7 @@ mod tests {
         let mut notes = vec![note("early", 60, 0, 120), note("future", 72, 240, 360)];
         let locked = HashMap::from([("future".to_string(), "voice-1".to_string())]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked);
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
 
         assert_eq!(notes[0].voice_id, "voice-2");
         assert_eq!(notes[1].voice_id, "voice-1");
@@ -467,7 +517,7 @@ mod tests {
         let mut with_locks = vec![note("a", 60, 0, 240), note("b", 64, 120, 360)];
         let mut without_locks = with_locks.clone();
 
-        assign_heuristic_voices_with_locks(&mut with_locks, &HashMap::new());
+        assign_heuristic_voices_with_locks(&mut with_locks, &HashMap::new(), None);
         assign_heuristic_voices(&mut without_locks);
 
         let with_locks_ids: Vec<_> = with_locks
@@ -479,5 +529,53 @@ mod tests {
             .map(|note| note.voice_id.clone())
             .collect();
         assert_eq!(with_locks_ids, without_locks_ids);
+    }
+
+    #[test]
+    fn voice_cap_forces_reuse_instead_of_opening_a_new_voice() {
+        let mut notes = vec![note("a", 60, 0, 240), note("b", 64, 120, 360)];
+
+        assign_heuristic_voices_with_locks(&mut notes, &HashMap::new(), Some(1));
+
+        assert_eq!(notes[0].voice_id, "voice-1");
+        assert_eq!(notes[1].voice_id, "voice-1");
+        assert_eq!(
+            notes[1].assignment_reason,
+            AssignmentReason::VoiceCapReached
+        );
+        assert_eq!(notes[1].assignment_confidence, 0.0);
+    }
+
+    #[test]
+    fn voice_cap_still_allows_the_very_first_voice() {
+        let mut notes = vec![note("a", 60, 0, 240)];
+
+        assign_heuristic_voices_with_locks(&mut notes, &HashMap::new(), Some(0));
+
+        assert_eq!(notes[0].voice_id, "voice-1");
+        assert_eq!(notes[0].assignment_reason, AssignmentReason::NewVoiceNoFit);
+    }
+
+    #[test]
+    fn voice_cap_does_not_block_locked_notes() {
+        let mut notes = vec![
+            note("a", 60, 0, 240),
+            note("b", 64, 0, 240),
+            note("c", 68, 0, 240),
+        ];
+        let locked = HashMap::from([
+            ("a".to_string(), "voice-1".to_string()),
+            ("b".to_string(), "voice-2".to_string()),
+            ("c".to_string(), "voice-3".to_string()),
+        ]);
+
+        assign_heuristic_voices_with_locks(&mut notes, &locked, Some(1));
+
+        // All three overlapping notes are locked to distinct voices; the
+        // cap only constrains the unlocked heuristic path, so each keeps
+        // its pinned voice rather than being squeezed together.
+        assert_eq!(notes[0].voice_id, "voice-1");
+        assert_eq!(notes[1].voice_id, "voice-2");
+        assert_eq!(notes[2].voice_id, "voice-3");
     }
 }

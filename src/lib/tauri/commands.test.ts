@@ -52,7 +52,7 @@ describe("tauri command adapter", () => {
     });
   });
 
-  it("maps reassign-voices success", async () => {
+  it("maps reassign-voices success with no voice cap", async () => {
     const project = { fileName: "song.mid", notes: [] };
     const locked = { "note-1": "voice-2" };
     invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
@@ -61,7 +61,25 @@ describe("tauri command adapter", () => {
       fileName: "song.mid",
       notes: [],
     });
-    expect(invokeMock).toHaveBeenCalledWith("reassign_voices", { project, locked });
+    expect(invokeMock).toHaveBeenCalledWith("reassign_voices", {
+      project,
+      locked,
+      maxVoiceCount: null,
+    });
+  });
+
+  it("passes an explicit max voice count through to the command", async () => {
+    const project = { fileName: "song.mid", notes: [] };
+    const locked = {};
+    invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
+
+    await reassignVoices(project as never, locked, 4);
+
+    expect(invokeMock).toHaveBeenCalledWith("reassign_voices", {
+      project,
+      locked,
+      maxVoiceCount: 4,
+    });
   });
 
   it("preserves structured command errors", async () => {
