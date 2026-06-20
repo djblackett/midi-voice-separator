@@ -43,6 +43,23 @@ pub enum AssignmentReason {
     VoiceCapReached,
 }
 
+/// Selects which cost-model weighting "Re-run separation" scores unlocked
+/// notes with. Different files respond differently — e.g. a file with
+/// clean per-instrument MIDI channels separates well under
+/// `ChannelPriority`/`StrictChannel`, while a dense single-channel
+/// chiptune export needs `RegisterPriority` to avoid one voice drifting
+/// across the entire pitch range. Exposed as a user-facing choice instead
+/// of a single fixed weighting so a file can be tried against a few
+/// options rather than chasing one "best" heuristic.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SeparationStrategy {
+    Balanced,
+    ChannelPriority,
+    RegisterPriority,
+    StrictChannel,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SeparationSummaryDto {

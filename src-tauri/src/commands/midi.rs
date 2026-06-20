@@ -4,6 +4,7 @@ use crate::{
     error::AppError,
     midi::{
         exporter::export_midi_bytes,
+        model::SeparationStrategy,
         parser::parse_midi_project,
         voice_assignment::{assign_heuristic_voices_with_locks, summarize_separation_quality},
         ExportMidiResultDto, MidiProjectDto,
@@ -77,9 +78,10 @@ pub fn reassign_voices(
     mut project: MidiProjectDto,
     locked: HashMap<String, String>,
     max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
 ) -> Result<MidiProjectDto, AppError> {
     project.voices =
-        assign_heuristic_voices_with_locks(&mut project.notes, &locked, max_voice_count);
+        assign_heuristic_voices_with_locks(&mut project.notes, &locked, max_voice_count, strategy);
     project.separation_summary = summarize_separation_quality(&project.notes);
     Ok(project)
 }
@@ -211,7 +213,8 @@ mod tests {
         input.notes.push(note("b", "voice-1", 64, 480, 960));
         let locked = HashMap::from([("a".to_string(), "voice-9".to_string())]);
 
-        let result = reassign_voices(input, locked, None).expect("reassignment should succeed");
+        let result = reassign_voices(input, locked, None, SeparationStrategy::Balanced)
+            .expect("reassignment should succeed");
 
         let locked_note = result
             .notes
@@ -230,8 +233,8 @@ mod tests {
         input.notes[0].end_tick = 240;
         input.notes.push(note("b", "voice-1", 64, 120, 360));
 
-        let result =
-            reassign_voices(input, HashMap::new(), Some(1)).expect("reassignment should succeed");
+        let result = reassign_voices(input, HashMap::new(), Some(1), SeparationStrategy::Balanced)
+            .expect("reassignment should succeed");
 
         assert_eq!(result.notes[0].voice_id, result.notes[1].voice_id);
         assert_eq!(result.separation_summary.voice_count, 1);

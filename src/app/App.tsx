@@ -18,6 +18,7 @@ import {
   reassignVoices,
   type AppCommandError,
   type ExportMidiResult,
+  type SeparationStrategy,
 } from "../lib/tauri/commands";
 import {
   applyVoiceOverrides,
@@ -85,6 +86,7 @@ export default function App() {
   const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
+  const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -300,7 +302,12 @@ export default function App() {
     setReassignError(null);
 
     try {
-      const reassignedProject = await reassignVoices(project, voiceOverrides, maxVoiceCount);
+      const reassignedProject = await reassignVoices(
+        project,
+        voiceOverrides,
+        maxVoiceCount,
+        separationStrategy,
+      );
       pushHistorySnapshot();
       setProject(reassignedProject);
       setVoiceOrder((currentOrder) =>
@@ -638,6 +645,22 @@ export default function App() {
                 onChange={(event) => setMaxVoiceCountInput(event.target.value)}
                 aria-label="Maximum voice count for re-run separation"
               />
+            </label>
+            <label className="separation-strategy-label">
+              Strategy
+              <select
+                className="separation-strategy-select"
+                value={separationStrategy}
+                onChange={(event) =>
+                  setSeparationStrategy(event.target.value as SeparationStrategy)
+                }
+                aria-label="Separation strategy for re-run separation"
+              >
+                <option value="BALANCED">Balanced</option>
+                <option value="CHANNEL_PRIORITY">Channel priority</option>
+                <option value="REGISTER_PRIORITY">Register priority</option>
+                <option value="STRICT_CHANNEL">Strict channel</option>
+              </select>
             </label>
             <button
               type="button"

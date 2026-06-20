@@ -928,6 +928,95 @@ REGISTER_DRIFT_WEIGHT` to the cost, where `register_distance` is how
   frontend re-run for safety (150/150, all clean) though nothing
   frontend-facing changed.
 
+### Separation strategy selector
+
+Direct follow-up to the register-aware tuning above. Investigated
+further at the user's cap=8 repro (screenshot showed one voice's notes
+scattered across the full pitch range): broke voice-4's 337 notes down
+by `assignment_reason` and found only 12% were the forced
+`VoiceCapReached` path — 88% were "normal" scored assignments that
+still chose to spread across registers. Root cause: this file's
+channel 0 holds 72% of all notes, so the channel-continuity bonus is
+satisfied for almost every candidate and stops being a useful
+discriminator, leaving pitch/register distance to do work that isn't
+strong enough by itself at this density. Concluded no single fixed
+weighting was going to separate this file well, and rather than keep
+tuning blind, planned and built a strategy selector (full plan at
+`C:\Users\davej\.claude\plans\sequential-watching-sprout.md` before
+this entry, since it's a real feature with a few file touches, not a
+one-line fix).
+
+- `src-tauri/src/midi/model.rs`: new `SeparationStrategy` enum
+  (`Balanced | ChannelPriority | RegisterPriority | StrictChannel`),
+  `SCREAMING_SNAKE_CASE` over the wire, matching `AssignmentReason`'s
+  existing convention in the same file.
+- `src-tauri/src/midi/voice_assignment.rs`: the three weights
+  `score_candidates` combines (`gap_weight`, `channel_continuity_bonus`,
+  `register_drift_weight`) are now a `CostWeights` struct instead of
+  top-level constants, with `SeparationStrategy::cost_weights()` holding
+  one preset per strategy. `Balanced` is today's exact numbers (so every
+  existing test's expectations hold unchanged); `ChannelPriority` raises
+  the channel bonus to 12; `RegisterPriority` raises the register weight
+  to 4 and drops the channel bonus to 1; `StrictChannel` raises the
+  channel bonus to 1000 (channel wins whenever a same-channel compatible
+  voice exists at all — "one voice per channel" without a second
+  algorithm, reusing the exact same scoring path). `REGISTER_ESTABLISHED_NOTE_COUNT`,
+  `GAP_NORMALIZATION_TICKS`, `CONFIDENCE_SCALE`, `LOW_CONFIDENCE_THRESHOLD`
+  stay global, unaffected by strategy. `assign_heuristic_voices_with_locks`
+  gained a `strategy` parameter; `assign_heuristic_voices` (the
+  no-locks wrapper `parser.rs` uses on fresh import) keeps its old
+  signature, always passing `Balanced` — import behavior is unchanged.
+- New test `separation_strategy_changes_which_voice_a_note_lands_in`:
+  builds one scenario (a channel-1 voice last at pitch ~80, a
+  channel-0 voice with an established 38-42 range) where a pitch-60,
+  channel-1 test note is a near-tie, then runs it twice — once under
+  `ChannelPriority` (lands in the channel-matching voice) and once
+  under `RegisterPriority` (lands in the register-matching voice) —
+  proving the strategies don't just produce different numbers, they
+  pick genuinely different voices.
+- `src-tauri/src/commands/midi.rs`: `reassign_voices` gained a
+  `strategy: SeparationStrategy` parameter, threaded straight through.
+  The 2 existing tests that call it directly now pass
+  `SeparationStrategy::Balanced` to preserve their assertions.
+- 8 existing direct calls to `assign_heuristic_voices_with_locks` in
+  `voice_assignment.rs`'s test module got a trailing
+  `SeparationStrategy::Balanced` argument (mechanical, via `sed` —
+  every one of those tests' expectations was written against today's
+  weights).
+- `src/lib/tauri/commands.ts`: new exported `SeparationStrategy` union
+  type; `reassignVoices` gained a required `strategy` parameter,
+  included in the `invoke` payload alongside the existing
+  `maxVoiceCount`.
+- `src/app/App.tsx`: new `separationStrategy` state (a UI preference
+  like `maxVoiceCountInput` — not part of `EditorSnapshot`/undo
+  history, only the _result_ of re-running is undoable). New `<select>`
+  next to the existing "Max voices" input in
+  `.separation-summary-actions`, four plain-language options. `handleReassign`
+  passes it through.
+- `src/styles/global.css`: `.separation-strategy-label`/`-select`,
+  matching the existing `.max-voice-count-label`/`-input` styling.
+- `src/lib/tauri/commands.test.ts`: updated the 2 existing
+  `reassignVoices` tests for the new required argument and payload
+  shape.
+- Verified: `pnpm rust:test` (43/43, 1 new), `pnpm rust:clippy`,
+  `cargo fmt --check`, `pnpm test` (150/150), `pnpm lint`,
+  `pnpm format:check`, `pnpm build` all clean. Also confirmed the
+  frontend wiring end-to-end with a throwaway Playwright script (faked
+  Tauri IPC, real dev-server bundle): all 4 strategy options render in
+  the `<select>`, and choosing "Register priority" then clicking
+  "Re-run separation" sends `strategy: "REGISTER_PRIORITY"` through to
+  the captured `reassign_voices` invoke payload exactly as expected.
+  Script deleted after use, not committed. **Stated limitation**: this
+  confirms the Rust scoring logic (via the new unit test) and the
+  frontend-to-command wiring (via the faked-IPC pass) independently,
+  but doesn't drive the actual native window end-to-end — no
+  WebDriver is configured for this project (per the existing
+  Architecture Invariant on native dialogs/manual verification
+  points). The user's own live `pnpm tauri dev` session auto-rebuilt
+  and restarted after these changes (confirmed via process start time
+  vs. source file mtimes), so the live app has them active for a
+  direct visual check against the real fixture.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

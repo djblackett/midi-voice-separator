@@ -24,6 +24,17 @@ export interface ExportMidiResult {
   noteCount: number;
 }
 
+/**
+ * Cost-model weighting "Re-run separation" scores unlocked notes with.
+ * Different files respond differently — see `SeparationStrategy` in
+ * `voice_assignment.rs` for what each preset actually weights.
+ */
+export type SeparationStrategy =
+  | "BALANCED"
+  | "CHANNEL_PRIORITY"
+  | "REGISTER_PRIORITY"
+  | "STRICT_CHANNEL";
+
 function toCommandError(error: unknown): AppCommandError {
   if (
     typeof error === "object" &&
@@ -69,13 +80,15 @@ export async function exportMidi(path: string, project: MidiProject): Promise<Ex
 export async function reassignVoices(
   project: MidiProject,
   locked: Record<string, string>,
-  maxVoiceCount?: number,
+  maxVoiceCount: number | undefined,
+  strategy: SeparationStrategy,
 ): Promise<MidiProject> {
   try {
     return await invoke<MidiProject>(COMMANDS.reassignVoices, {
       project,
       locked,
       maxVoiceCount: maxVoiceCount ?? null,
+      strategy,
     });
   } catch (error) {
     throw toCommandError(error);

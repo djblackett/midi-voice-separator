@@ -30,10 +30,12 @@ tracks.
   Reapplying after nudging a marker only touches notes still under range control — any note
   since reassigned, painted, merged, or otherwise hand-corrected is left alone.
 - "Re-run separation": re-runs the heuristic while treating every manual correction as a
-  locked constraint (so corrections survive a re-run), with an optional max-voice-count cap.
-  The voice legend reflects exactly the voices the new result actually uses — a voice the
-  re-run no longer needs (e.g. after lowering the cap) drops out instead of lingering as an
-  empty row.
+  locked constraint (so corrections survive a re-run), with an optional max-voice-count cap
+  and a choice of separation strategy (Balanced, Channel priority, Register priority, Strict
+  channel) — different files separate better under different weightings, so try a few rather
+  than relying on one fixed heuristic. The voice legend reflects exactly the voices the new
+  result actually uses — a voice the re-run no longer needs (e.g. after lowering the cap)
+  drops out instead of lingering as an empty row.
 - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, paint,
   pitch-range, and re-run-separation actions.
 - Piano-roll pan/zoom: `Ctrl`/`Cmd`+wheel zooms anchored at the cursor, plain wheel pans, a
@@ -111,12 +113,18 @@ through Tauri.
 
 Voice assignment is a deterministic cost-based heuristic: notes are processed in time order,
 and each note is scored against every non-overlapping ("compatible") existing voice on pitch
-distance, a silence-gap penalty, and a channel-continuity bonus. The lowest-cost voice wins;
-the gap between the winner and the runner-up becomes that note's confidence score. A note
-locked by a manual correction skips scoring entirely and is pinned directly to its voice,
-which still updates that voice's pitch/channel/timing state so unlocked neighbors keep being
-pulled toward a correction rather than ignoring it. This makes the heuristic explainable and
-its corrections durable across a re-run, without claiming final musical correctness.
+distance from that voice's last note, how far it falls outside the voice's established pitch
+range so far, a silence-gap penalty, and a channel-continuity bonus. The lowest-cost voice
+wins; the gap between the winner and the runner-up becomes that note's confidence score. The
+three weights behind those terms are bundled into a `SeparationStrategy` (Balanced, Channel
+priority, Register priority, Strict channel) selectable from "Re-run separation" — the same
+scoring function throughout, just weighted differently, since different files (e.g. clean
+per-channel MIDI vs. a dense single-channel chiptune export) separate better under different
+weightings. A note locked by a manual correction skips scoring entirely and is pinned
+directly to its voice, which still updates that voice's pitch/channel/timing state so
+unlocked neighbors keep being pulled toward a correction rather than ignoring it — unaffected
+by which strategy is active. This makes the heuristic explainable and its corrections durable
+across a re-run, without claiming final musical correctness.
 
 Manual corrections are represented as a frontend-only note-to-voice override map layered on
 top of the immutable imported project; voice identity, order, and labels are separate
@@ -145,5 +153,10 @@ chiptune `.mid` fixture exists yet to validate against directly), and reapplying
 no longer clobbers hand corrections made since the last apply. The minimap/marquee top-pixel
 interaction gap found during performance validation is also fixed: the minimap now occupies
 its own reserved band above the canvas instead of overlaying its top 6 pixels, so a
-marquee-select drag starting there reaches the canvas instead of the minimap. There is no
-open candidate left from this roadmap; the next milestone would start a fresh plan.
+marquee-select drag starting there reaches the canvas instead of the minimap. "Re-run
+separation" also gained a separation-strategy selector (Balanced, Channel priority, Register
+priority, Strict channel), in response to real-world testing showing the single fixed
+heuristic weighting could let a voice drift across several octaves on a dense,
+mostly-single-channel chiptune file — rather than chase one "best" weighting further, the
+fix exposes a few distinct presets to try per file. There is no open candidate left from this
+roadmap; the next milestone would start a fresh plan.

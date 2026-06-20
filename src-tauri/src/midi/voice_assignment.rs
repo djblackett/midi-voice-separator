@@ -1,36 +1,86 @@
 use std::collections::{HashMap, HashSet};
 
-use super::model::{AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto};
+use super::model::{
+    AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationStrategy, SeparationSummaryDto,
+};
 
-/// Tuning constants for the assignment cost model. These are deliberately
-/// simple (no learned weights) and exist to make the heuristic explainable
-/// rather than musically optimal.
+/// Tuning constants for the assignment cost model that don't vary by
+/// `SeparationStrategy`. These are deliberately simple (no learned
+/// weights) and exist to make the heuristic explainable rather than
+/// musically optimal.
 const GAP_NORMALIZATION_TICKS: f32 = 960.0;
-const GAP_WEIGHT: f32 = 4.0;
-const CHANNEL_CONTINUITY_BONUS: f32 = 3.0;
 const CONFIDENCE_SCALE: f32 = 6.0;
 const LOW_CONFIDENCE_THRESHOLD: f32 = 0.5;
-/// Weight applied to how far a note falls outside a voice's established
-/// pitch range (its lowest/highest pitch so far), on top of the plain
-/// distance from the voice's *last* note. Without this, a voice is scored
-/// only against its most recent note, so a long melodic line can drift
-/// across the entire pitch range one cheap small step at a time — each
-/// individual step looks like a good match, but the voice ends up spanning
-/// several octaves. This term makes reusing a voice progressively more
-/// expensive the further a note falls beyond the range it's already
-/// established, so an already-correct, register-matching voice is
-/// preferred over one that merely happens to have a nearby last note.
-/// Deliberately large relative to `CHANNEL_CONTINUITY_BONUS`/`GAP_WEIGHT`:
-/// a small weight barely affects real (highly polyphonic, single-channel)
-/// chiptune files, since the gradual drift this guards against is made of
-/// many individually-cheap steps.
-const REGISTER_DRIFT_WEIGHT: f32 = 1.5;
 /// A voice's range is a single point until it has at least this many
-/// notes, which would make the register-distance term above identical to
+/// notes, which would make the register-distance term below identical to
 /// the plain last-pitch distance and double-count it. Below this count,
 /// there isn't really an "established range" yet, so the term is skipped
 /// entirely rather than scored against a degenerate one-note range.
 const REGISTER_ESTABLISHED_NOTE_COUNT: usize = 2;
+
+/// The three weights `score_candidates` combines into a single cost.
+/// Bundled per `SeparationStrategy` instead of being fixed constants, so
+/// "Re-run separation" can be tried with a few different weightings on
+/// the same file rather than only ever scoring against one fixed
+/// weighting.
+#[derive(Debug, Clone, Copy)]
+struct CostWeights {
+    gap_weight: f32,
+    channel_continuity_bonus: f32,
+    /// Weight applied to how far a note falls outside a voice's
+    /// established pitch range (its lowest/highest pitch so far), on top
+    /// of the plain distance from the voice's *last* note. Without this,
+    /// a voice is scored only against its most recent note, so a long
+    /// melodic line can drift across the entire pitch range one cheap
+    /// small step at a time — each individual step looks like a good
+    /// match, but the voice ends up spanning several octaves. This term
+    /// makes reusing a voice progressively more expensive the further a
+    /// note falls beyond the range it's already established, so an
+    /// already-correct, register-matching voice is preferred over one
+    /// that merely happens to have a nearby last note.
+    register_drift_weight: f32,
+}
+
+impl SeparationStrategy {
+    fn cost_weights(self) -> CostWeights {
+        match self {
+            // Today's defaults. Every existing test's expectations were
+            // written against these numbers.
+            SeparationStrategy::Balanced => CostWeights {
+                gap_weight: 4.0,
+                channel_continuity_bonus: 3.0,
+                register_drift_weight: 1.5,
+            },
+            // For files where each instrument already lives on a stable
+            // MIDI channel: channel match dominates over a moderate
+            // pitch jump.
+            SeparationStrategy::ChannelPriority => CostWeights {
+                gap_weight: 4.0,
+                channel_continuity_bonus: 12.0,
+                register_drift_weight: 1.5,
+            },
+            // For files where channel is a weak signal (e.g. most of the
+            // piece crammed onto one MIDI channel): keeping a voice's
+            // pitch range tight matters far more than channel
+            // continuity.
+            SeparationStrategy::RegisterPriority => CostWeights {
+                gap_weight: 4.0,
+                channel_continuity_bonus: 1.0,
+                register_drift_weight: 4.0,
+            },
+            // Channel match wins whenever a same-channel compatible
+            // voice exists at all; pitch only decides ties, picks among
+            // multiple same-channel candidates, or matters when no
+            // same-channel voice is available yet. Effectively "one
+            // voice per channel" without a second algorithm.
+            SeparationStrategy::StrictChannel => CostWeights {
+                gap_weight: 4.0,
+                channel_continuity_bonus: 1000.0,
+                register_drift_weight: 0.0,
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct VoiceState {
@@ -51,7 +101,7 @@ struct Candidate {
 }
 
 pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
-    assign_heuristic_voices_with_locks(notes, &HashMap::new(), None)
+    assign_heuristic_voices_with_locks(notes, &HashMap::new(), None, SeparationStrategy::Balanced)
 }
 
 /// Same heuristic as `assign_heuristic_voices`, except any note present in
@@ -69,11 +119,16 @@ pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
 /// `VoiceCapReached`) so they always surface in review mode. Locked notes
 /// are exempt from the cap, since they're a hard user constraint, not a
 /// heuristic guess.
+///
+/// `strategy` selects which `CostWeights` preset scores unlocked notes;
+/// locked notes are unaffected by it, since they skip scoring entirely.
 pub fn assign_heuristic_voices_with_locks(
     notes: &mut [MidiNoteDto],
     locked: &HashMap<String, String>,
     max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
 ) -> Vec<MidiVoiceDto> {
+    let weights = strategy.cost_weights();
     let reserved_voice_ids: HashSet<&str> = locked.values().map(String::as_str).collect();
     let mut voices: Vec<VoiceState> = Vec::new();
     let mut voice_index_by_id: HashMap<String, usize> = HashMap::new();
@@ -109,7 +164,7 @@ pub fn assign_heuristic_voices_with_locks(
             continue;
         }
 
-        let candidates = compatible_candidates(&voices, note);
+        let candidates = compatible_candidates(&voices, note, &weights);
         let (voice_index, confidence, reason) = match best_and_second_cost(&candidates) {
             Some((best, second_cost)) => {
                 let confidence = match second_cost {
@@ -132,7 +187,7 @@ pub fn assign_heuristic_voices_with_locks(
                 // lowest-cost existing voice anyway rather than exceed the
                 // cap. `require_compatible: false` scores every voice
                 // regardless of overlap.
-                let forced_candidates = score_candidates(&voices, note, false);
+                let forced_candidates = score_candidates(&voices, note, false, &weights);
                 let best = forced_candidates
                     .iter()
                     .min_by(|left, right| {
@@ -272,8 +327,12 @@ pub fn summarize_separation_quality(notes: &[MidiNoteDto]) -> SeparationSummaryD
     }
 }
 
-fn compatible_candidates(voices: &[VoiceState], note: &MidiNoteDto) -> Vec<Candidate> {
-    score_candidates(voices, note, true)
+fn compatible_candidates(
+    voices: &[VoiceState],
+    note: &MidiNoteDto,
+    weights: &CostWeights,
+) -> Vec<Candidate> {
+    score_candidates(voices, note, true, weights)
 }
 
 /// Scores every voice against `note`. When `require_compatible` is true,
@@ -285,6 +344,7 @@ fn score_candidates(
     voices: &[VoiceState],
     note: &MidiNoteDto,
     require_compatible: bool,
+    weights: &CostWeights,
 ) -> Vec<Candidate> {
     voices
         .iter()
@@ -305,15 +365,15 @@ fn score_candidates(
             let normalized_gap = (gap as f32 / GAP_NORMALIZATION_TICKS).min(1.0);
             let channel_match = voice.last_channel == note.channel;
             let channel_bonus = if channel_match {
-                CHANNEL_CONTINUITY_BONUS
+                weights.channel_continuity_bonus
             } else {
                 0.0
             };
             Candidate {
                 index,
                 cost: pitch_distance
-                    + register_distance * REGISTER_DRIFT_WEIGHT
-                    + normalized_gap * GAP_WEIGHT
+                    + register_distance * weights.register_drift_weight
+                    + normalized_gap * weights.gap_weight
                     - channel_bonus,
                 channel_match,
             }
@@ -520,7 +580,7 @@ mod tests {
         ];
         let locked = HashMap::from([("b".to_string(), "voice-9".to_string())]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
 
         assert_eq!(notes[1].voice_id, "voice-9");
         assert_eq!(notes[1].assignment_reason, AssignmentReason::UserLocked);
@@ -538,7 +598,7 @@ mod tests {
         let mut notes = vec![note("early", 60, 0, 120), note("future", 72, 240, 360)];
         let locked = HashMap::from([("future".to_string(), "voice-1".to_string())]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
 
         assert_eq!(notes[0].voice_id, "voice-2");
         assert_eq!(notes[1].voice_id, "voice-1");
@@ -550,7 +610,12 @@ mod tests {
         let mut with_locks = vec![note("a", 60, 0, 240), note("b", 64, 120, 360)];
         let mut without_locks = with_locks.clone();
 
-        assign_heuristic_voices_with_locks(&mut with_locks, &HashMap::new(), None);
+        assign_heuristic_voices_with_locks(
+            &mut with_locks,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
         assign_heuristic_voices(&mut without_locks);
 
         let with_locks_ids: Vec<_> = with_locks
@@ -568,7 +633,12 @@ mod tests {
     fn voice_cap_forces_reuse_instead_of_opening_a_new_voice() {
         let mut notes = vec![note("a", 60, 0, 240), note("b", 64, 120, 360)];
 
-        assign_heuristic_voices_with_locks(&mut notes, &HashMap::new(), Some(1));
+        assign_heuristic_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(1),
+            SeparationStrategy::Balanced,
+        );
 
         assert_eq!(notes[0].voice_id, "voice-1");
         assert_eq!(notes[1].voice_id, "voice-1");
@@ -583,7 +653,12 @@ mod tests {
     fn voice_cap_still_allows_the_very_first_voice() {
         let mut notes = vec![note("a", 60, 0, 240)];
 
-        assign_heuristic_voices_with_locks(&mut notes, &HashMap::new(), Some(0));
+        assign_heuristic_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(0),
+            SeparationStrategy::Balanced,
+        );
 
         assert_eq!(notes[0].voice_id, "voice-1");
         assert_eq!(notes[0].assignment_reason, AssignmentReason::NewVoiceNoFit);
@@ -614,9 +689,54 @@ mod tests {
             ("n2".to_string(), "voice-narrow".to_string()),
         ]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked, None);
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
 
         assert_eq!(notes[4].voice_id, "voice-wide");
+    }
+
+    #[test]
+    fn separation_strategy_changes_which_voice_a_note_lands_in() {
+        // Two established voices: "channel" last played on channel 1
+        // around pitch 80-82 (far from the test note); "register" last
+        // played on channel 0, with an established 38-42 range close to
+        // the test note. A pitch-60 test note on channel 1 is a near-tie
+        // between them — close enough that swapping which signal
+        // (channel match vs. register fit) dominates actually flips the
+        // outcome, demonstrating the strategies aren't just numerically
+        // different but pick different voices in practice.
+        let build_notes = || {
+            vec![
+                note_with_channel("c1", 1, 80, 0, 100),
+                note_with_channel("c2", 1, 82, 100, 200),
+                note_with_channel("r1", 0, 38, 0, 100),
+                note_with_channel("r2", 0, 42, 100, 200),
+                note_with_channel("t", 1, 60, 200, 300),
+            ]
+        };
+        let locked = HashMap::from([
+            ("c1".to_string(), "voice-channel".to_string()),
+            ("c2".to_string(), "voice-channel".to_string()),
+            ("r1".to_string(), "voice-register".to_string()),
+            ("r2".to_string(), "voice-register".to_string()),
+        ]);
+
+        let mut channel_priority_notes = build_notes();
+        assign_heuristic_voices_with_locks(
+            &mut channel_priority_notes,
+            &locked,
+            None,
+            SeparationStrategy::ChannelPriority,
+        );
+        assert_eq!(channel_priority_notes[4].voice_id, "voice-channel");
+
+        let mut register_priority_notes = build_notes();
+        assign_heuristic_voices_with_locks(
+            &mut register_priority_notes,
+            &locked,
+            None,
+            SeparationStrategy::RegisterPriority,
+        );
+        assert_eq!(register_priority_notes[4].voice_id, "voice-register");
     }
 
     #[test]
@@ -632,7 +752,12 @@ mod tests {
             ("c".to_string(), "voice-3".to_string()),
         ]);
 
-        assign_heuristic_voices_with_locks(&mut notes, &locked, Some(1));
+        assign_heuristic_voices_with_locks(
+            &mut notes,
+            &locked,
+            Some(1),
+            SeparationStrategy::Balanced,
+        );
 
         // All three overlapping notes are locked to distinct voices; the
         // cap only constrains the unlocked heuristic path, so each keeps
