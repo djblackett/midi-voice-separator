@@ -39,3 +39,21 @@ Measured while validating `AssignmentMode::Global` against this fixture (see
 `Greedy` on every strategy where channel information actually matters (11% lower on
 `Balanced`, 9% lower on `RegisterPriority`), confirming the lookahead search's benefit holds on
 real content and not just the constructed adversarial cases used to justify building it.
+
+## `boss-battle-6-separate-tracks.mid`
+
+The companion file to `boss-battle-6-combined.mid` above: the same source pack's other MIDI
+variant of the same track, kept intact with its original 8 tracks and 13 distinct MIDI
+channels rather than collapsed onto one. Same source and license (CC0,
+["Boss Battle #6 (8 bit)"](https://opengameart.org/content/boss-battle-6-8-bit) by
+cynicmusic on OpenGameArt). 3,770 notes, pitch range 24-93, up to 12 notes overlapping at
+once, 0 parser warnings.
+
+This is the complementary case to the combined file: reliable per-instrument channel signal
+instead of none, which is the scenario `ChannelPriority`/`StrictChannel` are actually designed
+for. Measured while validating against this fixture: those two strategies got dramatically
+more decisive here (mean confidence 0.91-0.975, ~90-300 low-confidence notes) than
+`Balanced`/`RegisterPriority` (~0.66-0.75 mean confidence, 770-1275 low-confidence notes),
+confirming channel-based separation earns its keep when the channel signal it depends on is
+actually present. `Global` again beat `Greedy` on total cost across all four strategies (up
+to 31% lower on `Balanced`), the largest margin measured on any fixture so far.

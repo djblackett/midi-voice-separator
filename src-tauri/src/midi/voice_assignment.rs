@@ -1466,17 +1466,17 @@ mod windowed_tests {
         total
     }
 
-    /// Real, dense, non-synthetic regression coverage (see
-    /// `fixtures/README.md` for provenance/license and how this file was
-    /// chosen): confirms `Global` doesn't just work on the constructed
-    /// adversarial cases above, but actually finds an equal-or-lower-cost
-    /// partition than `Greedy` on real music, across every strategy.
-    #[test]
-    fn global_mode_matches_or_beats_greedy_cost_on_a_real_dense_fixture() {
+    /// Shared by the real-fixture regression tests below: confirms
+    /// `Global` doesn't just work on the constructed adversarial cases
+    /// above, but actually finds an equal-or-lower-cost partition than
+    /// `Greedy` on real music, across every strategy. See
+    /// `fixtures/README.md` for each fixture's provenance/license and why
+    /// it was chosen.
+    fn assert_global_matches_or_beats_greedy_cost_on_fixture(fixture_file_name: &str) {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("fixtures")
-            .join("boss-battle-6-combined.mid");
+            .join(fixture_file_name);
         let bytes = std::fs::read(&path).expect("fixture should be readable");
         let project =
             super::super::parser::parse_midi_project(&path, &bytes).expect("fixture should parse");
@@ -1511,9 +1511,19 @@ mod windowed_tests {
 
             assert!(
                 global_cost <= greedy_cost + 1e-3,
-                "{strategy:?}: Global cost {global_cost} should be <= Greedy cost {greedy_cost} \
-                 on a real dense fixture"
+                "{fixture_file_name} / {strategy:?}: Global cost {global_cost} should be <= \
+                 Greedy cost {greedy_cost}"
             );
         }
+    }
+
+    #[test]
+    fn global_mode_matches_or_beats_greedy_cost_on_a_real_combined_fixture() {
+        assert_global_matches_or_beats_greedy_cost_on_fixture("boss-battle-6-combined.mid");
+    }
+
+    #[test]
+    fn global_mode_matches_or_beats_greedy_cost_on_a_real_separate_tracks_fixture() {
+        assert_global_matches_or_beats_greedy_cost_on_fixture("boss-battle-6-separate-tracks.mid");
     }
 }
