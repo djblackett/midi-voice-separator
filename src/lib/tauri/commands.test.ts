@@ -57,7 +57,9 @@ describe("tauri command adapter", () => {
     const locked = { "note-1": "voice-2" };
     invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
 
-    await expect(reassignVoices(project as never, locked, undefined, "BALANCED")).resolves.toEqual({
+    await expect(
+      reassignVoices(project as never, locked, undefined, "BALANCED", "GREEDY"),
+    ).resolves.toEqual({
       fileName: "song.mid",
       notes: [],
     });
@@ -66,21 +68,23 @@ describe("tauri command adapter", () => {
       locked,
       maxVoiceCount: null,
       strategy: "BALANCED",
+      mode: "GREEDY",
     });
   });
 
-  it("passes an explicit max voice count and strategy through to the command", async () => {
+  it("passes an explicit max voice count, strategy, and assignment mode through to the command", async () => {
     const project = { fileName: "song.mid", notes: [] };
     const locked = {};
     invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
 
-    await reassignVoices(project as never, locked, 4, "REGISTER_PRIORITY");
+    await reassignVoices(project as never, locked, 4, "REGISTER_PRIORITY", "GLOBAL");
 
     expect(invokeMock).toHaveBeenCalledWith("reassign_voices", {
       project,
       locked,
       maxVoiceCount: 4,
       strategy: "REGISTER_PRIORITY",
+      mode: "GLOBAL",
     });
   });
 

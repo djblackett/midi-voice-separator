@@ -17,6 +17,7 @@ import {
   getBackendStatus,
   reassignVoices,
   type AppCommandError,
+  type AssignmentMode,
   type ExportMidiResult,
   type SeparationStrategy,
 } from "../lib/tauri/commands";
@@ -87,6 +88,7 @@ export default function App() {
   const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
+  const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -307,6 +309,7 @@ export default function App() {
         voiceOverrides,
         maxVoiceCount,
         separationStrategy,
+        assignmentMode,
       );
       pushHistorySnapshot();
       setProject(reassignedProject);
@@ -662,6 +665,18 @@ export default function App() {
                 <option value="STRICT_CHANNEL">Strict channel</option>
               </select>
             </label>
+            <label className="assignment-mode-label">
+              Search
+              <select
+                className="assignment-mode-select"
+                value={assignmentMode}
+                onChange={(event) => setAssignmentMode(event.target.value as AssignmentMode)}
+                aria-label="Assignment search mode for re-run separation"
+              >
+                <option value="GREEDY">Greedy (fast)</option>
+                <option value="GLOBAL">Global (lookahead)</option>
+              </select>
+            </label>
             <button
               type="button"
               className="secondary-button"
@@ -876,7 +891,10 @@ export default function App() {
             <kbd>1</kbd>-<kbd>9</kbd> to assign the selection to an existing voice. Press{" "}
             <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to step through flagged notes. Press{" "}
             <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to undo or
-            redo a correction. Press <kbd>Esc</kbd> to clear selection.
+            redo a correction. Press <kbd>Esc</kbd> to clear selection. On the piano roll,{" "}
+            <kbd>Ctrl</kbd>+wheel zooms horizontally and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+wheel
+            zooms vertically (both anchored at the cursor); plain wheel pans horizontally and{" "}
+            <kbd>Shift</kbd>+wheel pans vertically.
           </p>
         </section>
       ) : null}

@@ -35,6 +35,19 @@ export type SeparationStrategy =
   | "REGISTER_PRIORITY"
   | "STRICT_CHANNEL";
 
+/**
+ * Selects which assignment algorithm scores/searches for a voice per note
+ * -- orthogonal to `SeparationStrategy`, which only picks the cost
+ * weighting either algorithm scores with. `GREEDY` commits each note to
+ * its single cheapest compatible voice immediately, before the next note
+ * is even known. `GLOBAL` buffers a short lookahead window of unlocked
+ * notes and searches for the true minimum-cost grouping across that whole
+ * window before committing any of them, which can find a better overall
+ * split than greedy's note-at-a-time commitment allows, at the cost of
+ * being slower on large files. See `AssignmentMode` in `model.rs`.
+ */
+export type AssignmentMode = "GREEDY" | "GLOBAL";
+
 function toCommandError(error: unknown): AppCommandError {
   if (
     typeof error === "object" &&
@@ -82,6 +95,7 @@ export async function reassignVoices(
   locked: Record<string, string>,
   maxVoiceCount: number | undefined,
   strategy: SeparationStrategy,
+  mode: AssignmentMode,
 ): Promise<MidiProject> {
   try {
     return await invoke<MidiProject>(COMMANDS.reassignVoices, {
@@ -89,6 +103,7 @@ export async function reassignVoices(
       locked,
       maxVoiceCount: maxVoiceCount ?? null,
       strategy,
+      mode,
     });
   } catch (error) {
     throw toCommandError(error);

@@ -31,17 +31,26 @@ tracks.
   Reapplying after nudging a marker only touches notes still under range control — any note
   since reassigned, painted, merged, or otherwise hand-corrected is left alone.
 - "Re-run separation": re-runs the heuristic while treating every manual correction as a
-  locked constraint (so corrections survive a re-run), with an optional max-voice-count cap
-  and a choice of separation strategy (Balanced, Channel priority, Register priority, Strict
-  channel) — different files separate better under different weightings, so try a few rather
-  than relying on one fixed heuristic. The voice legend reflects exactly the voices the new
-  result actually uses — a voice the re-run no longer needs (e.g. after lowering the cap)
-  drops out instead of lingering as an empty row.
+  locked constraint (so corrections survive a re-run), with an optional max-voice-count cap,
+  a choice of separation strategy (Balanced, Channel priority, Register priority, Strict
+  channel), and a choice of search mode (Greedy or Global) — different files separate better
+  under different weightings, so try a few rather than relying on one fixed heuristic. The
+  voice legend reflects exactly the voices the new result actually uses — a voice the re-run
+  no longer needs (e.g. after lowering the cap) drops out instead of lingering as an empty
+  row.
+- Search mode "Global": an alternative to the default greedy assignment that buffers a short
+  lookahead window of unlocked notes and exhaustively searches for the true minimum-cost
+  grouping across that window before committing any of them, rather than committing each note
+  irrevocably as soon as it's seen. Slower than Greedy but corrects a demonstrated class of
+  greedy mistake — see Architecture below.
 - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, paint,
   pitch-range, and re-run-separation actions.
-- Piano-roll pan/zoom: `Ctrl`/`Cmd`+wheel zooms anchored at the cursor, plain wheel pans, a
-  minimap shows the current window against the full timeline, and review-mode `Tab`-stepping
-  auto-pans (without changing zoom) to bring an off-screen flagged note into view.
+- Piano-roll pan/zoom, both axes: `Ctrl`/`Cmd`+wheel zooms horizontally and `Ctrl`/`Cmd`+`Shift`+
+  wheel zooms vertically (both anchored at the cursor), plain wheel pans horizontally and
+  `Shift`+wheel pans vertically — useful on a file with a wide pitch range, where rows can get
+  too thin to read or click precisely at the default zoomed-out view. A minimap shows the
+  current horizontal window against the full timeline, and review-mode `Tab`-stepping auto-pans
+  on both axes (without changing zoom) to bring an off-screen flagged note into view.
 - MIDI playback: Play/Pause/Stop and a time readout, synthesized with square/triangle/
   sawtooth oscillators cycling by voice (so a voice sounds consistent with how it looks), a
   playhead that page-follows during playback, and a minimap that doubles as a seek control.
@@ -99,7 +108,10 @@ coordinate math isolated from React, so pan/zoom is a separate `ViewportWindow` 
 pan position) resolved against the project's duration into a concrete tick range each render,
 rather than the canvas always spanning the whole project — `drawPianoRoll`/hit-testing don't
 know the difference, since both already work in terms of an arbitrary
-`{ startTick, endTick }` window.
+`{ startTick, endTick }` window. The pitch axis mirrors this exactly via a parallel
+`PitchViewportWindow` resolved against the project's pitch span into a `{ lowestPitch,
+highestPitch }` window, so the same render/hit-test code that doesn't know it's looking at a
+zoomed-in tick range also doesn't know it's looking at a zoomed-in pitch range.
 
 Playback runs entirely in the frontend via the Web Audio API — no Rust/Tauri involvement.
 A pure function decides what should play (which notes, truncated correctly for a mid-note
@@ -126,6 +138,26 @@ directly to its voice, which still updates that voice's pitch/channel/timing sta
 unlocked neighbors keep being pulled toward a correction rather than ignoring it — unaffected
 by which strategy is active. This makes the heuristic explainable and its corrections durable
 across a re-run, without claiming final musical correctness.
+
+That greedy, note-at-a-time commitment has a known failure mode: an early note can have a
+locally cheapest voice that, once more notes arrive, turns out to have foreclosed a much
+better overall split (e.g. a clean low/high pitch-register grouping) that greedy can never
+revisit once committed. `AssignmentMode` makes the search algorithm itself a user-facing
+choice, orthogonal to `SeparationStrategy` (which only picks the cost weighting either
+algorithm scores with): `Greedy` is the algorithm above; `Global` buffers a short lookahead
+window of unlocked notes (6 by default) and exhaustively searches every valid grouping of
+that window — capped at the true structural minimum number of new voices the window can
+possibly need, computed with the same "minimum meeting rooms" scheduling algorithm used for
+interval graphs, since scoring a brand-new voice at a flat 0 would otherwise always beat any
+positive-cost reuse and degenerate into opening a new voice for almost every note — before
+committing any of them. A locked note flushes whatever is currently pending first, then pins
+exactly as in `Greedy`. This is not whole-piece-optimal, only exhaustive within each window, so
+a divergence spanning more than the window size can still slip through a window boundary; it
+is a wider-sighted heuristic, not a proof of global optimality. Confirmed empirically (a
+brute-force oracle built to test this before implementing it) that greedy diverges from the
+true minimum-cost partition in a meaningful fraction of realistic cases, occasionally by a
+wide margin, and confirmed with a synthetic worst-case 8,000-note/16-voice project that
+`Global` stays comfortably interactive (under 30 ms).
 
 Manual corrections are represented as a frontend-only note-to-voice override map layered on
 top of the immutable imported project; voice identity, order, and labels are separate
@@ -159,5 +191,10 @@ separation" also gained a separation-strategy selector (Balanced, Channel priori
 priority, Strict channel), in response to real-world testing showing the single fixed
 heuristic weighting could let a voice drift across several octaves on a dense,
 mostly-single-channel chiptune file — rather than chase one "best" weighting further, the
-fix exposes a few distinct presets to try per file. There is no open candidate left from this
-roadmap; the next milestone would start a fresh plan.
+fix exposes a few distinct presets to try per file. "Re-run separation" also gained an
+assignment-mode selector (Greedy, Global), after a brute-force oracle confirmed greedy's
+note-at-a-time commitment provably diverges from the true minimum-cost partition in a
+meaningful fraction of cases — Global re-optimizes over a short lookahead window instead of
+committing each note immediately, and stays comfortably interactive (well under 30 ms even on
+an 8,000-note synthetic worst case). There is no open candidate left from this roadmap; the
+next milestone would start a fresh plan.

@@ -60,6 +60,22 @@ pub enum SeparationStrategy {
     StrictChannel,
 }
 
+/// Selects which assignment algorithm scores/searches for a voice per
+/// note -- orthogonal to `SeparationStrategy`, which only picks the cost
+/// weighting either algorithm scores with. `Greedy` commits each note to
+/// its single cheapest compatible voice, irrevocably, before the next note
+/// is even known. `Global` buffers a short lookahead window of unlocked
+/// notes and searches for the true minimum-cost grouping across that whole
+/// window before committing any of them, which can find a better overall
+/// split than greedy's note-at-a-time commitment allows -- see
+/// `assign_windowed_voices_with_locks` in `voice_assignment.rs`.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AssignmentMode {
+    Greedy,
+    Global,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SeparationSummaryDto {

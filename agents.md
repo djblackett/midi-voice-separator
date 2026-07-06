@@ -1050,6 +1050,179 @@ voices, multiple voices shared a color, since `VOICE_COLORS`/
   `pnpm lint`, `pnpm format:check`, `pnpm build` all clean. No Rust
   changes.
 
+### Vertical (pitch) zoom and pan
+
+User request: on a file with a wide pitch range, note rows render too
+thin to read or click precisely, since the piano roll always rendered
+the entire project's pitch span regardless of horizontal zoom. Planned
+first (`EnterPlanMode`) since this touches several files and needed a
+real UX decision; asked the user how vertical zoom should be
+triggered — chose mirroring the existing horizontal scheme exactly,
+with `Shift` meaning "vertical instead of horizontal."
+
+- New `src/features/piano-roll/pitchViewportWindow.ts`, structurally
+  identical to `viewportWindow.ts` (`{ zoomLevel, panPitch }`,
+  `visiblePitchRange`, `zoomPitchAt`, `panPitchBy`/`panPitchTo`,
+  `panPitchToReveal`) but resolved against a project's pitch span
+  instead of its tick duration. Two things don't carry over directly
+  from the tick version: `MAX_PITCH_ZOOM_LEVEL = 16` (not 64 — pitch
+  spans are far smaller than tick durations, so the same relative
+  headroom would zoom into a fraction of a semitone), and
+  `visiblePitchRange` rounds its bounds to integers
+  (`Math.floor`/`Math.ceil`) before returning, since pitch is discrete
+  and `drawPianoRoll`'s per-semitone row loop needs integer-aligned
+  bounds — the continuous tick axis has no equivalent need.
+  `panPitch` is an absolute pitch (clamped to the full span), mirroring
+  how `panTick` is an absolute tick clamped to `[0, durationTicks]` —
+  worth calling out because ticks always start at 0 so that clamp floor
+  is implicit, while pitch spans don't start at 0, so the floor is
+  `fullSpan.lowestPitch` explicitly.
+- `drawPianoRoll.ts`'s `buildViewport` gained an optional 5th parameter,
+  `pitchWindow`, used in place of the computed lowest/highest-note ± 2
+  bounds when given — confirmed before changing anything that every
+  other consumer of `viewport.lowestPitch`/`highestPitch`
+  (`drawPitchMarkers`, `drawPlayhead`, `hitTest.ts`,
+  `coordinates.ts`'s `pitchToY`/`yToPitch`, pitch-marker dragging in
+  `PianoRoll.tsx`) already treats the viewport as an arbitrary window
+  and skips drawing/hit-testing anything outside it, the same way they
+  already do for the tick axis — so none of those needed to change,
+  only what gets passed into `buildViewport` did. Also added
+  `computeFullPitchSpan` (the same ±2-padded computation, exported so
+  `PianoRoll.tsx` and `buildViewport` resolve against the same span).
+- `PianoRoll.tsx`: new `pitchViewportWindow` state, reset alongside
+  `viewportWindow` on a genuinely new project. New `fullPitchSpan`/
+  `pitchRange` memos mirroring the existing `tickRange` memo, feeding
+  `buildViewport`'s new parameter. The review-mode Tab-stepping reveal
+  effect now also calls `panPitchToReveal` for the selected note's
+  pitch (the playback page-follow effect does _not_ — the playhead is
+  a full-height vertical line with no pitch of its own, so it can
+  never be vertically scrolled out of view). The wheel handler gained
+  two branches ahead of the existing ones: `Ctrl/Cmd+Shift` zooms
+  vertically anchored at the cursor Y (via `yToPitch`, which already
+  handles the inverted pitch/y mapping correctly); `Shift` alone pans
+  vertically. The vertical-pan delta is **negated** relative to the
+  horizontal pattern — pitch increases upward on screen (lower y =
+  higher pitch), the opposite of tick/x, so a positive scroll delta
+  needs to decrease `panPitch` to reveal lower pitches, the intuitive
+  "scroll down reveals what's below" direction. Also prefers
+  `deltaY`, falling back to `deltaX`, for the same reason the existing
+  horizontal-pan branch does: a plain mouse wheel held with `Shift` is
+  commonly remapped by the OS into a horizontal-scroll event
+  (`deltaX` populated, `deltaY` zeroed) before the handler ever sees
+  it. "Reset zoom" now resets both windows; its visibility condition
+  is "either axis is zoomed," and its label shows `H {x} · V {x}` only
+  when both axes are actually zoomed, otherwise just the one relevant
+  number.
+- `App.tsx`: appended a clause to the existing keyboard-shortcut hint
+  paragraph documenting the new wheel gestures (the only place
+  shortcuts are already documented in this app).
+- New `pitchViewportWindow.test.ts`, same test shape as
+  `viewportWindow.test.ts` (clamp, visible-range shrink/clamp at both
+  ends, zoom-anchor preservation, pan, reveal) — 15 tests.
+- Verified with a throwaway Playwright script (faked Tauri IPC, real
+  dev-server bundle): a synthetic 7-row, 68-semitone-span fixture,
+  screenshotted before/after `Ctrl+Shift+wheel` zoom (rows visibly
+  grew taller, anchored near the cursor), confirmed `Shift+wheel` pans
+  without changing the zoom level or button label, confirmed "Reset
+  zoom" restores the exact original screenshot pixel-for-pixel, and
+  confirmed clicking a note against the now-much-taller zoomed-in rows
+  still selects the correct pitch (proving hit-testing needed zero
+  changes, as expected from reading the existing code first). Script
+  and screenshots deleted after use, not committed.
+- Verified: `pnpm test` (166/166, 15 new), `pnpm lint`,
+  `pnpm format:check`, `pnpm build` all clean. No Rust changes — this
+  is entirely frontend canvas/viewport logic.
+
+### Global (windowed lookahead) assignment mode
+
+User asked for a deep dive into whether more `SeparationStrategy`
+presets existed beyond the four already shipped. Investigation
+concluded the four presets are all reweightings of one algorithm
+(greedy, note-at-a-time, irrevocable nearest-cost assignment) and that
+the actually-missing thing in the literature is a different algorithm
+family (global/DP optimization instead of greedy). Before building
+anything, prototyped a brute-force oracle (temporary `#[cfg(test)]`
+module in `voice_assignment.rs`, reusing the real `score_candidates`
+cost function, deleted after use) that found the true minimum-cost
+partition for small synthetic note sets and compared it against
+greedy's actual output: greedy matched the optimum on all 4 existing
+hand-written fixtures, but diverged on 84/300 (28%) of fuzzed cases
+with a forced early ambiguous choice, mean gap 2.45, worst gap 45 —
+concretely, an early channel-continuity pick can force a much worse
+split several notes later that greedy can never revisit, where the
+true optimum instead forms a clean low/high pitch-register grouping.
+This confirmed the algorithm gap was real before committing to build
+it.
+
+User chose to expose this as a new `AssignmentMode` (Greedy | Global)
+orthogonal to `SeparationStrategy`, rather than a 5th strategy variant
+— discussed pros/cons first: a 5th variant needs zero new UI/command
+surface but conflates weighting (data) with algorithm (search
+strategy) and can't compose ("Global + RegisterPriority" would need
+its own variant); a separate axis matches how the codebase already
+separates `CostWeights` from the assignment loop and composes for
+free, at the cost of a second command parameter and UI control.
+
+- New `assign_voices_with_locks` in `voice_assignment.rs` dispatches
+  on `AssignmentMode` to either the existing
+  `assign_heuristic_voices_with_locks` (`Greedy`) or the new
+  `assign_windowed_voices_with_locks` (`Global`).
+- `assign_windowed_voices_with_locks`: buffers up to
+  `LOOKAHEAD_WINDOW` (6) unlocked notes, then exhaustively searches
+  every valid grouping of that window (branch-and-bound on total
+  cost, top-`LOOKAHEAD_CANDIDATES_PER_NOTE` (3) cheapest compatible
+  voices considered per note to bound branching independent of how
+  many voices already exist in a long piece) before committing any of
+  them. A locked note flushes whatever's pending first (locks can't
+  be reordered around), then pins exactly as in `Greedy`.
+  Confidence/reason reporting is computed in a separate pass against
+  the full compatible-voice set, not the pruned search shortlist, so
+  reporting accuracy doesn't depend on search-time pruning.
+- **Bug found and fixed during implementation, before it ever reached
+  a test file**: the first version scored opening a new voice at a
+  flat 0 (matching greedy's convention of never scoring
+  `NewVoiceNoFit` at all) with no cap other than the user's optional
+  `max_voice_count`. In an unconstrained global-cost minimization, 0
+  always beats any positive-cost reuse, so the search degenerated into
+  opening a near-maximal number of voices instead of finding a sane
+  grouping — caught immediately by the adversarial regression test
+  (`finds_the_pitch_register_split_that_greedy_misses`) failing with
+  the seed notes split across 3 voices instead of 2. Fixed by adding
+  `structural_new_voices_needed`, the classic "minimum meeting rooms"
+  greedy scheduling algorithm generalized to treat each already-open
+  voice as a room that only frees up at its `last_end_tick` rather
+  than at time zero — a hard lower bound on new voices needed, so
+  capping the search there restores the real reuse-vs-new trade-off
+  greedy gets for free from its compatibility constraint.
+- Rust tests (`windowed_tests` in `voice_assignment.rs`): greedy-parity
+  on trivial reuse/overlap cases, determinism, lock pinning +
+  pending-buffer flush around a lock, voice-cap forcing, first-voice-
+  allowed-at-cap-zero, and the adversarial regression test above
+  (asserts greedy actually gets the fixture wrong first, so the test
+  documents the contrast rather than assuming it).
+- Command boundary: `reassign_voices` gained a `mode: AssignmentMode`
+  parameter; `AssignmentMode` added to `model.rs` next to
+  `SeparationStrategy`, same `SCREAMING_SNAKE_CASE` serde convention.
+- Frontend: `commands.ts` gained the `AssignmentMode` type and a
+  `mode` parameter on `reassignVoices`; `App.tsx` gained an
+  `assignmentMode` state (default `"GREEDY"`) and a "Search" selector
+  next to the existing "Strategy" selector in the re-run-separation
+  panel, styled by extending the existing
+  `.separation-strategy-label`/`-select` CSS rules to also match the
+  new `.assignment-mode-label`/`-select` classes rather than
+  duplicating identical rules.
+- Verified with a scratch `#[ignore]`d timing test (same pattern as
+  the greedy heuristic's own Phase 6 performance validation; run once
+  via `cargo test --release ... -- --ignored --nocapture`, then
+  deleted): 16-wide advancing chords forcing 16 concurrent voices took
+  7.1ms at 2,000 notes and 27.7ms at 8,000 notes (roughly linear, no
+  blowup) — comfortably interactive for an on-demand "Re-run
+  separation" click at any realistic chiptune scale.
+- Verified: `cargo fmt --check`, `cargo check`, `cargo test` (51/51),
+  `cargo clippy --all-targets --all-features -- -D warnings` all
+  clean. `pnpm test` (166/166), `pnpm lint`, `pnpm format:check`,
+  `pnpm build` all clean.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

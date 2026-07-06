@@ -1,7 +1,9 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use super::model::{
-    AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationStrategy, SeparationSummaryDto,
+    AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationStrategy,
+    SeparationSummaryDto,
 };
 
 /// Tuning constants for the assignment cost model that don't vary by
@@ -102,6 +104,25 @@ struct Candidate {
 
 pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
     assign_heuristic_voices_with_locks(notes, &HashMap::new(), None, SeparationStrategy::Balanced)
+}
+
+/// Dispatches to whichever assignment algorithm `mode` selects. `strategy`
+/// (the cost weighting) applies to either one.
+pub fn assign_voices_with_locks(
+    notes: &mut [MidiNoteDto],
+    locked: &HashMap<String, String>,
+    max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
+    mode: AssignmentMode,
+) -> Vec<MidiVoiceDto> {
+    match mode {
+        AssignmentMode::Greedy => {
+            assign_heuristic_voices_with_locks(notes, locked, max_voice_count, strategy)
+        }
+        AssignmentMode::Global => {
+            assign_windowed_voices_with_locks(notes, locked, max_voice_count, strategy)
+        }
+    }
 }
 
 /// Same heuristic as `assign_heuristic_voices`, except any note present in
@@ -246,6 +267,460 @@ pub fn assign_heuristic_voices_with_locks(
             highest_pitch: voice.highest_pitch,
         })
         .collect()
+}
+
+/// How many unlocked notes are buffered before the window is exhaustively
+/// re-optimized. Larger catches divergences (like the demonstrated case
+/// where an early channel-continuity pick forced a much worse split several
+/// notes later) that span a wider gap, at the cost of `candidates ^ window`
+/// search branches per flush -- kept modest since this runs once per
+/// `LOOKAHEAD_WINDOW` notes across a whole file, not once per note.
+const LOOKAHEAD_WINDOW: usize = 6;
+/// How many of the cheapest compatible voices are actually explored per
+/// note during the window search (plus "open a new voice" when budget
+/// allows). Bounds the branching factor independent of how many voices
+/// already exist in a long piece -- final confidence/reason reporting
+/// still checks every compatible voice, not just this shortlist, so
+/// pruning here only affects the search, never the reported numbers.
+const LOOKAHEAD_CANDIDATES_PER_NOTE: usize = 3;
+
+#[derive(Clone)]
+struct WindowSearchState {
+    /// `voices[0..existing_count]` are clones of the real, already-committed
+    /// voices; anything beyond that was opened during this search branch.
+    voices: Vec<VoiceState>,
+    cost: f32,
+    /// One entry per pending note processed so far, indexing into `voices`.
+    labels: Vec<usize>,
+}
+
+/// Same cost model and compatibility rules as `assign_heuristic_voices_with_locks`,
+/// but instead of committing each unlocked note to its single cheapest
+/// compatible voice immediately, buffers up to `LOOKAHEAD_WINDOW` unlocked
+/// notes and exhaustively searches for the true minimum-cost grouping
+/// across that whole window before committing any of them. A locked note
+/// flushes whatever is currently pending first (locks can't be reordered
+/// around), then is pinned exactly as in the greedy path.
+///
+/// This directly addresses greedy's known failure mode: an early note can
+/// have a locally-cheapest voice that, a few notes later, turns out to have
+/// foreclosed a much better overall split (e.g. a clean low/high
+/// pitch-register grouping) that greedy could never see coming because it
+/// never revisits a commitment. It is not whole-piece-optimal -- only
+/// exhaustive within each window -- so a divergence spanning more than
+/// `LOOKAHEAD_WINDOW` notes can still slip through a window boundary.
+pub fn assign_windowed_voices_with_locks(
+    notes: &mut [MidiNoteDto],
+    locked: &HashMap<String, String>,
+    max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
+) -> Vec<MidiVoiceDto> {
+    let weights = strategy.cost_weights();
+    let reserved_voice_ids: HashSet<&str> = locked.values().map(String::as_str).collect();
+    let mut voices: Vec<VoiceState> = Vec::new();
+    let mut voice_index_by_id: HashMap<String, usize> = HashMap::new();
+    let mut pending: Vec<usize> = Vec::new();
+
+    for index in 0..notes.len() {
+        if locked.contains_key(&notes[index].id) {
+            flush_pending_window(
+                notes,
+                &mut pending,
+                &mut voices,
+                &mut voice_index_by_id,
+                &reserved_voice_ids,
+                max_voice_count,
+                &weights,
+            );
+            commit_locked_note(notes, index, locked, &mut voices, &mut voice_index_by_id);
+            continue;
+        }
+
+        pending.push(index);
+        if pending.len() >= LOOKAHEAD_WINDOW {
+            flush_pending_window(
+                notes,
+                &mut pending,
+                &mut voices,
+                &mut voice_index_by_id,
+                &reserved_voice_ids,
+                max_voice_count,
+                &weights,
+            );
+        }
+    }
+    flush_pending_window(
+        notes,
+        &mut pending,
+        &mut voices,
+        &mut voice_index_by_id,
+        &reserved_voice_ids,
+        max_voice_count,
+        &weights,
+    );
+
+    voices
+        .into_iter()
+        .enumerate()
+        .map(|(index, voice)| MidiVoiceDto {
+            id: voice.id,
+            label: format!("Voice {}", index + 1),
+            note_count: voice.note_count,
+            lowest_pitch: voice.lowest_pitch,
+            highest_pitch: voice.highest_pitch,
+        })
+        .collect()
+}
+
+/// Pins a locked note to its reserved voice, identical to the inline
+/// handling in `assign_heuristic_voices_with_locks`.
+fn commit_locked_note(
+    notes: &mut [MidiNoteDto],
+    index: usize,
+    locked: &HashMap<String, String>,
+    voices: &mut Vec<VoiceState>,
+    voice_index_by_id: &mut HashMap<String, usize>,
+) {
+    let note = &mut notes[index];
+    let locked_voice_id = locked
+        .get(&note.id)
+        .expect("caller already checked this note is locked");
+    let voice_index = *voice_index_by_id
+        .entry(locked_voice_id.clone())
+        .or_insert_with(|| {
+            let next_index = voices.len();
+            voices.push(VoiceState {
+                id: locked_voice_id.clone(),
+                last_end_tick: 0,
+                last_pitch: note.pitch,
+                last_channel: note.channel,
+                note_count: 0,
+                lowest_pitch: note.pitch,
+                highest_pitch: note.pitch,
+            });
+            next_index
+        });
+
+    let voice = &mut voices[voice_index];
+    note.voice_id.clone_from(&voice.id);
+    note.assignment_confidence = 1.0;
+    note.assignment_reason = AssignmentReason::UserLocked;
+    voice.last_end_tick = note.end_tick;
+    voice.last_pitch = note.pitch;
+    voice.last_channel = note.channel;
+    voice.note_count += 1;
+    voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
+    voice.highest_pitch = voice.highest_pitch.max(note.pitch);
+}
+
+/// The classic "minimum meeting rooms" greedy algorithm, generalized to
+/// treat each already-committed voice as a "room" that only becomes free
+/// at its `last_end_tick` rather than at time zero: returns the fewest new
+/// voices `pending` can possibly need, given `voices` may already free up
+/// partway through the window and become reusable again. This is a hard
+/// lower bound, not a preference -- provably optimal for interval
+/// scheduling, so it is safe to forbid the search from opening more than
+/// this many new voices.
+fn structural_new_voices_needed(
+    voices: &[VoiceState],
+    notes: &[MidiNoteDto],
+    pending: &[usize],
+) -> usize {
+    let mut free_at: std::collections::BinaryHeap<std::cmp::Reverse<u64>> = voices
+        .iter()
+        .map(|voice| std::cmp::Reverse(voice.last_end_tick))
+        .collect();
+    let mut new_voices = 0usize;
+
+    for &index in pending {
+        let note = &notes[index];
+        let can_reuse = free_at
+            .peek()
+            .is_some_and(|std::cmp::Reverse(end)| *end <= note.start_tick);
+        if can_reuse {
+            free_at.pop();
+        } else {
+            new_voices += 1;
+        }
+        free_at.push(std::cmp::Reverse(note.end_tick));
+    }
+
+    new_voices
+}
+
+/// Solves and commits whatever notes are currently buffered in `pending`,
+/// leaving it empty. No-op if `pending` is empty (e.g. a locked note
+/// immediately following another locked note).
+#[allow(clippy::too_many_arguments)]
+fn flush_pending_window(
+    notes: &mut [MidiNoteDto],
+    pending: &mut Vec<usize>,
+    voices: &mut Vec<VoiceState>,
+    voice_index_by_id: &mut HashMap<String, usize>,
+    reserved_voice_ids: &HashSet<&str>,
+    max_voice_count: Option<usize>,
+    weights: &CostWeights,
+) {
+    if pending.is_empty() {
+        return;
+    }
+
+    let existing_count = voices.len();
+    // The search scores opening a new voice at a flat 0 (matching greedy's
+    // convention of never scoring a `NewVoiceNoFit` assignment at all), so
+    // an *unconstrained* search would always prefer opening a new voice
+    // over any reuse with a positive cost -- degenerating into "give every
+    // note its own voice." Greedy never has this problem because it only
+    // ever opens a new voice when no compatible one exists, i.e. it never
+    // opens more voices than the true structural minimum. Capping the
+    // search at that same structural minimum (falling back to the user's
+    // `max_voice_count` if that's even tighter) restores the real
+    // reuse-vs-new trade-off instead of letting free-new-voice cost win by
+    // default.
+    let structural_new_voices = structural_new_voices_needed(voices, notes, pending);
+    let mut max_new_voices = match max_voice_count {
+        Some(max) => max
+            .saturating_sub(existing_count)
+            .min(structural_new_voices),
+        None => structural_new_voices,
+    };
+    if existing_count == 0 {
+        // Mirrors greedy's `voice_cap_still_allows_the_very_first_voice`:
+        // even a cap of 0 must allow opening the very first voice, since
+        // leaving a note completely unassigned isn't a valid outcome.
+        max_new_voices = max_new_voices.max(1);
+    }
+
+    let initial_state = WindowSearchState {
+        voices: voices.clone(),
+        cost: 0.0,
+        labels: Vec::with_capacity(pending.len()),
+    };
+    let mut best: Option<WindowSearchState> = None;
+    search_window(
+        notes,
+        pending,
+        0,
+        initial_state,
+        existing_count,
+        max_new_voices,
+        weights,
+        &mut best,
+    );
+    let best =
+        best.expect("search_window always finds at least one assignment for non-empty pending");
+
+    commit_window_result(
+        notes,
+        pending,
+        &best.labels,
+        existing_count,
+        voices,
+        voice_index_by_id,
+        reserved_voice_ids,
+        weights,
+    );
+
+    pending.clear();
+}
+
+/// Exhaustively searches (with branch-and-bound pruning on `best.cost`) for
+/// the minimum-cost way to assign `pending[depth..]` to voices, where a
+/// voice is either one of the first `existing_count` entries of
+/// `state.voices` (already-committed, real) or one opened earlier within
+/// this same search branch. Candidate voices per note are capped at
+/// `LOOKAHEAD_CANDIDATES_PER_NOTE` (plus "open new") to keep branching
+/// bounded regardless of how many voices exist in a long piece; if no
+/// voice is compatible and no new-voice budget remains, falls back to
+/// forcing the single cheapest voice overall, mirroring greedy's
+/// at-the-cap behavior.
+#[allow(clippy::too_many_arguments)]
+fn search_window(
+    notes: &[MidiNoteDto],
+    pending: &[usize],
+    depth: usize,
+    state: WindowSearchState,
+    existing_count: usize,
+    max_new_voices: usize,
+    weights: &CostWeights,
+    best: &mut Option<WindowSearchState>,
+) {
+    if depth == pending.len() {
+        if best.as_ref().is_none_or(|found| state.cost < found.cost) {
+            *best = Some(state);
+        }
+        return;
+    }
+    if let Some(found) = best {
+        if state.cost >= found.cost {
+            return;
+        }
+    }
+
+    let note = &notes[pending[depth]];
+    let new_voice_count = state.voices.len() - existing_count;
+    let can_open_new = new_voice_count < max_new_voices;
+
+    let mut scored: Vec<(usize, f32, bool)> = state
+        .voices
+        .iter()
+        .enumerate()
+        .map(|(index, voice)| {
+            let compatible = voice.last_end_tick <= note.start_tick;
+            let cost = score_candidates(std::slice::from_ref(voice), note, false, weights)[0].cost;
+            (index, cost, compatible)
+        })
+        .collect();
+
+    let mut branch_targets: Vec<(usize, f32, bool)> = Vec::new();
+    let has_compatible = scored.iter().any(|(_, _, compatible)| *compatible);
+
+    if has_compatible {
+        scored.retain(|(_, _, compatible)| *compatible);
+        scored.sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal));
+        scored.truncate(LOOKAHEAD_CANDIDATES_PER_NOTE);
+        for (index, cost, _) in scored {
+            branch_targets.push((index, cost, false));
+        }
+        if can_open_new {
+            branch_targets.push((state.voices.len(), 0.0, true));
+        }
+    } else if can_open_new {
+        branch_targets.push((state.voices.len(), 0.0, true));
+    } else {
+        scored.sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal));
+        if let Some(&(index, cost, _)) = scored.first() {
+            branch_targets.push((index, cost, false));
+        }
+    }
+
+    for (target_index, cost, is_new) in branch_targets {
+        let mut next_state = state.clone();
+        let real_index = if is_new {
+            next_state.voices.push(VoiceState {
+                id: String::new(),
+                last_end_tick: note.end_tick,
+                last_pitch: note.pitch,
+                last_channel: note.channel,
+                note_count: 1,
+                lowest_pitch: note.pitch,
+                highest_pitch: note.pitch,
+            });
+            next_state.voices.len() - 1
+        } else {
+            let voice = &mut next_state.voices[target_index];
+            voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
+            voice.last_pitch = note.pitch;
+            voice.last_channel = note.channel;
+            voice.note_count += 1;
+            voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
+            voice.highest_pitch = voice.highest_pitch.max(note.pitch);
+            target_index
+        };
+        next_state.cost += cost;
+        next_state.labels.push(real_index);
+
+        search_window(
+            notes,
+            pending,
+            depth + 1,
+            next_state,
+            existing_count,
+            max_new_voices,
+            weights,
+            best,
+        );
+    }
+}
+
+/// Replays the winning window labeling against the real, outer `voices`
+/// state (allocating a real voice id the first time a "new voice" label is
+/// seen), and derives each note's `assignment_confidence`/`assignment_reason`
+/// against the *full* compatible-voice set -- not the pruned search
+/// shortlist -- so reporting stays accurate even though the search itself
+/// only explored a bounded candidate list.
+#[allow(clippy::too_many_arguments)]
+fn commit_window_result(
+    notes: &mut [MidiNoteDto],
+    pending: &[usize],
+    winning_labels: &[usize],
+    existing_count: usize,
+    voices: &mut Vec<VoiceState>,
+    voice_index_by_id: &mut HashMap<String, usize>,
+    reserved_voice_ids: &HashSet<&str>,
+    weights: &CostWeights,
+) {
+    let mut window_label_to_real_index: HashMap<usize, usize> =
+        (0..existing_count).map(|index| (index, index)).collect();
+
+    for (&note_index, &window_label) in pending.iter().zip(winning_labels) {
+        let real_index = *window_label_to_real_index
+            .entry(window_label)
+            .or_insert_with(|| {
+                let new_id = allocate_new_voice_id(voice_index_by_id, reserved_voice_ids);
+                let next_index = voices.len();
+                voice_index_by_id.insert(new_id.clone(), next_index);
+                voices.push(VoiceState {
+                    id: new_id,
+                    last_end_tick: 0,
+                    last_pitch: notes[note_index].pitch,
+                    last_channel: notes[note_index].channel,
+                    note_count: 0,
+                    lowest_pitch: notes[note_index].pitch,
+                    highest_pitch: notes[note_index].pitch,
+                });
+                next_index
+            });
+
+        let note = &mut notes[note_index];
+        let is_new_voice = voices[real_index].note_count == 0;
+        let compatible = compatible_candidates(voices, note, weights);
+
+        let (confidence, reason) = if is_new_voice {
+            (1.0, AssignmentReason::NewVoiceNoFit)
+        } else if !compatible
+            .iter()
+            .any(|candidate| candidate.index == real_index)
+        {
+            (0.0, AssignmentReason::VoiceCapReached)
+        } else {
+            let decided_cost = score_candidates(
+                std::slice::from_ref(&voices[real_index]),
+                note,
+                false,
+                weights,
+            )[0]
+            .cost;
+            let runner_up_cost = compatible
+                .iter()
+                .filter(|candidate| candidate.index != real_index)
+                .map(|candidate| candidate.cost)
+                .fold(f32::INFINITY, f32::min);
+            let confidence = if runner_up_cost.is_finite() {
+                ((runner_up_cost - decided_cost) / CONFIDENCE_SCALE).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let reason = if voices[real_index].last_channel == note.channel {
+                AssignmentReason::ChannelContinuity
+            } else {
+                AssignmentReason::ClosestPitch
+            };
+            (confidence, reason)
+        };
+
+        note.voice_id.clone_from(&voices[real_index].id);
+        note.assignment_confidence = confidence;
+        note.assignment_reason = reason;
+
+        let voice = &mut voices[real_index];
+        voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
+        voice.last_pitch = note.pitch;
+        voice.last_channel = note.channel;
+        voice.note_count += 1;
+        voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
+        voice.highest_pitch = voice.highest_pitch.max(note.pitch);
+    }
 }
 
 /// Finds the lowest-numbered "voice-N" not already in use by `used_ids` or
@@ -765,5 +1240,280 @@ mod tests {
         assert_eq!(notes[0].voice_id, "voice-1");
         assert_eq!(notes[1].voice_id, "voice-2");
         assert_eq!(notes[2].voice_id, "voice-3");
+    }
+}
+
+#[cfg(test)]
+mod windowed_tests {
+    use super::*;
+
+    fn mk(id: &str, channel: u8, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
+        MidiNoteDto {
+            id: id.to_string(),
+            voice_id: String::new(),
+            source_track_index: 0,
+            channel,
+            pitch,
+            velocity: 100,
+            start_tick,
+            end_tick,
+            duration_ticks: end_tick - start_tick,
+            assignment_confidence: 0.0,
+            assignment_reason: AssignmentReason::ClosestPitch,
+        }
+    }
+
+    #[test]
+    fn reuses_a_compatible_voice_like_greedy_does() {
+        let mut notes = vec![mk("a", 0, 60, 0, 120), mk("b", 0, 62, 120, 240)];
+
+        let voices = assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 1);
+        assert_eq!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    #[test]
+    fn separates_overlapping_notes_like_greedy_does() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240), mk("b", 0, 64, 120, 360)];
+
+        let voices = assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 2);
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    #[test]
+    fn assigns_repeatably() {
+        let original = vec![
+            mk("a", 0, 60, 0, 240),
+            mk("b", 1, 64, 120, 360),
+            mk("c", 1, 65, 360, 480),
+            mk("d", 0, 67, 480, 600),
+        ];
+        let mut first = original.clone();
+        let mut second = original;
+
+        assign_windowed_voices_with_locks(
+            &mut first,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+        assign_windowed_voices_with_locks(
+            &mut second,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        let first_assignments: Vec<_> = first.iter().map(|note| note.voice_id.clone()).collect();
+        let second_assignments: Vec<_> = second.iter().map(|note| note.voice_id.clone()).collect();
+        assert_eq!(first_assignments, second_assignments);
+    }
+
+    #[test]
+    fn locked_note_stays_pinned_and_flushes_pending_notes_around_it() {
+        let mut notes = vec![
+            mk("a", 0, 60, 0, 120),
+            mk("b", 0, 70, 0, 120),
+            mk("c", 0, 66, 120, 240),
+        ];
+        let locked = HashMap::from([("b".to_string(), "voice-9".to_string())]);
+
+        assign_windowed_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
+
+        assert_eq!(notes[1].voice_id, "voice-9");
+        assert_eq!(notes[1].assignment_reason, AssignmentReason::UserLocked);
+        assert_eq!(notes[1].assignment_confidence, 1.0);
+    }
+
+    #[test]
+    fn voice_cap_forces_reuse_instead_of_opening_a_new_voice() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240), mk("b", 0, 64, 120, 360)];
+
+        assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(1),
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(notes[0].voice_id, notes[1].voice_id);
+        assert_eq!(
+            notes[1].assignment_reason,
+            AssignmentReason::VoiceCapReached
+        );
+        assert_eq!(notes[1].assignment_confidence, 0.0);
+    }
+
+    #[test]
+    fn voice_cap_still_allows_the_very_first_voice() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240)];
+
+        let voices = assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(0),
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 1);
+        assert_eq!(notes[0].assignment_reason, AssignmentReason::NewVoiceNoFit);
+    }
+
+    /// The concrete counterexample found while investigating whether
+    /// greedy ever produces a worse-than-optimal split: `seed-a2` is
+    /// cheapest (channel continuity) reused into the "b" voice under
+    /// greedy, which then forces `seed-b2` into the "a" voice, permanently
+    /// mixing a 49-pitch note with a 68-pitch one -- fragmenting what
+    /// should be a clean low/high pitch-register split across every later
+    /// free note. A brute-force oracle over this exact note set confirmed
+    /// the true minimum-cost partition groups {a1, a2} and {b1, b2}
+    /// together instead. This asserts the windowed search actually finds
+    /// that grouping, where greedy (verified separately) does not.
+    #[test]
+    fn finds_the_pitch_register_split_that_greedy_misses() {
+        let mut notes = vec![
+            mk("seed-a1", 0, 49, 0, 200),
+            mk("seed-b1", 1, 65, 0, 200),
+            mk("seed-a2", 0, 64, 200, 400),
+            mk("seed-b2", 1, 68, 200, 400),
+            mk("free-0", 0, 71, 420, 487),
+            mk("free-1", 1, 78, 497, 605),
+            mk("free-2", 0, 48, 616, 682),
+            mk("free-3", 0, 44, 690, 801),
+            mk("free-4", 0, 75, 824, 977),
+        ];
+
+        // Confirm greedy actually gets this wrong first, so this test
+        // documents the contrast rather than asserting an assumption.
+        let mut greedy_notes = notes.clone();
+        assign_heuristic_voices_with_locks(
+            &mut greedy_notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+        assert_ne!(
+            greedy_notes[0].voice_id, greedy_notes[2].voice_id,
+            "greedy is expected to split seed-a1/seed-a2 apart here -- if this now fails, \
+             the adversarial fixture no longer demonstrates the gap it was built to show"
+        );
+
+        assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(
+            notes[0].voice_id, notes[2].voice_id,
+            "seed-a1 and seed-a2 should land in the same voice"
+        );
+        assert_eq!(
+            notes[1].voice_id, notes[3].voice_id,
+            "seed-b1 and seed-b2 should land in the same voice"
+        );
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    /// Replays a committed assignment's real note->voice_id mapping through
+    /// the same cost formula used to produce it, giving the actual total
+    /// cost being minimized -- unlike `assignment_confidence`, which
+    /// measures how locally decisive a single pick was, not whether the
+    /// overall grouping is cheaper.
+    fn total_cost_of_committed_assignment(notes: &[MidiNoteDto], weights: &CostWeights) -> f32 {
+        let mut voice_states: HashMap<String, VoiceState> = HashMap::new();
+        let mut total = 0.0f32;
+
+        for note in notes {
+            if let Some(voice) = voice_states.get(&note.voice_id) {
+                total +=
+                    score_candidates(std::slice::from_ref(voice), note, false, weights)[0].cost;
+            }
+
+            let voice = voice_states
+                .entry(note.voice_id.clone())
+                .or_insert_with(|| VoiceState {
+                    id: note.voice_id.clone(),
+                    last_end_tick: note.end_tick,
+                    last_pitch: note.pitch,
+                    last_channel: note.channel,
+                    note_count: 0,
+                    lowest_pitch: note.pitch,
+                    highest_pitch: note.pitch,
+                });
+            voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
+            voice.last_pitch = note.pitch;
+            voice.last_channel = note.channel;
+            voice.note_count += 1;
+            voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
+            voice.highest_pitch = voice.highest_pitch.max(note.pitch);
+        }
+
+        total
+    }
+
+    /// Real, dense, non-synthetic regression coverage (see
+    /// `fixtures/README.md` for provenance/license and how this file was
+    /// chosen): confirms `Global` doesn't just work on the constructed
+    /// adversarial cases above, but actually finds an equal-or-lower-cost
+    /// partition than `Greedy` on real music, across every strategy.
+    #[test]
+    fn global_mode_matches_or_beats_greedy_cost_on_a_real_dense_fixture() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("boss-battle-6-combined.mid");
+        let bytes = std::fs::read(&path).expect("fixture should be readable");
+        let project =
+            super::super::parser::parse_midi_project(&path, &bytes).expect("fixture should parse");
+
+        for strategy in [
+            SeparationStrategy::Balanced,
+            SeparationStrategy::ChannelPriority,
+            SeparationStrategy::RegisterPriority,
+            SeparationStrategy::StrictChannel,
+        ] {
+            let weights = strategy.cost_weights();
+
+            let mut greedy_notes = project.notes.clone();
+            assign_voices_with_locks(
+                &mut greedy_notes,
+                &HashMap::new(),
+                None,
+                strategy,
+                AssignmentMode::Greedy,
+            );
+            let greedy_cost = total_cost_of_committed_assignment(&greedy_notes, &weights);
+
+            let mut global_notes = project.notes.clone();
+            assign_voices_with_locks(
+                &mut global_notes,
+                &HashMap::new(),
+                None,
+                strategy,
+                AssignmentMode::Global,
+            );
+            let global_cost = total_cost_of_committed_assignment(&global_notes, &weights);
+
+            assert!(
+                global_cost <= greedy_cost + 1e-3,
+                "{strategy:?}: Global cost {global_cost} should be <= Greedy cost {greedy_cost} \
+                 on a real dense fixture"
+            );
+        }
     }
 }

@@ -17,3 +17,25 @@ Set-Content -LiteralPath fixtures\two-note-smoke.mid -Value $bytes -AsByteStream
 
 Rust parser tests still construct their own small MIDI files programmatically with `midly`
 so unit-test cases stay readable.
+
+## `boss-battle-6-combined.mid`
+
+A real, dense, non-synthetic MIDI file used to validate the voice-separation heuristic and
+`AssignmentMode` against actual music rather than only hand-constructed or synthetic test
+cases. Source: ["Boss Battle #6 (8 bit)"](https://opengameart.org/content/boss-battle-6-8-bit)
+by cynicmusic on OpenGameArt, dedicated to the **public domain (CC0)**.
+
+The pack this came from (`15_melodic_rpg_chiptunes_ogg`) ships two MIDI variants of the same
+track; this is the "combined" one, chosen specifically because it collapses everything onto a
+single track and a single MIDI channel — 1,231 notes, pitch range 24-79, up to 8 notes
+overlapping at once, 0 parser warnings. With no channel signal left to lean on at all, it's a
+harder and more realistic case than any synthetic fixture built so far: it isolates how well
+pitch/timing-only separation (`RegisterPriority`/`Balanced`, `Greedy` vs. `Global`) does, since
+`ChannelPriority`/`StrictChannel` have nothing to key off here and degenerate to a coin flip
+between equally-"compatible" voices for every note.
+
+Measured while validating `AssignmentMode::Global` against this fixture (see
+`voice_assignment.rs`'s `windowed_tests`): `Global` found a lower total assignment cost than
+`Greedy` on every strategy where channel information actually matters (11% lower on
+`Balanced`, 9% lower on `RegisterPriority`), confirming the lookahead search's benefit holds on
+real content and not just the constructed adversarial cases used to justify building it.

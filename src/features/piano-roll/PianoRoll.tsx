@@ -10,6 +10,7 @@ import { clampMidiPitch, type PitchMarker } from "../../domain/midi/rangeRules";
 import { pitchToY, xToTick, yToPitch } from "./coordinates";
 import {
   buildViewport,
+  computeFullPitchSpan,
   drawPianoRoll,
   getVoiceFillColor,
   PIANO_ROLL_LABEL_WIDTH,
@@ -17,6 +18,14 @@ import {
 } from "./drawPianoRoll";
 import { hitTestPianoRollNote, hitTestPianoRollNotesInRect } from "./hitTest";
 import { shouldPaintNote } from "./paint";
+import {
+  defaultPitchViewportWindow,
+  panPitchBy,
+  panPitchToReveal,
+  visiblePitchRange,
+  zoomPitchAt,
+  type PitchViewportWindow,
+} from "./pitchViewportWindow";
 import { resolveSelection } from "./selection";
 import {
   defaultViewportWindow,
@@ -68,6 +77,9 @@ export function PianoRoll({
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
+  const [pitchViewportWindow, setPitchViewportWindow] = useState<PitchViewportWindow>(
+    defaultPitchViewportWindow(),
+  );
   const dragStartRef = useRef<{ point: { x: number; y: number }; additive: boolean } | null>(null);
   const isPaintingRef = useRef(false);
   const paintedNoteIdsRef = useRef<Map<string, string>>(new Map());
@@ -102,6 +114,7 @@ export function PianoRoll({
     if (durationTicks !== lastDurationTicksRef.current) {
       lastDurationTicksRef.current = durationTicks;
       setViewportWindow(defaultViewportWindow());
+      setPitchViewportWindow(defaultPitchViewportWindow());
     }
   }, [project?.durationTicks]);
 
@@ -112,9 +125,18 @@ export function PianoRoll({
     return visibleTickRange(project.durationTicks, viewportWindow);
   }, [project, viewportWindow]);
 
+  const fullPitchSpan = useMemo(() => computeFullPitchSpan(project), [project]);
+
+  const pitchRange = useMemo(() => {
+    if (!project) {
+      return undefined;
+    }
+    return visiblePitchRange(fullPitchSpan, pitchViewportWindow);
+  }, [project, fullPitchSpan, pitchViewportWindow]);
+
   const viewport = useMemo(
-    () => buildViewport(project, size.width, size.height, tickRange),
-    [project, size, tickRange],
+    () => buildViewport(project, size.width, size.height, tickRange, pitchRange),
+    [project, size, tickRange, pitchRange],
   );
 
   // Bring a keyboard-selected note (e.g. review-mode Tab-stepping) into
@@ -134,7 +156,13 @@ export function PianoRoll({
         endTick: note.endTick,
       }),
     );
-  }, [selectedNoteIds, project]);
+    setPitchViewportWindow((current) =>
+      panPitchToReveal(current, fullPitchSpan, {
+        lowestPitch: note.pitch,
+        highestPitch: note.pitch,
+      }),
+    );
+  }, [selectedNoteIds, project, fullPitchSpan]);
 
   // Page-follow the playhead during playback, panning only — never
   // changes zoom, and only while actually playing (a paused/stopped
@@ -403,7 +431,20 @@ export function PianoRoll({
     function handleWheel(event: WheelEvent) {
       event.preventDefault();
 
-      if (event.ctrlKey || event.metaKey) {
+      const isModified = event.ctrlKey || event.metaKey;
+
+      if (isModified && event.shiftKey) {
+        const bounds = targetCanvas.getBoundingClientRect();
+        const anchorPitch = yToPitch(event.clientY - bounds.top, viewport);
+        const factor =
+          event.deltaY < 0 ? ZOOM_FACTOR_PER_WHEEL_NOTCH : 1 / ZOOM_FACTOR_PER_WHEEL_NOTCH;
+        setPitchViewportWindow((current) =>
+          zoomPitchAt(current, fullPitchSpan, factor, anchorPitch),
+        );
+        return;
+      }
+
+      if (isModified) {
         const bounds = targetCanvas.getBoundingClientRect();
         const x = event.clientX - bounds.left - PIANO_ROLL_LABEL_WIDTH;
         const rollViewport = {
@@ -417,6 +458,24 @@ export function PianoRoll({
         return;
       }
 
+      if (event.shiftKey) {
+        const pitchSpan = visiblePitchRange(fullPitchSpan, pitchViewportWindow);
+        const windowPitches = pitchSpan.highestPitch - pitchSpan.lowestPitch + 1;
+        // A plain vertical mouse wheel held with Shift is commonly
+        // remapped by the OS into a horizontal scroll (deltaX populated,
+        // deltaY zeroed) before this handler ever sees it — the same
+        // quirk the horizontal-pan branch below already works around.
+        // Prefer deltaY (untouched trackpad scroll) but fall back to
+        // deltaX (OS-remapped mouse wheel).
+        const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+        // Negated: pitch increases upward on screen (lower y = higher
+        // pitch), the opposite of tick/x, so scrolling "down" (positive
+        // delta) should reveal lower pitches, not higher ones.
+        const panDeltaPitches = -(delta / Math.max(1, viewport.height)) * windowPitches;
+        setPitchViewportWindow((current) => panPitchBy(current, panDeltaPitches));
+        return;
+      }
+
       const range = visibleTickRange(durationTicks, viewportWindow);
       const windowTicks = range.endTick - range.startTick;
       const rollWidth = Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH);
@@ -427,11 +486,21 @@ export function PianoRoll({
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [project, viewport, viewportWindow]);
+  }, [project, viewport, viewportWindow, pitchViewportWindow, fullPitchSpan]);
 
   function handleResetZoom() {
     setViewportWindow(defaultViewportWindow());
+    setPitchViewportWindow(defaultPitchViewportWindow());
   }
+
+  const isHorizontallyZoomed = viewportWindow.zoomLevel > 1;
+  const isVerticallyZoomed = pitchViewportWindow.zoomLevel > 1;
+  const resetZoomLabel =
+    isHorizontallyZoomed && isVerticallyZoomed
+      ? `H ${viewportWindow.zoomLevel.toFixed(1)}x · V ${pitchViewportWindow.zoomLevel.toFixed(1)}x`
+      : isVerticallyZoomed
+        ? `${pitchViewportWindow.zoomLevel.toFixed(1)}x`
+        : `${viewportWindow.zoomLevel.toFixed(1)}x`;
 
   const minimap =
     project && tickRange
@@ -472,9 +541,9 @@ export function PianoRoll({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       />
-      {viewportWindow.zoomLevel > 1 ? (
+      {viewportWindow.zoomLevel > 1 || pitchViewportWindow.zoomLevel > 1 ? (
         <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>
-          Reset zoom ({viewportWindow.zoomLevel.toFixed(1)}x)
+          Reset zoom ({resetZoomLabel})
         </button>
       ) : null}
       {project && project.voices.length > 0 ? (

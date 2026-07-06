@@ -62,11 +62,17 @@ export interface TickWindow {
   endTick: number;
 }
 
+export interface PitchWindow {
+  lowestPitch: number;
+  highestPitch: number;
+}
+
 export function buildViewport(
   project: MidiProject | null,
   width: number,
   height: number,
   tickWindow?: TickWindow,
+  pitchWindow?: PitchWindow,
 ): PianoRollViewport {
   if (!project || project.notes.length === 0) {
     return {
@@ -74,14 +80,14 @@ export function buildViewport(
       height,
       startTick: tickWindow?.startTick ?? 0,
       endTick: tickWindow?.endTick ?? Math.max(1, project?.durationTicks ?? 1920),
-      lowestPitch: 48,
-      highestPitch: 72,
+      lowestPitch: pitchWindow?.lowestPitch ?? 48,
+      highestPitch: pitchWindow?.highestPitch ?? 72,
     };
   }
 
   const pitches = project.notes.map((note) => note.pitch);
-  const lowestPitch = Math.max(0, Math.min(...pitches) - 2);
-  const highestPitch = Math.min(127, Math.max(...pitches) + 2);
+  const lowestPitch = pitchWindow?.lowestPitch ?? Math.max(0, Math.min(...pitches) - 2);
+  const highestPitch = pitchWindow?.highestPitch ?? Math.min(127, Math.max(...pitches) + 2);
 
   return {
     width,
@@ -90,6 +96,25 @@ export function buildViewport(
     endTick: tickWindow?.endTick ?? Math.max(1, project.durationTicks),
     lowestPitch,
     highestPitch,
+  };
+}
+
+/**
+ * Computes a project's full pitch span (lowest/highest note pitch, padded
+ * by 2 semitones) — the same bounds `buildViewport` falls back to when no
+ * `pitchWindow` is given. Exposed so `PianoRoll.tsx` can resolve a
+ * `PitchViewportWindow` against the same span `buildViewport` would
+ * otherwise compute itself, keeping the two in agreement.
+ */
+export function computeFullPitchSpan(project: MidiProject | null): PitchWindow {
+  if (!project || project.notes.length === 0) {
+    return { lowestPitch: 48, highestPitch: 72 };
+  }
+
+  const pitches = project.notes.map((note) => note.pitch);
+  return {
+    lowestPitch: Math.max(0, Math.min(...pitches) - 2),
+    highestPitch: Math.min(127, Math.max(...pitches) + 2),
   };
 }
 
