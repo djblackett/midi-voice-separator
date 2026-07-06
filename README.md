@@ -38,11 +38,11 @@ tracks.
   voice legend reflects exactly the voices the new result actually uses — a voice the re-run
   no longer needs (e.g. after lowering the cap) drops out instead of lingering as an empty
   row.
-- Search mode "Global": an alternative to the default greedy assignment that buffers a short
-  lookahead window of unlocked notes and exhaustively searches for the true minimum-cost
-  grouping across that window before committing any of them, rather than committing each note
-  irrevocably as soon as it's seen. Slower than Greedy but corrects a demonstrated class of
-  greedy mistake — see Architecture below.
+- Search mode "Global": an alternative to the default greedy assignment that keeps a sliding
+  window of unlocked notes and exhaustively re-searches it on every note, only ever finalizing
+  the oldest pending one, rather than committing each note irrevocably as soon as it's seen.
+  Slower than Greedy but corrects a demonstrated class of greedy mistake — see Architecture
+  below.
 - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`) for selection-reassignment, voice-management, paint,
   pitch-range, and re-run-separation actions.
 - Piano-roll pan/zoom, both axes: `Ctrl`/`Cmd`+wheel zooms horizontally and `Ctrl`/`Cmd`+`Shift`+
@@ -144,20 +144,27 @@ locally cheapest voice that, once more notes arrive, turns out to have foreclose
 better overall split (e.g. a clean low/high pitch-register grouping) that greedy can never
 revisit once committed. `AssignmentMode` makes the search algorithm itself a user-facing
 choice, orthogonal to `SeparationStrategy` (which only picks the cost weighting either
-algorithm scores with): `Greedy` is the algorithm above; `Global` buffers a short lookahead
-window of unlocked notes (6 by default) and exhaustively searches every valid grouping of
-that window — capped at the true structural minimum number of new voices the window can
-possibly need, computed with the same "minimum meeting rooms" scheduling algorithm used for
-interval graphs, since scoring a brand-new voice at a flat 0 would otherwise always beat any
-positive-cost reuse and degenerate into opening a new voice for almost every note — before
-committing any of them. A locked note flushes whatever is currently pending first, then pins
-exactly as in `Greedy`. This is not whole-piece-optimal, only exhaustive within each window, so
-a divergence spanning more than the window size can still slip through a window boundary; it
-is a wider-sighted heuristic, not a proof of global optimality. Confirmed empirically (a
-brute-force oracle built to test this before implementing it) that greedy diverges from the
-true minimum-cost partition in a meaningful fraction of realistic cases, occasionally by a
-wide margin, and confirmed with a synthetic worst-case 8,000-note/16-voice project that
-`Global` stays comfortably interactive (under 30 ms).
+algorithm scores with): `Greedy` is the algorithm above; `Global` keeps a *sliding* window of
+up to 6 pending unlocked notes and, once it's full, re-solves the whole window on every new
+note but commits only the oldest pending one — so every unlocked note is finalized only after
+the search has already seen the next 5 notes, regardless of where it falls in the piece, and
+a locked note simply flushes (solves and commits everything currently pending) before it's
+pinned exactly as in `Greedy`. The search itself is capped at the true structural minimum
+number of new voices the window can possibly need, computed with the same "minimum meeting
+rooms" scheduling algorithm used for interval graphs, since scoring a brand-new voice at a
+flat 0 would otherwise always beat any positive-cost reuse and degenerate into opening a new
+voice for almost every note. This is not whole-piece-optimal, only exhaustive within each
+6-note window, so a divergence spanning more than that can still slip through; it is a
+wider-sighted heuristic, not a proof of global optimality. An earlier version committed fixed,
+non-overlapping 6-note chunks instead of sliding one note at a time, which meant a note's
+foresight depended on where it happened to land relative to a chunk boundary — a note last in
+its chunk got none. A constructed regression test (placing the same adversarial pattern so its
+pivot note lands exactly on an old chunk boundary) confirmed the fixed-chunk version got it
+wrong there while the sliding version gets it right, at roughly 5-6x the search cost (still
+under 155 ms on a synthetic 8,000-note/16-voice worst case, since it now solves once per note
+instead of once per 6 notes). Confirmed empirically (a brute-force oracle built to test this
+before implementing `Global` at all) that greedy diverges from the true minimum-cost partition
+in a meaningful fraction of realistic cases, occasionally by a wide margin.
 
 Manual corrections are represented as a frontend-only note-to-voice override map layered on
 top of the immutable imported project; voice identity, order, and labels are separate
@@ -194,7 +201,14 @@ mostly-single-channel chiptune file — rather than chase one "best" weighting f
 fix exposes a few distinct presets to try per file. "Re-run separation" also gained an
 assignment-mode selector (Greedy, Global), after a brute-force oracle confirmed greedy's
 note-at-a-time commitment provably diverges from the true minimum-cost partition in a
-meaningful fraction of cases — Global re-optimizes over a short lookahead window instead of
-committing each note immediately, and stays comfortably interactive (well under 30 ms even on
-an 8,000-note synthetic worst case). There is no open candidate left from this roadmap; the
-next milestone would start a fresh plan.
+meaningful fraction of cases. Two real, CC0-licensed dense chiptune fixtures
+(`fixtures/boss-battle-6-combined.mid` and `boss-battle-6-separate-tracks.mid`, the same track
+with and without its original per-instrument tracks/channels) now back this permanently:
+`Global` beats `Greedy` on total cost across every strategy on both, confirming the benefit
+holds on real music and not just constructed adversarial cases, and between them they validate
+both ends of the design space (no channel signal at all vs. a reliable one). `Global` initially
+committed fixed, non-overlapping chunks of its lookahead window, which meant a note's foresight
+depended on where it fell relative to a chunk boundary; it now slides one note at a time so
+every note gets the same foresight regardless of position, at roughly 5-6x the search cost
+(still under 155 ms on a synthetic 8,000-note/16-voice worst case). There is no open candidate
+left from this roadmap; the next milestone would start a fresh plan.

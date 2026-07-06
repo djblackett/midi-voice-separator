@@ -1223,6 +1223,102 @@ free, at the cost of a second command parameter and UI control.
   clean. `pnpm test` (166/166), `pnpm lint`, `pnpm format:check`,
   `pnpm build` all clean.
 
+### Real-fixture validation of Global mode, and a second real fixture
+
+Ran the same `Greedy` vs. `Global` comparison from the design-time
+brute-force oracle against real content instead of only synthetic
+fixtures, using the separate-tracks Boss Battle 6 file the user
+sourced (CC0, opengameart.org) and its combined (single-track,
+single-channel) companion. Built a permanent cost-comparison helper
+(`total_cost_of_committed_assignment` in `voice_assignment.rs`,
+replaying a committed note->voice_id mapping through the real
+`score_candidates` formula) rather than relying on
+`assignment_confidence`, since confidence measures how locally
+decisive a pick was, not whether the overall grouping is cheaper --
+and on this file the two metrics moved in opposite directions (see
+below).
+
+- Combined fixture (no channel signal): `Global` beat `Greedy` on
+  total cost on every strategy where channel information could
+  matter (11% lower on `Balanced`, 9% on `RegisterPriority`).
+  `ChannelPriority`/`StrictChannel` produced identical results under
+  both modes -- expected, since with everything on one channel every
+  candidate gets the same channel bonus, so there's no real choice
+  for either algorithm to make differently.
+- Separate-tracks fixture (13 real channels, added to `fixtures/` as
+  `boss-battle-6-separate-tracks.mid` since it's beneficial,
+  complementary coverage): `Global` beat `Greedy` on cost across all
+  four strategies here too, by an even larger margin (31% lower on
+  `Balanced`). This file is what validates `ChannelPriority`/
+  `StrictChannel` actually work as designed: mean confidence jumped to
+  0.91-0.975 (vs. 0.66-0.75 for the pitch-only strategies), confirming
+  channel-based separation earns its keep when the channel signal it
+  depends on is real.
+- Counterintuitive-but-correct finding: on `Balanced`/`RegisterPriority`,
+  `Global`'s lower cost came with more low-confidence notes, not
+  fewer -- it sometimes takes a locally non-obvious note to buy a
+  better global grouping, and that honestly shows up as lower local
+  confidence. On `ChannelPriority`/`StrictChannel`, `Global` improved
+  cost and confidence slightly, since a strong reliable signal means
+  smarter global choices tend to agree with local intuition rather
+  than override it.
+- Added two permanent regression tests
+  (`global_mode_matches_or_beats_greedy_cost_on_a_real_combined_fixture`/
+  `..._separate_tracks_fixture`, sharing one helper) asserting `Global`'s
+  cost is never worse than `Greedy`'s on either real fixture, across
+  all four strategies -- so a future change that regresses `Global`
+  below `Greedy` on real content fails loudly, not just on synthetic
+  cases. All exploratory comparison code (the diagnostic that produced
+  the numbers above) was scratch, run via a temporary `#[ignore]`d
+  test, then deleted once the numbers were captured.
+- `fixtures/README.md` documents both files' shared provenance
+  (["Boss Battle #6 (8 bit)"](https://opengameart.org/content/boss-battle-6-8-bit)
+  by cynicmusic, CC0) and what each one is for.
+
+### Sliding window (fixed the chunk-boundary blind spot in Global mode)
+
+`Global` originally committed fixed, non-overlapping `LOOKAHEAD_WINDOW`-note
+chunks: solve chunk, commit everything in it, start a fresh empty
+chunk. This meant a note's amount of foresight depended entirely on
+where it fell relative to a chunk boundary -- a note last in its
+chunk got zero benefit from the notes in the next chunk, the same
+blind spot as plain greedy. Verified this concretely rather than just
+reasoning about it: `git stash`ed the sliding-window change, added a
+test that shifts the existing adversarial fixture (prepending 3
+inert filler notes so the pivot note lands exactly on the old
+chunk-boundary index), ran it against the stashed (chunked) code --
+failed, confirming the blind spot was real -- then `git stash pop`ped
+back and confirmed the same test passes against the sliding
+implementation.
+
+- `pending` changed from `Vec<usize>` to `VecDeque<usize>`. Once it
+  reaches `LOOKAHEAD_WINDOW`, every subsequent note first triggers
+  `slide_pending_window` (re-solve the full current window, commit
+  only the oldest pending note, pop it) before the new note joins
+  the queue -- so every unlocked note is finalized only after the
+  search has already seen the `LOOKAHEAD_WINDOW - 1` notes that come
+  after it, regardless of position in the piece. `flush_pending_window`
+  (commit everything currently pending) is unchanged in spirit, still
+  used for the trailing notes at end of input and immediately before
+  a locked note; both now share a `solve_pending_window` helper
+  extracted from the old `flush_pending_window` body so the "search"
+  and "how much to commit" concerns aren't duplicated.
+- New test `finds_the_pitch_register_split_even_when_the_pivot_lands_on_the_old_chunk_boundary`,
+  kept permanently (unlike the throwaway stash-based verification
+  above) since it's the concrete proof this class of bug is fixed and
+  stays fixed.
+- Cost: re-solving every note instead of every `LOOKAHEAD_WINDOW`th
+  note is roughly `LOOKAHEAD_WINDOW`x more search calls. Re-measured
+  the same worst-case synthetic project (16-wide advancing chords,
+  16 concurrent voices) via the same scratch-`#[ignore]`d-timing-test
+  pattern: 38.7ms at 2,000 notes (was 7.1ms), 153.6ms at 8,000 notes
+  (was 27.7ms) -- roughly 5-6x slower as expected, still comfortably
+  interactive for an on-demand "Re-run separation" click, and still
+  scales linearly with no blowup.
+- Verified: `cargo fmt --check`, `cargo test` (54/54),
+  `cargo clippy --all-targets --all-features -- -D warnings` all
+  clean.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

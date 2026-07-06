@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::model::{
     AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationStrategy,
@@ -269,12 +269,15 @@ pub fn assign_heuristic_voices_with_locks(
         .collect()
 }
 
-/// How many unlocked notes are buffered before the window is exhaustively
-/// re-optimized. Larger catches divergences (like the demonstrated case
-/// where an early channel-continuity pick forced a much worse split several
-/// notes later) that span a wider gap, at the cost of `candidates ^ window`
-/// search branches per flush -- kept modest since this runs once per
-/// `LOOKAHEAD_WINDOW` notes across a whole file, not once per note.
+/// Size of the sliding lookahead window: once this many unlocked notes are
+/// pending, each new note triggers one commit (the oldest pending note) so
+/// every unlocked note is finalized only after the search has already seen
+/// this many notes' worth of what comes after it. Larger catches
+/// divergences (like the demonstrated case where an early
+/// channel-continuity pick forced a much worse split several notes later)
+/// that span a wider gap, at the cost of `candidates ^ window` search
+/// branches -- run once per note, not once per window, since the window
+/// slides by one note at a time rather than resetting after each commit.
 const LOOKAHEAD_WINDOW: usize = 6;
 /// How many of the cheapest compatible voices are actually explored per
 /// note during the window search (plus "open a new voice" when budget
@@ -296,19 +299,27 @@ struct WindowSearchState {
 
 /// Same cost model and compatibility rules as `assign_heuristic_voices_with_locks`,
 /// but instead of committing each unlocked note to its single cheapest
-/// compatible voice immediately, buffers up to `LOOKAHEAD_WINDOW` unlocked
-/// notes and exhaustively searches for the true minimum-cost grouping
-/// across that whole window before committing any of them. A locked note
-/// flushes whatever is currently pending first (locks can't be reordered
-/// around), then is pinned exactly as in the greedy path.
+/// compatible voice immediately, keeps a *sliding* window of up to
+/// `LOOKAHEAD_WINDOW` pending unlocked notes: once the window is full, each
+/// new note triggers one commit (the search is re-run over the full
+/// window, but only its oldest pending note is actually finalized) before
+/// that note joins the window itself. A locked note flushes whatever is
+/// currently pending first (locks can't be reordered around), then is
+/// pinned exactly as in the greedy path.
 ///
 /// This directly addresses greedy's known failure mode: an early note can
 /// have a locally-cheapest voice that, a few notes later, turns out to have
 /// foreclosed a much better overall split (e.g. a clean low/high
 /// pitch-register grouping) that greedy could never see coming because it
-/// never revisits a commitment. It is not whole-piece-optimal -- only
-/// exhaustive within each window -- so a divergence spanning more than
-/// `LOOKAHEAD_WINDOW` notes can still slip through a window boundary.
+/// never revisits a commitment. Sliding one note at a time (rather than
+/// committing a whole fixed chunk at once) means every unlocked note gets
+/// the same `LOOKAHEAD_WINDOW - 1` notes of foresight regardless of where
+/// it falls in the piece, instead of sometimes getting none because it
+/// happened to land last in a chunk -- the earlier, chunked version of this
+/// search had exactly that blind spot at each chunk boundary. It is still
+/// not whole-piece-optimal -- only exhaustive within each window -- so a
+/// divergence spanning more than `LOOKAHEAD_WINDOW` notes can still slip
+/// through.
 pub fn assign_windowed_voices_with_locks(
     notes: &mut [MidiNoteDto],
     locked: &HashMap<String, String>,
@@ -319,7 +330,7 @@ pub fn assign_windowed_voices_with_locks(
     let reserved_voice_ids: HashSet<&str> = locked.values().map(String::as_str).collect();
     let mut voices: Vec<VoiceState> = Vec::new();
     let mut voice_index_by_id: HashMap<String, usize> = HashMap::new();
-    let mut pending: Vec<usize> = Vec::new();
+    let mut pending: VecDeque<usize> = VecDeque::new();
 
     for index in 0..notes.len() {
         if locked.contains_key(&notes[index].id) {
@@ -336,9 +347,8 @@ pub fn assign_windowed_voices_with_locks(
             continue;
         }
 
-        pending.push(index);
-        if pending.len() >= LOOKAHEAD_WINDOW {
-            flush_pending_window(
+        if pending.len() == LOOKAHEAD_WINDOW {
+            slide_pending_window(
                 notes,
                 &mut pending,
                 &mut voices,
@@ -348,6 +358,7 @@ pub fn assign_windowed_voices_with_locks(
                 &weights,
             );
         }
+        pending.push_back(index);
     }
     flush_pending_window(
         notes,
@@ -448,23 +459,17 @@ fn structural_new_voices_needed(
     new_voices
 }
 
-/// Solves and commits whatever notes are currently buffered in `pending`,
-/// leaving it empty. No-op if `pending` is empty (e.g. a locked note
-/// immediately following another locked note).
-#[allow(clippy::too_many_arguments)]
-fn flush_pending_window(
-    notes: &mut [MidiNoteDto],
-    pending: &mut Vec<usize>,
-    voices: &mut Vec<VoiceState>,
-    voice_index_by_id: &mut HashMap<String, usize>,
-    reserved_voice_ids: &HashSet<&str>,
+/// Exhaustively solves the current `pending` window against the
+/// already-committed `voices`, without committing anything -- shared by
+/// `flush_pending_window` (which commits every note in the result) and
+/// `slide_pending_window` (which commits only the oldest one).
+fn solve_pending_window(
+    notes: &[MidiNoteDto],
+    pending: &[usize],
+    voices: &[VoiceState],
     max_voice_count: Option<usize>,
     weights: &CostWeights,
-) {
-    if pending.is_empty() {
-        return;
-    }
-
+) -> WindowSearchState {
     let existing_count = voices.len();
     // The search scores opening a new voice at a flat 0 (matching greedy's
     // convention of never scoring a `NewVoiceNoFit` assignment at all), so
@@ -492,7 +497,7 @@ fn flush_pending_window(
     }
 
     let initial_state = WindowSearchState {
-        voices: voices.clone(),
+        voices: voices.to_vec(),
         cost: 0.0,
         labels: Vec::with_capacity(pending.len()),
     };
@@ -507,12 +512,34 @@ fn flush_pending_window(
         weights,
         &mut best,
     );
-    let best =
-        best.expect("search_window always finds at least one assignment for non-empty pending");
+    best.expect("search_window always finds at least one assignment for non-empty pending")
+}
+
+/// Solves and commits every note currently buffered in `pending`, leaving
+/// it empty. Used for the final trailing notes at end of input and to
+/// resolve whatever's pending immediately before a locked note (which can't
+/// itself join the sliding window). No-op if `pending` is empty.
+#[allow(clippy::too_many_arguments)]
+fn flush_pending_window(
+    notes: &mut [MidiNoteDto],
+    pending: &mut VecDeque<usize>,
+    voices: &mut Vec<VoiceState>,
+    voice_index_by_id: &mut HashMap<String, usize>,
+    reserved_voice_ids: &HashSet<&str>,
+    max_voice_count: Option<usize>,
+    weights: &CostWeights,
+) {
+    if pending.is_empty() {
+        return;
+    }
+
+    let pending_notes: Vec<usize> = pending.iter().copied().collect();
+    let existing_count = voices.len();
+    let best = solve_pending_window(notes, &pending_notes, voices, max_voice_count, weights);
 
     commit_window_result(
         notes,
-        pending,
+        &pending_notes,
         &best.labels,
         existing_count,
         voices,
@@ -522,6 +549,41 @@ fn flush_pending_window(
     );
 
     pending.clear();
+}
+
+/// Solves the current (full, size `LOOKAHEAD_WINDOW`) `pending` window, but
+/// commits only its oldest note -- the one about to slide out -- leaving
+/// the rest still pending so they get reconsidered alongside whatever note
+/// joins the window next. This is what makes the search a sliding window
+/// rather than a sequence of independently committed chunks: every note is
+/// finalized only after the search has already seen the `LOOKAHEAD_WINDOW - 1`
+/// notes that come after it.
+#[allow(clippy::too_many_arguments)]
+fn slide_pending_window(
+    notes: &mut [MidiNoteDto],
+    pending: &mut VecDeque<usize>,
+    voices: &mut Vec<VoiceState>,
+    voice_index_by_id: &mut HashMap<String, usize>,
+    reserved_voice_ids: &HashSet<&str>,
+    max_voice_count: Option<usize>,
+    weights: &CostWeights,
+) {
+    let pending_notes: Vec<usize> = pending.iter().copied().collect();
+    let existing_count = voices.len();
+    let best = solve_pending_window(notes, &pending_notes, voices, max_voice_count, weights);
+
+    commit_window_result(
+        notes,
+        &pending_notes[..1],
+        &best.labels[..1],
+        existing_count,
+        voices,
+        voice_index_by_id,
+        reserved_voice_ids,
+        weights,
+    );
+
+    pending.pop_front();
 }
 
 /// Exhaustively searches (with branch-and-bound pruning on `best.cost`) for
@@ -1427,6 +1489,57 @@ mod windowed_tests {
             "seed-b1 and seed-b2 should land in the same voice"
         );
         assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    /// Same adversarial pattern as the test above, but with 3 unrelated
+    /// filler notes (a distant pitch/channel that's never competitive)
+    /// prepended so `seed-a2` -- the note whose decision needs to see
+    /// several notes ahead to get right -- lands exactly on what used to
+    /// be a fixed chunk boundary (`LOOKAHEAD_WINDOW` = 6, so the old
+    /// chunked design would have solved indices 0..6 as one closed group
+    /// and 6..12 as the next, deciding `seed-a2` -- at index 5 -- using
+    /// only the filler notes and `seed-a1`/`seed-b1`, never seeing
+    /// `seed-b2` or any `free-*` note). A fixed-chunk implementation would
+    /// fail this the same way greedy does, since it's given the same
+    /// blind information at the point of deciding `seed-a2`; the sliding
+    /// window instead re-solves a moving 6-note view on every note, so
+    /// `seed-a2` is only finalized once the search has already seen
+    /// `seed-b2` and the first couple of `free-*` notes, regardless of
+    /// where it happens to fall in the sequence.
+    #[test]
+    fn finds_the_pitch_register_split_even_when_the_pivot_lands_on_the_old_chunk_boundary() {
+        let mut notes = vec![
+            mk("filler-0", 9, 20, 0, 50),
+            mk("filler-1", 9, 20, 60, 110),
+            mk("filler-2", 9, 20, 120, 170),
+            mk("seed-a1", 0, 49, 200, 400),
+            mk("seed-b1", 1, 65, 200, 400),
+            mk("seed-a2", 0, 64, 400, 600),
+            mk("seed-b2", 1, 68, 400, 600),
+            mk("free-0", 0, 71, 620, 687),
+            mk("free-1", 1, 78, 697, 805),
+            mk("free-2", 0, 48, 816, 882),
+            mk("free-3", 0, 44, 890, 1001),
+            mk("free-4", 0, 75, 1024, 1177),
+        ];
+
+        assign_windowed_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(
+            notes[3].voice_id, notes[5].voice_id,
+            "seed-a1 and seed-a2 should land in the same voice even though seed-a2 sits where \
+             a fixed chunk boundary used to fall"
+        );
+        assert_eq!(
+            notes[4].voice_id, notes[6].voice_id,
+            "seed-b1 and seed-b2 should land in the same voice"
+        );
+        assert_ne!(notes[3].voice_id, notes[4].voice_id);
     }
 
     /// Replays a committed assignment's real note->voice_id mapping through
