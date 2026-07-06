@@ -144,7 +144,7 @@ locally cheapest voice that, once more notes arrive, turns out to have foreclose
 better overall split (e.g. a clean low/high pitch-register grouping) that greedy can never
 revisit once committed. `AssignmentMode` makes the search algorithm itself a user-facing
 choice, orthogonal to `SeparationStrategy` (which only picks the cost weighting either
-algorithm scores with): `Greedy` is the algorithm above; `Global` keeps a *sliding* window of
+algorithm scores with): `Greedy` is the algorithm above; `Global` keeps a _sliding_ window of
 up to 6 pending unlocked notes and, once it's full, re-solves the whole window on every new
 note but commits only the oldest pending one — so every unlocked note is finalized only after
 the search has already seen the next 5 notes, regardless of where it falls in the piece, and
