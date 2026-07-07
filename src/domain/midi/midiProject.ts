@@ -103,6 +103,35 @@ export function formatSelectedNote(note: MidiNote | null): string {
   return `Pitch ${note.pitch} | ${formatMidiChannel(note.channel)} | ${note.startTick}-${note.endTick} ticks | ${note.voiceId}`;
 }
 
+const PITCH_CLASS_NAMES = [
+  "C",
+  "C#",
+  "D",
+  "D#",
+  "E",
+  "F",
+  "F#",
+  "G",
+  "G#",
+  "A",
+  "A#",
+  "B",
+] as const;
+
+/** MIDI pitch to scientific pitch notation, e.g. 60 -> "C4" (middle C). */
+export function formatPitchName(pitch: number): string {
+  const octave = Math.floor(pitch / 12) - 1;
+  return `${PITCH_CLASS_NAMES[((pitch % 12) + 12) % 12]}${octave}`;
+}
+
+/** A short piano-roll hover-tooltip summary for a single note. */
+export function formatNoteTooltip(note: MidiNote, voices: readonly MidiVoice[]): string {
+  const voice = voices.find((candidate) => candidate.id === note.voiceId);
+  const confidencePercent = Math.round(note.assignmentConfidence * 100);
+
+  return `${formatPitchName(note.pitch)} (${note.pitch}) · ${voice?.label ?? note.voiceId} · ${confidencePercent}% confidence · ticks ${note.startTick}-${note.endTick}`;
+}
+
 export function formatSeparationSummary(summary: SeparationSummary, noteCount: number): string {
   if (noteCount === 0) {
     return "No notes to separate.";

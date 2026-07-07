@@ -5,7 +5,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import type { MidiProject } from "../../domain/midi/midiProject";
+import { formatNoteTooltip, type MidiNote, type MidiProject } from "../../domain/midi/midiProject";
 import { clampMidiPitch, type PitchMarker } from "../../domain/midi/rangeRules";
 import { pitchToY, xToTick, yToPitch } from "./coordinates";
 import {
@@ -16,7 +16,7 @@ import {
   PIANO_ROLL_LABEL_WIDTH,
   type MarqueeRect,
 } from "./drawPianoRoll";
-import { hitTestPianoRollNote, hitTestPianoRollNotesInRect } from "./hitTest";
+import { hitTestPianoRollNote, hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
 import { shouldPaintNote } from "./paint";
 import {
   defaultPitchViewportWindow,
@@ -76,6 +76,9 @@ export function PianoRoll({
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
+  const [hoveredNote, setHoveredNote] = useState<{ note: MidiNote; point: PianoRollPoint } | null>(
+    null,
+  );
   const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
   const [pitchViewportWindow, setPitchViewportWindow] = useState<PitchViewportWindow>(
     defaultPitchViewportWindow(),
@@ -296,6 +299,7 @@ export function PianoRoll({
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
+    setHoveredNote(null);
 
     if (interactionMode === "range") {
       const point = pointFromEvent(event);
@@ -349,6 +353,9 @@ export function PianoRoll({
 
     const dragStart = dragStartRef.current;
     if (!dragStart) {
+      const point = pointFromEvent(event);
+      const note = hitTestPianoRollNote(point, project, viewport);
+      setHoveredNote(note ? { note, point } : null);
       return;
     }
 
@@ -540,7 +547,16 @@ export function PianoRoll({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerLeave={() => setHoveredNote(null)}
       />
+      {hoveredNote && project ? (
+        <div
+          className="piano-roll-tooltip"
+          style={{ left: hoveredNote.point.x + 14, top: hoveredNote.point.y + 14 }}
+        >
+          {formatNoteTooltip(hoveredNote.note, project.voices)}
+        </div>
+      ) : null}
       {viewportWindow.zoomLevel > 1 || pitchViewportWindow.zoomLevel > 1 ? (
         <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>
           Reset zoom ({resetZoomLabel})

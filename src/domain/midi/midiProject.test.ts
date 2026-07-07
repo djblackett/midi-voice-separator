@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   formatMidiChannel,
   formatMidiWarningLocation,
+  formatNoteTooltip,
+  formatPitchName,
   formatProjectSummary,
   formatSelectedNote,
   formatSeparationSummary,
+  type MidiNote,
   type MidiProject,
 } from "./midiProject";
 
@@ -107,6 +110,49 @@ describe("note formatting", () => {
 
   it("formats the empty selected-note state", () => {
     expect(formatSelectedNote(null)).toBe("No note selected");
+  });
+});
+
+describe("formatPitchName", () => {
+  it("formats middle C", () => {
+    expect(formatPitchName(60)).toBe("C4");
+  });
+
+  it("formats a sharp pitch", () => {
+    expect(formatPitchName(61)).toBe("C#4");
+  });
+
+  it("formats the lowest and highest MIDI pitches", () => {
+    expect(formatPitchName(0)).toBe("C-1");
+    expect(formatPitchName(127)).toBe("G9");
+  });
+});
+
+describe("formatNoteTooltip", () => {
+  const note: MidiNote = {
+    id: "note-1",
+    voiceId: "voice-2",
+    sourceTrackIndex: 0,
+    channel: 1,
+    pitch: 64,
+    velocity: 90,
+    startTick: 120,
+    endTick: 360,
+    durationTicks: 240,
+    assignmentConfidence: 0.8,
+    assignmentReason: "CLOSEST_PITCH",
+  };
+
+  it("looks up the voice's label when it's known", () => {
+    expect(
+      formatNoteTooltip(note, [
+        { id: "voice-2", label: "Voice 2", noteCount: 1, lowestPitch: 64, highestPitch: 64 },
+      ]),
+    ).toBe("E4 (64) · Voice 2 · 80% confidence · ticks 120-360");
+  });
+
+  it("falls back to the raw voice id when the voice isn't found", () => {
+    expect(formatNoteTooltip(note, [])).toBe("E4 (64) · voice-2 · 80% confidence · ticks 120-360");
   });
 });
 

@@ -573,6 +573,20 @@ kbd {
   background: #38bdf8;
 }
 
+.piano-roll-tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 260px;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.95);
+  color: #e5e7eb;
+  font-size: 12px;
+  padding: 4px 8px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .piano-roll-reset-zoom {
   position: absolute;
   top: 10px;
