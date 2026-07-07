@@ -236,9 +236,15 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    // The listener registration is itself async (it's real Tauri IPC), so
+    // a cleanup that runs before it resolves (e.g. React StrictMode's
+    // double-invoke in development, or this effect's own dependencies
+    // changing again quickly) must still unlisten once it does resolve --
+    // otherwise the earlier listener leaks and drops end up double-handled.
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    void listenForMidiFileDrop({
+    listenForMidiFileDrop({
       onDragActive: setIsDragOver,
       onDrop: (path) => {
         if (isImporting || isExporting || isReassigning) {
@@ -247,10 +253,17 @@ export default function App() {
         void handleDroppedPath(path);
       },
     }).then((unlistenFn) => {
-      unlisten = unlistenFn;
+      if (cancelled) {
+        unlistenFn();
+      } else {
+        unlisten = unlistenFn;
+      }
     });
 
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [isImporting, isExporting, isReassigning]);
 
   function applyImportedProject(importedProject: MidiProject) {
