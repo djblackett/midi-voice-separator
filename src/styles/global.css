@@ -46,6 +46,29 @@ button {
   min-height: 100vh;
 }
 
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 17, 32, 0.85);
+  border: 3px dashed #38bdf8;
+  pointer-events: none;
+}
+
+.drop-overlay p {
+  margin: 0;
+  padding: 16px 28px;
+  font-size: 20px;
+  font-weight: 650;
+  color: #e5e7eb;
+  background: #111827;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+}
+
 .app-header {
   display: flex;
   align-items: center;

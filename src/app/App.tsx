@@ -10,11 +10,13 @@ import {
 } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
+import { listenForMidiFileDrop } from "../features/midi-import/dropImport";
 import { MidiExportButton } from "../features/midi-export/MidiExportButton";
 import { selectAndExportMidi } from "../features/midi-export/exportMidi";
 import { PianoRoll, type InteractionMode } from "../features/piano-roll/PianoRoll";
 import {
   getBackendStatus,
+  importMidi,
   reassignVoices,
   type AppCommandError,
   type AssignmentMode,
@@ -66,6 +68,17 @@ function getErrorMessage(error: unknown): string {
   return "An unexpected error occurred.";
 }
 
+function toAppCommandError(commandError: unknown): AppCommandError {
+  return typeof commandError === "object" &&
+    commandError !== null &&
+    "code" in commandError &&
+    "message" in commandError &&
+    typeof commandError.code === "string" &&
+    typeof commandError.message === "string"
+    ? { code: commandError.code, message: commandError.message }
+    : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) };
+}
+
 export default function App() {
   const [project, setProject] = useState<MidiProject | null>(null);
   const [status, setStatus] = useState("Checking backend...");
@@ -89,6 +102,7 @@ export default function App() {
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
+  const [isDragOver, setIsDragOver] = useState(false);
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -221,6 +235,41 @@ export default function App() {
     voiceLabels,
   ]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    void listenForMidiFileDrop({
+      onDragActive: setIsDragOver,
+      onDrop: (path) => {
+        if (isImporting || isExporting || isReassigning) {
+          return;
+        }
+        void handleDroppedPath(path);
+      },
+    }).then((unlistenFn) => {
+      unlisten = unlistenFn;
+    });
+
+    return () => unlisten?.();
+  }, [isImporting, isExporting, isReassigning]);
+
+  function applyImportedProject(importedProject: MidiProject) {
+    setProject(importedProject);
+    setSelectedNoteIds(new Set());
+    setVoiceOverrides({});
+    setVoiceOrder(importedProject.voices.map((voice) => voice.id));
+    setVoiceLabels({});
+    setActiveVoiceId(null);
+    setSoloVoiceId(null);
+    setInteractionMode("select");
+    setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
+    setRangeAssignedNoteIds(new Set());
+    setHistory(createEditorHistory());
+    setMaxVoiceCountInput("");
+    setExportResult(null);
+    setExportError(null);
+  }
+
   async function handleImport() {
     setIsImporting(true);
     setError(null);
@@ -228,32 +277,23 @@ export default function App() {
     try {
       const importedProject = await selectAndImportMidi();
       if (importedProject) {
-        setProject(importedProject);
-        setSelectedNoteIds(new Set());
-        setVoiceOverrides({});
-        setVoiceOrder(importedProject.voices.map((voice) => voice.id));
-        setVoiceLabels({});
-        setActiveVoiceId(null);
-        setSoloVoiceId(null);
-        setInteractionMode("select");
-        setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
-        setRangeAssignedNoteIds(new Set());
-        setHistory(createEditorHistory());
-        setMaxVoiceCountInput("");
-        setExportResult(null);
-        setExportError(null);
+        applyImportedProject(importedProject);
       }
     } catch (commandError) {
-      setError(
-        typeof commandError === "object" &&
-          commandError !== null &&
-          "code" in commandError &&
-          "message" in commandError &&
-          typeof commandError.code === "string" &&
-          typeof commandError.message === "string"
-          ? { code: commandError.code, message: commandError.message }
-          : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) },
-      );
+      setError(toAppCommandError(commandError));
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function handleDroppedPath(path: string) {
+    setIsImporting(true);
+    setError(null);
+
+    try {
+      applyImportedProject(await importMidi(path));
+    } catch (commandError) {
+      setError(toAppCommandError(commandError));
     } finally {
       setIsImporting(false);
     }
@@ -543,6 +583,11 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      {isDragOver ? (
+        <div className="drop-overlay" role="status" aria-live="polite">
+          <p>Drop to import MIDI file</p>
+        </div>
+      ) : null}
       <header className="app-header">
         <div>
           <h1>Chiptune Voice Separator</h1>
