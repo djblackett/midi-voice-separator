@@ -68,12 +68,17 @@ pub enum SeparationStrategy {
 /// notes and searches for the true minimum-cost grouping across that whole
 /// window before committing any of them, which can find a better overall
 /// split than greedy's note-at-a-time commitment allows -- see
-/// `assign_windowed_voices_with_locks` in `voice_assignment.rs`.
+/// `assign_windowed_voices_with_locks` in `voice_assignment.rs`. `Contig`
+/// is a different algorithm family entirely (Chew & Wu's contig-mapping
+/// approach): it segments the piece into spans of constant polyphony,
+/// where voice-leading is unambiguous, and only makes real decisions at
+/// the span boundaries -- see `assign_contig_voices_with_locks`.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AssignmentMode {
     Greedy,
     Global,
+    Contig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]

@@ -44,9 +44,12 @@ export type SeparationStrategy =
  * notes and searches for the true minimum-cost grouping across that whole
  * window before committing any of them, which can find a better overall
  * split than greedy's note-at-a-time commitment allows, at the cost of
- * being slower on large files. See `AssignmentMode` in `model.rs`.
+ * being slower on large files. `CONTIG` is a different algorithm family
+ * (contig mapping): it segments the piece into spans of constant polyphony,
+ * where voice-leading is unambiguous, and only makes real decisions where
+ * those spans meet. See `AssignmentMode` in `model.rs`.
  */
-export type AssignmentMode = "GREEDY" | "GLOBAL";
+export type AssignmentMode = "GREEDY" | "GLOBAL" | "CONTIG";
 
 function toCommandError(error: unknown): AppCommandError {
   if (

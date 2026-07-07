@@ -1319,6 +1319,198 @@ implementation.
   `cargo clippy --all-targets --all-features -- -D warnings` all
   clean.
 
+### Contig-mapping assignment mode (`AssignmentMode::Contig`)
+
+User asked whether any other separation algorithm families were worth
+adding beyond greedy and the windowed global search, and picked
+contig mapping (Chew & Wu 2004) from the options presented — the only
+candidate that's a genuinely different algorithm family (segment-and-
+connect) rather than an upgrade to note-at-a-time scoring.
+
+- `src-tauri/src/midi/voice_assignment.rs`: new
+  `assign_contig_voices_with_locks`, dispatched from
+  `assign_voices_with_locks` for the new `AssignmentMode::Contig`
+  (`model.rs`). The piece is segmented into contigs — maximal spans of
+  constant polyphony (`build_contigs`); silence ends a contig. Within a
+  contig, voice-leading is treated as unambiguous: each sounding note
+  seeds a pitch-ordered fragment, and at a tick where equally many notes
+  end and start (constant count), departures are matched to arrivals via
+  `match_succession` — same-channel replacements first (a same-tick
+  replacement on one channel is the same instrument continuing; a signal
+  the channel-less original paper never had), remainder by pitch order.
+  At contig boundaries, fresh fragments are matched against **all**
+  resting chains (not just the previous contig's) via a non-crossing
+  minimum-cost alignment DP (`align_fragments_to_chains`), scored by the
+  existing `score_candidates`/`CostWeights`, so all four
+  `SeparationStrategy` presets apply. Opening a new chain costs
+  `NEW_CHAIN_PENALTY` (100k) in the DP, so it only happens when there are
+  structurally more fragments than compatible chains — the same
+  convention greedy gets from its candidate filter. Matching against all
+  resting chains means a voice that rests through a solo passage keeps
+  its identity on re-entry (covered by a dedicated test).
+- Cap: unmatched fragments beyond `max_voice_count` are forced into the
+  cheapest existing chain; the replay pass flags their overlapping notes
+  `VoiceCapReached`/0.0. Lowest-pitched fragments keep new-chain slots
+  when the cap can't cover all of them (simple + deterministic; forced
+  ones are flagged regardless). Locked notes are exempt, as everywhere.
+- Locks: a chain containing locked notes claims that locked voice id
+  (majority, first-encountered on ties), so a correction pulls its whole
+  fragment chain into the corrected voice; every locked note is
+  additionally pinned to its exact locked id afterward as a hard
+  per-note guarantee (`UserLocked`/1.0). Fresh ids never collide with
+  locked ids (same `allocate_new_voice_id` reservation as greedy).
+- Confidence/reason reporting: new `replay_assignment_reporting` replays
+  the committed ids in time order through the same rules
+  `commit_window_result` reports with (first note of a voice =
+  `NewVoiceNoFit`, overlap = `VoiceCapReached`, otherwise cost-gap
+  confidence + `ChannelContinuity`/`ClosestPitch`).
+- Zero-length notes (parser keeps them with a warning) are swept as
+  lasting one tick (`effective_sweep_end`) so they can't silently fall
+  out of every contig; scoring still uses real end ticks.
+- Frontend: `commands.ts`'s `AssignmentMode` union gained `"CONTIG"`;
+  `App.tsx`'s Search selector gained "Contig (structure)". No other
+  wiring needed — the mode parameter already threads through
+  `reassign_voices`.
+- **Measured honestly against both real fixtures** (scratch `#[ignore]`
+  test, deleted after use, same pattern as the Global-mode validation):
+  - Combined fixture (single channel — the weak-channel-signal case this
+    mode targets): Contig beats Greedy on total cost under Balanced
+    (1645 vs 1867), ChannelPriority, and StrictChannel (and is the
+    cheapest of all three modes on those last two), with a tighter max
+    voice span than Greedy (48 vs 52 semitones). Global still wins
+    Balanced cost (1279) and span (36). Runtime ~2.3ms vs Global's
+    ~22ms at 1231 notes — both interactive.
+  - Separate-tracks fixture (13 real channels): **Contig is clearly
+    worse than both other modes across every strategy** (e.g.
+    ChannelPriority mean confidence 0.73 vs Greedy's 0.91). Root cause,
+    confirmed by measuring before/after the channel-aware succession
+    change (which only improved it marginally): the non-crossing
+    boundary alignment is ordered by pitch, so a channel-correct
+    matching that crosses in pitch space is structurally inexpressible,
+    no matter the strategy weights. This is inherent to the contig
+    family's "voices don't cross" premise. Practical guidance: use
+    Contig on files without a reliable channel signal; on clean
+    multi-channel files StrictChannel/Greedy is already near-perfect
+    (0.975 mean confidence) and Contig is the wrong tool.
+- 13 new tests in `contig_tests` (greedy-parity basics, determinism,
+  pitch-order succession, same-channel-over-pitch succession, the
+  adversarial register-split fixture that greedy provably misses —
+  structurally unambiguous under contigs, no lookahead needed —
+  solo-passage chain re-entry, lock pinning + fragment pull, cap
+  forcing/first-voice/locked-exempt, zero-length notes, and a
+  both-fixtures × all-strategies smoke test asserting full coverage,
+  summary consistency, and determinism).
+- Verified: `cargo test` (67/67), `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo fmt --check`, `pnpm test`
+  (176/176), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean.
+- Not yet verified: manual `pnpm tauri dev` pass selecting "Contig
+  (structure)" in the Search selector and re-running separation against
+  a real file (the Rust logic and frontend wiring are covered by tests,
+  but no live end-to-end click-through was run this session).
+
+### Beam search in Global mode (window 6 → 16)
+
+Follow-up the contig-mode measurements pointed at: Global's cost lead
+suggested lookahead depth was the binding constraint, and the exhaustive
+window search's `candidates ^ window` blowup capped the affordable
+window at 6.
+
+- `solve_pending_window` in `voice_assignment.rs` no longer runs the
+  recursive exhaustive `search_window` (deleted); it now runs a
+  width-bounded beam: at each window depth, every surviving partial
+  assignment expands via the extracted `branch_targets` helper (same
+  branch rules as before — top `LOOKAHEAD_CANDIDATES_PER_NOTE`
+  compatible voices, "open new" when the structural budget allows,
+  forced-cheapest at the cap), and only the `BEAM_WIDTH` cheapest
+  expansions survive. Expansion happens **before** cloning any state
+  (`(projected cost, parent, target)` tuples, `select_nth_unstable` +
+  sort, then materialize only survivors) — cloning a parent's voice list
+  is the expensive part, so pruned branches never pay for it.
+  Determinism: ties break on (parent position, target index).
+- `branch_targets` scores the whole voice list in **one**
+  `score_candidates` call and picks the top 3 by capped insertion
+  (`partition_point`), not a sort — this is the hottest loop in Global
+  mode and per-call allocation dominated its runtime when scored
+  voice-by-voice.
+- Final constants: `LOOKAHEAD_WINDOW = 16`, `BEAM_WIDTH = 32`, chosen
+  from a measured sweep (release, both real fixtures, scratch
+  `#[ignore]` test deleted after use). Quality vs the old exhaustive
+  window-6 (total committed cost, Balanced): combined fixture 1279 →
+  955 (−25%), separate-tracks 1576 → 368 (−77%), with max voice spans
+  down (55 → 43 on separate/Balanced). Beam 64 bought a further ~17%
+  on separate-tracks at 2-3× the time (5s), window 12 lost real
+  quality — 16/32 is the knee. Runtime: ~0.34s (1231 notes) / 1.4-2.5s
+  (3770 notes, 12 voices) in release; the old search was ~0.1s but far
+  worse. Also tried and **rejected**: a beam cost-margin prune (drop
+  states > margin worse than the depth's best) — margin 64 pruned
+  nothing (the beam is saturated with near-ties), margin 16 wrecked
+  quality (spans 65-69 st) without real speedup; don't re-attempt it
+  blind.
+- **`[profile.test] opt-level = 1` added to `src-tauri/Cargo.toml`**:
+  the real-fixture regression tests run the beam over thousands of
+  notes; at opt-level 0 the suite took 82s (vs 1.3s before the beam).
+  With light optimization it's ~10-12s. First `cargo test` after this
+  change rebuilds all deps under the new profile once (~4 min);
+  incremental runs are normal.
+
+### Voice-crossing penalty (`crossing_weight` in `CostWeights`)
+
+The other follow-up chosen from the algorithm survey: Temperley/Huron's
+"avoid voice crossing" principle, previously absent — nothing stopped a
+voice from taking a note that leapt over another voice still sounding
+between the two pitches.
+
+- `score_candidates` adds `crossing_count * weights.crossing_weight`,
+  where `crossing_count` = number of _other_ voices still sounding at
+  the note's start (`last_end_tick > note.start_tick`) whose last pitch
+  lies strictly between the candidate's last pitch and the note's
+  pitch. Computed via a sorted sounding-pitch list + two
+  `partition_point`s per candidate (the hot beam loop stays cheap); a
+  candidate's own pitch is never counted (always an endpoint of the
+  strict range). **Bug caught by the fixture tests during
+  implementation**: `to - from` underflows when the note repeats the
+  candidate's last pitch (empty strict range ⇒ `to < from`) —
+  `saturating_sub`, and a regression-tested reminder that u8/usize
+  subtraction needs care.
+- Weights: Balanced/ChannelPriority 2.0, RegisterPriority 3.0 (pitch
+  structure is all it has), StrictChannel 0.0 (distinct instruments
+  cross registers constantly; channel identity is the preset's whole
+  point). No existing test expectation flipped at these values.
+- **Consequence for scoring call sites**: the crossing term needs the
+  full voice slice as context, so every former
+  `score_candidates(std::slice::from_ref(voice), ...)` call was
+  converted to full-slice scoring + index into the result (indices
+  align when `require_compatible` is false): `commit_window_result`'s
+  decided-cost, `replay_assignment_reporting`, contig's
+  `align_fragments_to_chains` (scores each fragment against all chains
+  in one call now) and its forced-at-cap path, and the test harness
+  `total_cost_of_committed_assignment` (HashMap → index-aligned Vec).
+  A `from_ref` call against `score_candidates` now silently computes a
+  cost with no crossing context — the doc comment on the function warns
+  about this.
+- New test `crossing_penalty_avoids_leaping_over_a_sounding_voice`:
+  two resting candidates where raw pitch distance picks the voice that
+  would leap over a third, still-sounding voice; the term flips it.
+- Measured on both fixtures (same scratch pattern, deleted after use;
+  crossings metric = committed notes that leapt over a sounding voice,
+  weight-independent so comparable before/after): Global's crossings
+  drop 30-45% everywhere (combined Balanced 68 → 39; separate
+  ChannelPriority 303 → 242) and combined-fixture max spans tighten to
+  40 st under all three non-strict strategies (were 47-51). Greedy's
+  crossings barely move (119 → 115) — expected, greedy can only avoid
+  a crossing when an alternative compatible voice exists at pick time.
+  Weights deliberately left at these first values rather than tuned
+  further against one fixture pair.
+- Verified (both changes together): `cargo test` (68/68, 1 new),
+  `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo fmt --check`, `pnpm test` (176/176), `pnpm lint`,
+  `pnpm format:check`, `pnpm build` all clean. No frontend changes —
+  both are internal to the Rust cost model/search, no new command
+  parameters or UI.
+- Not yet verified: manual `pnpm tauri dev` pass re-running separation
+  in Global mode against a real file to eyeball the (measurably
+  better) groupings.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

@@ -733,6 +733,7 @@ export default function App() {
               >
                 <option value="GREEDY">Greedy (fast)</option>
                 <option value="GLOBAL">Global (lookahead)</option>
+                <option value="CONTIG">Contig (structure)</option>
               </select>
             </label>
             <button

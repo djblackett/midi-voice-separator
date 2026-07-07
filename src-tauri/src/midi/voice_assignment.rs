@@ -41,6 +41,16 @@ struct CostWeights {
     /// already-correct, register-matching voice is preferred over one
     /// that merely happens to have a nearby last note.
     register_drift_weight: f32,
+    /// Cost added per concurrently sounding voice this assignment would
+    /// leap over: another voice whose current pitch lies strictly between
+    /// the candidate voice's last pitch and the new note's pitch, and
+    /// whose last note is still sounding at the new note's start.
+    /// "Avoid voice crossing" is one of the strongest perceptual
+    /// voice-leading principles (Temperley, Huron), and without this term
+    /// nothing stops a low voice from taking a note above a currently
+    /// sounding higher voice when the raw pitch distance happens to be
+    /// smaller.
+    crossing_weight: f32,
 }
 
 impl SeparationStrategy {
@@ -52,6 +62,7 @@ impl SeparationStrategy {
                 gap_weight: 4.0,
                 channel_continuity_bonus: 3.0,
                 register_drift_weight: 1.5,
+                crossing_weight: 2.0,
             },
             // For files where each instrument already lives on a stable
             // MIDI channel: channel match dominates over a moderate
@@ -60,25 +71,33 @@ impl SeparationStrategy {
                 gap_weight: 4.0,
                 channel_continuity_bonus: 12.0,
                 register_drift_weight: 1.5,
+                crossing_weight: 2.0,
             },
             // For files where channel is a weak signal (e.g. most of the
             // piece crammed onto one MIDI channel): keeping a voice's
             // pitch range tight matters far more than channel
-            // continuity.
+            // continuity. Crossing a sounding voice is weighted higher
+            // here for the same reason the register term is: pitch
+            // structure is all this strategy has to go on.
             SeparationStrategy::RegisterPriority => CostWeights {
                 gap_weight: 4.0,
                 channel_continuity_bonus: 1.0,
                 register_drift_weight: 4.0,
+                crossing_weight: 3.0,
             },
             // Channel match wins whenever a same-channel compatible
             // voice exists at all; pitch only decides ties, picks among
             // multiple same-channel candidates, or matters when no
             // same-channel voice is available yet. Effectively "one
-            // voice per channel" without a second algorithm.
+            // voice per channel" without a second algorithm. No crossing
+            // term: distinct instruments cross registers all the time
+            // (melody vs. accompaniment), and channel identity is the
+            // whole point of this preset.
             SeparationStrategy::StrictChannel => CostWeights {
                 gap_weight: 4.0,
                 channel_continuity_bonus: 1000.0,
                 register_drift_weight: 0.0,
+                crossing_weight: 0.0,
             },
         }
     }
@@ -121,6 +140,9 @@ pub fn assign_voices_with_locks(
         }
         AssignmentMode::Global => {
             assign_windowed_voices_with_locks(notes, locked, max_voice_count, strategy)
+        }
+        AssignmentMode::Contig => {
+            assign_contig_voices_with_locks(notes, locked, max_voice_count, strategy)
         }
     }
 }
@@ -275,10 +297,13 @@ pub fn assign_heuristic_voices_with_locks(
 /// this many notes' worth of what comes after it. Larger catches
 /// divergences (like the demonstrated case where an early
 /// channel-continuity pick forced a much worse split several notes later)
-/// that span a wider gap, at the cost of `candidates ^ window` search
-/// branches -- run once per note, not once per window, since the window
-/// slides by one note at a time rather than resetting after each commit.
-const LOOKAHEAD_WINDOW: usize = 6;
+/// that span a wider gap. The window search is a beam (see `BEAM_WIDTH`),
+/// so widening this costs linearly rather than `candidates ^ window` --
+/// which is what allowed 6 (the old exhaustive search's affordable
+/// ceiling) to become 16. Run once per note, not once per window, since
+/// the window slides by one note at a time rather than resetting after
+/// each commit.
+const LOOKAHEAD_WINDOW: usize = 16;
 /// How many of the cheapest compatible voices are actually explored per
 /// note during the window search (plus "open a new voice" when budget
 /// allows). Bounds the branching factor independent of how many voices
@@ -286,6 +311,17 @@ const LOOKAHEAD_WINDOW: usize = 6;
 /// still checks every compatible voice, not just this shortlist, so
 /// pruning here only affects the search, never the reported numbers.
 const LOOKAHEAD_CANDIDATES_PER_NOTE: usize = 3;
+/// How many partial assignments survive each depth of the window search.
+/// The original search was exhaustive with branch-and-bound pruning,
+/// whose `candidates ^ window` blowup capped the affordable window at ~6
+/// notes; keeping only the `BEAM_WIDTH` cheapest partial states per note
+/// makes each window solve linear in its length instead, buying a much
+/// longer foresight horizon for a similar budget. The trade-off is that a
+/// partial assignment whose payoff only appears deep into the window can
+/// be pruned before that payoff is visible; in exchange, divergences
+/// spanning up to `LOOKAHEAD_WINDOW` notes (not 6) are visible to the
+/// search at all.
+const BEAM_WIDTH: usize = 32;
 
 #[derive(Clone)]
 struct WindowSearchState {
@@ -317,9 +353,9 @@ struct WindowSearchState {
 /// it falls in the piece, instead of sometimes getting none because it
 /// happened to land last in a chunk -- the earlier, chunked version of this
 /// search had exactly that blind spot at each chunk boundary. It is still
-/// not whole-piece-optimal -- only exhaustive within each window -- so a
-/// divergence spanning more than `LOOKAHEAD_WINDOW` notes can still slip
-/// through.
+/// not whole-piece-optimal -- the window search is a width-bounded beam
+/// (`BEAM_WIDTH`), not exhaustive, and a divergence spanning more than
+/// `LOOKAHEAD_WINDOW` notes can still slip through.
 pub fn assign_windowed_voices_with_locks(
     notes: &mut [MidiNoteDto],
     locked: &HashMap<String, String>,
@@ -501,18 +537,82 @@ fn solve_pending_window(
         cost: 0.0,
         labels: Vec::with_capacity(pending.len()),
     };
-    let mut best: Option<WindowSearchState> = None;
-    search_window(
-        notes,
-        pending,
-        0,
-        initial_state,
-        existing_count,
-        max_new_voices,
-        weights,
-        &mut best,
-    );
-    best.expect("search_window always finds at least one assignment for non-empty pending")
+    let mut beam: Vec<WindowSearchState> = vec![initial_state];
+    for &note_index in pending {
+        let note = &notes[note_index];
+        // Expand without cloning first: (projected total cost, parent
+        // position in the beam, target voice index, step cost, opens new
+        // voice). Cloning a parent's voice list is by far the most
+        // expensive part of the search, so pruned expansions must never
+        // pay for it.
+        let mut expansions: Vec<(f32, usize, usize, f32, bool)> = Vec::new();
+        for (parent_position, state) in beam.iter().enumerate() {
+            for (target_index, cost, is_new) in
+                branch_targets(state, note, existing_count, max_new_voices, weights)
+            {
+                expansions.push((
+                    state.cost + cost,
+                    parent_position,
+                    target_index,
+                    cost,
+                    is_new,
+                ));
+            }
+        }
+        // Keep the `BEAM_WIDTH` cheapest expansions, then materialize just
+        // those. Ties break on (parent position, target index), both
+        // deterministic, so the survivors -- and therefore the whole
+        // assignment -- don't depend on float quirks. Partition before
+        // sorting so only the survivors pay the sort.
+        let expansion_order =
+            |left: &(f32, usize, usize, f32, bool), right: &(f32, usize, usize, f32, bool)| {
+                left.0
+                    .partial_cmp(&right.0)
+                    .unwrap_or(Ordering::Equal)
+                    .then(left.1.cmp(&right.1))
+                    .then(left.2.cmp(&right.2))
+            };
+        if expansions.len() > BEAM_WIDTH {
+            expansions.select_nth_unstable_by(BEAM_WIDTH - 1, expansion_order);
+            expansions.truncate(BEAM_WIDTH);
+        }
+        expansions.sort_by(expansion_order);
+
+        let mut next_beam: Vec<WindowSearchState> = Vec::with_capacity(expansions.len());
+        for (_, parent_position, target_index, cost, is_new) in expansions {
+            let mut next_state = beam[parent_position].clone();
+            let real_index = if is_new {
+                next_state.voices.push(VoiceState {
+                    id: String::new(),
+                    last_end_tick: note.end_tick,
+                    last_pitch: note.pitch,
+                    last_channel: note.channel,
+                    note_count: 1,
+                    lowest_pitch: note.pitch,
+                    highest_pitch: note.pitch,
+                });
+                next_state.voices.len() - 1
+            } else {
+                let voice = &mut next_state.voices[target_index];
+                voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
+                voice.last_pitch = note.pitch;
+                voice.last_channel = note.channel;
+                voice.note_count += 1;
+                voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
+                voice.highest_pitch = voice.highest_pitch.max(note.pitch);
+                target_index
+            };
+            next_state.cost += cost;
+            next_state.labels.push(real_index);
+            next_beam.push(next_state);
+        }
+        beam = next_beam;
+    }
+    // `beam` is sorted by cost (the expansions were), so the first entry is
+    // the cheapest full assignment.
+    beam.into_iter()
+        .next()
+        .expect("the beam always retains at least one assignment for non-empty pending")
 }
 
 /// Solves and commits every note currently buffered in `pending`, leaving
@@ -586,113 +686,63 @@ fn slide_pending_window(
     pending.pop_front();
 }
 
-/// Exhaustively searches (with branch-and-bound pruning on `best.cost`) for
-/// the minimum-cost way to assign `pending[depth..]` to voices, where a
-/// voice is either one of the first `existing_count` entries of
-/// `state.voices` (already-committed, real) or one opened earlier within
-/// this same search branch. Candidate voices per note are capped at
-/// `LOOKAHEAD_CANDIDATES_PER_NOTE` (plus "open new") to keep branching
-/// bounded regardless of how many voices exist in a long piece; if no
-/// voice is compatible and no new-voice budget remains, falls back to
-/// forcing the single cheapest voice overall, mirroring greedy's
-/// at-the-cap behavior.
-#[allow(clippy::too_many_arguments)]
-fn search_window(
-    notes: &[MidiNoteDto],
-    pending: &[usize],
-    depth: usize,
-    state: WindowSearchState,
+/// The branch targets the beam explores for `note` from `state`: the
+/// `LOOKAHEAD_CANDIDATES_PER_NOTE` cheapest compatible voices (plus "open
+/// a new voice" when the budget allows), where a voice is either one of
+/// the first `existing_count` entries of `state.voices`
+/// (already-committed, real) or one opened earlier along this partial
+/// assignment. If no voice is compatible and no new-voice budget remains,
+/// falls back to the single cheapest voice overall, mirroring greedy's
+/// at-the-cap behavior. Returns `(voice index, cost, opens_new_voice)`
+/// tuples.
+fn branch_targets(
+    state: &WindowSearchState,
+    note: &MidiNoteDto,
     existing_count: usize,
     max_new_voices: usize,
     weights: &CostWeights,
-    best: &mut Option<WindowSearchState>,
-) {
-    if depth == pending.len() {
-        if best.as_ref().is_none_or(|found| state.cost < found.cost) {
-            *best = Some(state);
-        }
-        return;
-    }
-    if let Some(found) = best {
-        if state.cost >= found.cost {
-            return;
-        }
-    }
-
-    let note = &notes[pending[depth]];
+) -> Vec<(usize, f32, bool)> {
     let new_voice_count = state.voices.len() - existing_count;
     let can_open_new = new_voice_count < max_new_voices;
 
-    let mut scored: Vec<(usize, f32, bool)> = state
-        .voices
-        .iter()
-        .enumerate()
-        .map(|(index, voice)| {
-            let compatible = voice.last_end_tick <= note.start_tick;
-            let cost = score_candidates(std::slice::from_ref(voice), note, false, weights)[0].cost;
-            (index, cost, compatible)
-        })
-        .collect();
+    // This runs for every beam state at every window depth, so it's the
+    // hottest loop in Global mode: one scoring call over the whole voice
+    // list (per-call overhead dominates if scoring is done
+    // voice-by-voice), and a capped insertion instead of sorting all
+    // candidates to find the top few.
+    let mut top: Vec<(usize, f32)> = Vec::with_capacity(LOOKAHEAD_CANDIDATES_PER_NOTE + 1);
+    let mut best_forced: Option<(usize, f32)> = None;
+    for candidate in score_candidates(&state.voices, note, false, weights) {
+        if best_forced.is_none_or(|(_, best_cost)| candidate.cost < best_cost) {
+            best_forced = Some((candidate.index, candidate.cost));
+        }
+        if state.voices[candidate.index].last_end_tick <= note.start_tick {
+            // Candidates arrive in voice-index order, and `<=` in the
+            // partition point places an equal-cost newcomer after the
+            // incumbents -- together giving the same lowest-index-wins tie
+            // behavior a stable sort had.
+            let position = top.partition_point(|&(_, cost)| cost <= candidate.cost);
+            if position < LOOKAHEAD_CANDIDATES_PER_NOTE {
+                top.insert(position, (candidate.index, candidate.cost));
+                top.truncate(LOOKAHEAD_CANDIDATES_PER_NOTE);
+            }
+        }
+    }
 
-    let mut branch_targets: Vec<(usize, f32, bool)> = Vec::new();
-    let has_compatible = scored.iter().any(|(_, _, compatible)| *compatible);
-
-    if has_compatible {
-        scored.retain(|(_, _, compatible)| *compatible);
-        scored.sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal));
-        scored.truncate(LOOKAHEAD_CANDIDATES_PER_NOTE);
-        for (index, cost, _) in scored {
-            branch_targets.push((index, cost, false));
+    let mut targets: Vec<(usize, f32, bool)> = Vec::with_capacity(top.len() + 1);
+    if !top.is_empty() {
+        for (index, cost) in top {
+            targets.push((index, cost, false));
         }
         if can_open_new {
-            branch_targets.push((state.voices.len(), 0.0, true));
+            targets.push((state.voices.len(), 0.0, true));
         }
     } else if can_open_new {
-        branch_targets.push((state.voices.len(), 0.0, true));
-    } else {
-        scored.sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal));
-        if let Some(&(index, cost, _)) = scored.first() {
-            branch_targets.push((index, cost, false));
-        }
+        targets.push((state.voices.len(), 0.0, true));
+    } else if let Some((index, cost)) = best_forced {
+        targets.push((index, cost, false));
     }
-
-    for (target_index, cost, is_new) in branch_targets {
-        let mut next_state = state.clone();
-        let real_index = if is_new {
-            next_state.voices.push(VoiceState {
-                id: String::new(),
-                last_end_tick: note.end_tick,
-                last_pitch: note.pitch,
-                last_channel: note.channel,
-                note_count: 1,
-                lowest_pitch: note.pitch,
-                highest_pitch: note.pitch,
-            });
-            next_state.voices.len() - 1
-        } else {
-            let voice = &mut next_state.voices[target_index];
-            voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
-            voice.last_pitch = note.pitch;
-            voice.last_channel = note.channel;
-            voice.note_count += 1;
-            voice.lowest_pitch = voice.lowest_pitch.min(note.pitch);
-            voice.highest_pitch = voice.highest_pitch.max(note.pitch);
-            target_index
-        };
-        next_state.cost += cost;
-        next_state.labels.push(real_index);
-
-        search_window(
-            notes,
-            pending,
-            depth + 1,
-            next_state,
-            existing_count,
-            max_new_voices,
-            weights,
-            best,
-        );
-    }
+    targets
 }
 
 /// Replays the winning window labeling against the real, outer `voices`
@@ -746,13 +796,10 @@ fn commit_window_result(
         {
             (0.0, AssignmentReason::VoiceCapReached)
         } else {
-            let decided_cost = score_candidates(
-                std::slice::from_ref(&voices[real_index]),
-                note,
-                false,
-                weights,
-            )[0]
-            .cost;
+            // Full-slice scoring (indices align with `voices`) so the
+            // decided cost carries the same crossing context the
+            // compatible candidates were scored with.
+            let decided_cost = score_candidates(voices, note, false, weights)[real_index].cost;
             let runner_up_cost = compatible
                 .iter()
                 .filter(|candidate| candidate.index != real_index)
@@ -799,6 +846,605 @@ fn allocate_new_voice_id(
         }
         candidate_number += 1;
     }
+}
+
+/// Cost charged by the contig boundary alignment for opening a brand-new
+/// chain instead of continuing an existing compatible one. Deliberately far
+/// above any achievable match cost (pitch distance <= 127, register
+/// distance <= 127 * the largest register weight, gap penalty <=
+/// `gap_weight`), so the alignment only opens a new chain when there are
+/// structurally more fragments than compatible chains -- the same "never
+/// open a new voice while a compatible one exists" convention the greedy
+/// path gets from its candidate filter.
+const NEW_CHAIN_PENALTY: f32 = 100_000.0;
+
+/// One voice-line's worth of notes within a single contig: a time-ordered
+/// run of non-overlapping notes occupying the same pitch position. If
+/// `held_seed` is true, the first note was already sounding when the contig
+/// began (it started in an earlier contig), which forces this fragment to
+/// continue whatever chain that note was already committed to.
+struct Fragment {
+    note_indices: Vec<usize>,
+    held_seed: bool,
+}
+
+/// A maximal time span over which the number of simultaneously sounding
+/// notes is constant. Within a contig, voice-leading is treated as
+/// unambiguous (fragments are pitch-ordered and successions are matched by
+/// pitch order); all real decisions happen where contigs meet.
+struct Contig {
+    start_tick: u64,
+    fragments: Vec<Fragment>,
+}
+
+/// A voice being built up across contigs: its accumulated scoring state
+/// (`VoiceState` with the id left empty until ids are assigned at the end)
+/// plus every note committed to it so far, in time order.
+struct ChainBuild {
+    state: VoiceState,
+    note_indices: Vec<usize>,
+}
+
+/// End tick used for the polyphony sweep only. A zero-length note (the
+/// parser emits a `ZeroLengthNote` warning but keeps the note) would never
+/// "sound" under its literal end tick and would silently fall out of every
+/// contig, so it is treated as lasting one tick here. Scoring and committed
+/// chain state still use the note's real `end_tick`.
+fn effective_sweep_end(note: &MidiNoteDto) -> u64 {
+    note.end_tick.max(note.start_tick + 1)
+}
+
+/// Pairs the notes departing at an in-contig succession tick with the notes
+/// arriving at it (`departing` and `arriving` have equal length -- that's
+/// what makes it a succession rather than a contig boundary). Same-channel
+/// pairs are matched first, by pitch order within the channel: a note
+/// replaced at the same instant by another note on the same MIDI channel is
+/// almost surely the same instrument continuing, whatever the pitch jump --
+/// a signal the original contig-mapping formulation (built for channel-less
+/// symbolic data) never had. Whatever remains after channel grouping is
+/// matched across channels by plain pitch order, the contig-mapping
+/// default, which is also the overall behavior for single-channel files.
+fn match_succession(
+    notes: &[MidiNoteDto],
+    departing: &[usize],
+    arriving: &[usize],
+) -> Vec<(usize, usize)> {
+    let mut pairs: Vec<(usize, usize)> = Vec::with_capacity(departing.len());
+    let mut leftover_departing: Vec<usize> = Vec::new();
+    let mut leftover_arriving: Vec<usize> = arriving.to_vec();
+
+    let mut channels: Vec<u8> = departing
+        .iter()
+        .map(|&index| notes[index].channel)
+        .collect();
+    channels.sort_unstable();
+    channels.dedup();
+    for channel in channels {
+        let mut channel_departing: Vec<usize> = departing
+            .iter()
+            .copied()
+            .filter(|&index| notes[index].channel == channel)
+            .collect();
+        let mut channel_arriving: Vec<usize> = leftover_arriving
+            .iter()
+            .copied()
+            .filter(|&index| notes[index].channel == channel)
+            .collect();
+        channel_departing.sort_by_key(|&index| (notes[index].pitch, index));
+        channel_arriving.sort_by_key(|&index| (notes[index].pitch, index));
+        let paired = channel_departing.len().min(channel_arriving.len());
+        for position in 0..paired {
+            pairs.push((channel_departing[position], channel_arriving[position]));
+        }
+        leftover_arriving.retain(|index| !channel_arriving[..paired].contains(index));
+        leftover_departing.extend_from_slice(&channel_departing[paired..]);
+    }
+
+    leftover_departing.sort_by_key(|&index| (notes[index].pitch, index));
+    leftover_arriving.sort_by_key(|&index| (notes[index].pitch, index));
+    for (&departed, &arrived) in leftover_departing.iter().zip(&leftover_arriving) {
+        pairs.push((departed, arrived));
+    }
+    pairs
+}
+
+/// Segments `notes` into contigs. Boundaries fall wherever the number of
+/// simultaneously sounding notes changes (silence ends a contig). At a tick
+/// where the count stays constant but notes are replaced (equally many end
+/// and start), the departing notes are matched to the arriving ones --
+/// same-channel first, then by pitch order; see `match_succession` -- and
+/// each arriving note continues its match's fragment. That succession is
+/// the "unambiguous within a contig" part of the contig-mapping approach.
+fn build_contigs(notes: &[MidiNoteDto]) -> Vec<Contig> {
+    let mut start_order: Vec<usize> = (0..notes.len()).collect();
+    start_order.sort_by_key(|&index| (notes[index].start_tick, index));
+
+    let mut boundary_ticks: Vec<u64> = notes
+        .iter()
+        .flat_map(|note| [note.start_tick, effective_sweep_end(note)])
+        .collect();
+    boundary_ticks.sort_unstable();
+    boundary_ticks.dedup();
+
+    let mut contigs: Vec<Contig> = Vec::new();
+    let mut current: Option<Contig> = None;
+    // Note index -> fragment index within `current`.
+    let mut fragment_of_note: HashMap<usize, usize> = HashMap::new();
+    let mut active: Vec<usize> = Vec::new();
+    let mut next_start = 0usize;
+
+    for &tick in &boundary_ticks {
+        let previous_count = active.len();
+        let departing: Vec<usize> = active
+            .iter()
+            .copied()
+            .filter(|&index| effective_sweep_end(&notes[index]) == tick)
+            .collect();
+        active.retain(|&index| effective_sweep_end(&notes[index]) != tick);
+        let mut arriving: Vec<usize> = Vec::new();
+        while next_start < start_order.len() && notes[start_order[next_start]].start_tick == tick {
+            arriving.push(start_order[next_start]);
+            next_start += 1;
+        }
+        active.extend(arriving.iter().copied());
+        let new_count = active.len();
+
+        if new_count == previous_count {
+            if arriving.is_empty() {
+                // A boundary tick belonging to notes sounding elsewhere in
+                // the piece; nothing changed here.
+                continue;
+            }
+            // Constant count with replacements: an in-contig succession
+            // event, so `departing` and `arriving` have equal length.
+            let contig = current
+                .as_mut()
+                .expect("a nonzero constant count means a contig is open");
+            for (departed, arrived) in match_succession(notes, &departing, &arriving) {
+                let fragment_index = fragment_of_note[&departed];
+                contig.fragments[fragment_index].note_indices.push(arrived);
+                fragment_of_note.insert(arrived, fragment_index);
+            }
+            continue;
+        }
+
+        // Polyphony changed: the current contig (if any) ends at this tick.
+        if let Some(finished) = current.take() {
+            contigs.push(finished);
+        }
+        fragment_of_note.clear();
+        if new_count == 0 {
+            continue;
+        }
+
+        // Open a new contig: every sounding note seeds one fragment, in
+        // pitch order. A seed already sounding before this tick is held --
+        // it was committed to a chain by the contig it started in.
+        let mut seeds: Vec<usize> = active.clone();
+        seeds.sort_by_key(|&index| (notes[index].pitch, index));
+        let fragments: Vec<Fragment> = seeds
+            .iter()
+            .enumerate()
+            .map(|(fragment_index, &index)| {
+                fragment_of_note.insert(index, fragment_index);
+                Fragment {
+                    note_indices: vec![index],
+                    held_seed: notes[index].start_tick < tick,
+                }
+            })
+            .collect();
+        current = Some(Contig {
+            start_tick: tick,
+            fragments,
+        });
+    }
+
+    if let Some(finished) = current.take() {
+        contigs.push(finished);
+    }
+    contigs
+}
+
+/// Non-crossing minimum-cost alignment between the pitch-ordered resting
+/// chains (`available`, chain indices whose last note ends at or before the
+/// contig start) and the contig's pitch-ordered fresh fragments
+/// (`fresh_fragments`, fragment indices whose seed is not held). Classic
+/// sequence-alignment DP: a chain may be skipped (that voice rests through
+/// this contig), a fragment may open a new chain (charged
+/// `NEW_CHAIN_PENALTY`, so it only happens when structurally necessary), or
+/// a chain and fragment may be matched at the cost of scoring the
+/// fragment's first note against the chain's accumulated state. The
+/// non-crossing constraint is the perceptual "voices don't cross" principle
+/// the contig approach is built on. Returns, per fresh fragment, the
+/// matched chain index or `None` (wants a new chain).
+fn align_fragments_to_chains(
+    notes: &[MidiNoteDto],
+    chains: &[ChainBuild],
+    available: &[usize],
+    contig: &Contig,
+    fresh_fragments: &[usize],
+    weights: &CostWeights,
+) -> Vec<Option<usize>> {
+    let chain_count = available.len();
+    let fragment_count = fresh_fragments.len();
+
+    // Score each fragment's first note against every chain in one call
+    // (result indices align with `chains`), so the costs carry crossing
+    // context from chains held through this boundary.
+    let chain_states: Vec<VoiceState> = chains.iter().map(|chain| chain.state.clone()).collect();
+    let costs_by_fragment: Vec<Vec<Candidate>> = fresh_fragments
+        .iter()
+        .map(|&fragment_index| {
+            let first_note = &notes[contig.fragments[fragment_index].note_indices[0]];
+            score_candidates(&chain_states, first_note, false, weights)
+        })
+        .collect();
+    let match_cost: Vec<Vec<f32>> = available
+        .iter()
+        .map(|&chain_index| {
+            costs_by_fragment
+                .iter()
+                .map(|candidates| candidates[chain_index].cost)
+                .collect()
+        })
+        .collect();
+
+    // dp[i][j]: min cost aligning the first i chains with the first j
+    // fragments. choice: 0 = skip chain, 1 = new chain for fragment,
+    // 2 = match.
+    let mut dp = vec![vec![f32::INFINITY; fragment_count + 1]; chain_count + 1];
+    let mut choice = vec![vec![0u8; fragment_count + 1]; chain_count + 1];
+    dp[0][0] = 0.0;
+    for j in 1..=fragment_count {
+        dp[0][j] = dp[0][j - 1] + NEW_CHAIN_PENALTY;
+        choice[0][j] = 1;
+    }
+    for i in 1..=chain_count {
+        dp[i][0] = dp[i - 1][0];
+        choice[i][0] = 0;
+    }
+    for i in 1..=chain_count {
+        for j in 1..=fragment_count {
+            let mut best = dp[i - 1][j];
+            let mut pick = 0u8;
+            let new_chain = dp[i][j - 1] + NEW_CHAIN_PENALTY;
+            if new_chain < best {
+                best = new_chain;
+                pick = 1;
+            }
+            let matched = dp[i - 1][j - 1] + match_cost[i - 1][j - 1];
+            if matched < best {
+                best = matched;
+                pick = 2;
+            }
+            dp[i][j] = best;
+            choice[i][j] = pick;
+        }
+    }
+
+    let mut result = vec![None; fragment_count];
+    let (mut i, mut j) = (chain_count, fragment_count);
+    while i > 0 || j > 0 {
+        match choice[i][j] {
+            0 => i -= 1,
+            1 => j -= 1,
+            _ => {
+                i -= 1;
+                j -= 1;
+                result[j] = Some(available[i]);
+            }
+        }
+    }
+    result
+}
+
+fn create_chain(chains: &mut Vec<ChainBuild>, note: &MidiNoteDto) -> usize {
+    chains.push(ChainBuild {
+        state: VoiceState {
+            id: String::new(),
+            last_end_tick: 0,
+            last_pitch: note.pitch,
+            last_channel: note.channel,
+            note_count: 0,
+            lowest_pitch: note.pitch,
+            highest_pitch: note.pitch,
+        },
+        note_indices: Vec::new(),
+    });
+    chains.len() - 1
+}
+
+fn append_note_to_chain(chain: &mut ChainBuild, note_index: usize, note: &MidiNoteDto) {
+    chain.note_indices.push(note_index);
+    let state = &mut chain.state;
+    // `max`, not overwrite: a cap-forced fragment can overlap notes already
+    // in the chain, so its notes aren't guaranteed to end last.
+    state.last_end_tick = state.last_end_tick.max(note.end_tick);
+    state.last_pitch = note.pitch;
+    state.last_channel = note.channel;
+    state.note_count += 1;
+    state.lowest_pitch = state.lowest_pitch.min(note.pitch);
+    state.highest_pitch = state.highest_pitch.max(note.pitch);
+}
+
+/// Recomputes every note's `assignment_confidence`/`assignment_reason` by
+/// replaying the committed voice ids in time order through the same scoring
+/// the other modes report with (mirroring `commit_window_result`'s rules):
+/// a locked note is `UserLocked`/1.0, the first note of a voice is
+/// `NewVoiceNoFit`/1.0, a note committed to a voice it overlaps in time is
+/// `VoiceCapReached`/0.0, and everything else derives confidence from the
+/// cost gap between the committed voice and the best compatible
+/// alternative.
+fn replay_assignment_reporting(
+    notes: &mut [MidiNoteDto],
+    locked: &HashMap<String, String>,
+    weights: &CostWeights,
+) {
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by_key(|&index| (notes[index].start_tick, index));
+
+    let mut states: Vec<VoiceState> = Vec::new();
+    let mut state_index_by_id: HashMap<String, usize> = HashMap::new();
+
+    for index in order {
+        let voice_id = notes[index].voice_id.clone();
+        let existing = state_index_by_id.get(&voice_id).copied();
+
+        let (confidence, reason) = if locked.contains_key(&notes[index].id) {
+            (1.0, AssignmentReason::UserLocked)
+        } else {
+            match existing {
+                None => (1.0, AssignmentReason::NewVoiceNoFit),
+                Some(state_index) => {
+                    let note = &notes[index];
+                    let compatible = compatible_candidates(&states, note, weights);
+                    if !compatible
+                        .iter()
+                        .any(|candidate| candidate.index == state_index)
+                    {
+                        (0.0, AssignmentReason::VoiceCapReached)
+                    } else {
+                        // Full-slice scoring (indices align with `states`)
+                        // so the decided cost carries the same crossing
+                        // context the compatible candidates were scored
+                        // with.
+                        let decided_cost =
+                            score_candidates(&states, note, false, weights)[state_index].cost;
+                        let runner_up_cost = compatible
+                            .iter()
+                            .filter(|candidate| candidate.index != state_index)
+                            .map(|candidate| candidate.cost)
+                            .fold(f32::INFINITY, f32::min);
+                        let confidence = if runner_up_cost.is_finite() {
+                            ((runner_up_cost - decided_cost) / CONFIDENCE_SCALE).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        };
+                        let reason = if states[state_index].last_channel == note.channel {
+                            AssignmentReason::ChannelContinuity
+                        } else {
+                            AssignmentReason::ClosestPitch
+                        };
+                        (confidence, reason)
+                    }
+                }
+            }
+        };
+
+        let state_index = match existing {
+            Some(state_index) => state_index,
+            None => {
+                let next_index = states.len();
+                states.push(VoiceState {
+                    id: voice_id.clone(),
+                    last_end_tick: 0,
+                    last_pitch: notes[index].pitch,
+                    last_channel: notes[index].channel,
+                    note_count: 0,
+                    lowest_pitch: notes[index].pitch,
+                    highest_pitch: notes[index].pitch,
+                });
+                state_index_by_id.insert(voice_id, next_index);
+                next_index
+            }
+        };
+
+        let note = &mut notes[index];
+        note.assignment_confidence = confidence;
+        note.assignment_reason = reason;
+        let state = &mut states[state_index];
+        state.last_end_tick = state.last_end_tick.max(note.end_tick);
+        state.last_pitch = note.pitch;
+        state.last_channel = note.channel;
+        state.note_count += 1;
+        state.lowest_pitch = state.lowest_pitch.min(note.pitch);
+        state.highest_pitch = state.highest_pitch.max(note.pitch);
+    }
+}
+
+/// Contig-mapping voice separation (after Chew & Wu 2004), adapted to this
+/// codebase's cost model. The piece is segmented into contigs (spans of
+/// constant polyphony) where voice-leading is unambiguous, so mistakes can
+/// only happen at contig boundaries -- unlike the note-at-a-time modes,
+/// which can go wrong on any note. At each boundary, fragments are matched
+/// to *all* resting chains (not just the previous contig's), so a voice
+/// that rests through a solo passage keeps its identity when it re-enters.
+///
+/// Deviations from the paper, on purpose:
+/// - In-contig successions match same-channel replacements first (see
+///   `match_succession`); the paper's pitch-order-only matching was built
+///   for channel-less symbolic data and measurably mixes instruments on
+///   files where each instrument owns a MIDI channel.
+/// - Boundaries are connected left-to-right against accumulated chain state
+///   (register envelope, last pitch/channel) rather than outward from
+///   maximal-voice contigs; the accumulated state carries the context the
+///   paper's ordering exists to protect.
+/// - `max_voice_count` (not a concept in the paper) mirrors greedy's
+///   documented trade-off: once at the cap, an unmatched fragment is forced
+///   into the cheapest existing chain and its notes surface as
+///   `VoiceCapReached` in review mode. When more fragments need new chains
+///   than the cap allows, the lowest-pitched fragments keep the new-chain
+///   slots (deterministic, and the forced ones are flagged regardless).
+/// - Locks: a chain containing locked notes claims that locked voice id
+///   (majority wins, first-encountered on a tie), so a correction pulls its
+///   whole fragment chain into the corrected voice; every locked note is
+///   additionally pinned to its exact locked id afterwards as a hard
+///   per-note guarantee, and locked ids are never handed to other chains.
+pub fn assign_contig_voices_with_locks(
+    notes: &mut [MidiNoteDto],
+    locked: &HashMap<String, String>,
+    max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
+) -> Vec<MidiVoiceDto> {
+    let weights = strategy.cost_weights();
+    let contigs = build_contigs(notes);
+    let mut chains: Vec<ChainBuild> = Vec::new();
+    let mut chain_of_note: HashMap<usize, usize> = HashMap::new();
+
+    for contig in &contigs {
+        let fresh_fragments: Vec<usize> = contig
+            .fragments
+            .iter()
+            .enumerate()
+            .filter(|(_, fragment)| !fragment.held_seed)
+            .map(|(fragment_index, _)| fragment_index)
+            .collect();
+
+        // Chains resting at this boundary, pitch-ordered for the
+        // non-crossing alignment. Chains held into this contig are excluded
+        // automatically: their held note ends after the contig starts.
+        let mut available: Vec<usize> = (0..chains.len())
+            .filter(|&chain_index| chains[chain_index].state.last_end_tick <= contig.start_tick)
+            .collect();
+        available.sort_by_key(|&chain_index| (chains[chain_index].state.last_pitch, chain_index));
+
+        let alignment = align_fragments_to_chains(
+            notes,
+            &chains,
+            &available,
+            contig,
+            &fresh_fragments,
+            &weights,
+        );
+
+        let mut new_chain_budget = match max_voice_count {
+            Some(max) => max.saturating_sub(chains.len()),
+            None => usize::MAX,
+        };
+        if chains.is_empty() {
+            // Same rule as the other modes' voice cap: even a cap of 0 must
+            // allow the very first voice, since leaving a note unassigned
+            // isn't a valid outcome.
+            new_chain_budget = new_chain_budget.max(1);
+        }
+
+        let mut alignment_by_fragment: HashMap<usize, Option<usize>> = HashMap::new();
+        for (position, &fragment_index) in fresh_fragments.iter().enumerate() {
+            alignment_by_fragment.insert(fragment_index, alignment[position]);
+        }
+
+        for (fragment_index, fragment) in contig.fragments.iter().enumerate() {
+            let chain_index = if fragment.held_seed {
+                chain_of_note[&fragment.note_indices[0]]
+            } else {
+                match alignment_by_fragment[&fragment_index] {
+                    Some(matched_chain) => matched_chain,
+                    None if new_chain_budget > 0 => {
+                        new_chain_budget -= 1;
+                        create_chain(&mut chains, &notes[fragment.note_indices[0]])
+                    }
+                    None => {
+                        // At the cap with no compatible chain: force the
+                        // cheapest existing chain, mirroring greedy's
+                        // at-the-cap behavior. The replay pass will flag
+                        // the overlapping notes as `VoiceCapReached`.
+                        let first_note = &notes[fragment.note_indices[0]];
+                        let chain_states: Vec<VoiceState> =
+                            chains.iter().map(|chain| chain.state.clone()).collect();
+                        score_candidates(&chain_states, first_note, false, &weights)
+                            .into_iter()
+                            .min_by(|left, right| {
+                                left.cost
+                                    .partial_cmp(&right.cost)
+                                    .unwrap_or(Ordering::Equal)
+                                    .then(left.index.cmp(&right.index))
+                            })
+                            .expect("the first fragment always opens a chain, so chains is non-empty here")
+                            .index
+                    }
+                }
+            };
+
+            let committed_from = usize::from(fragment.held_seed);
+            for &note_index in &fragment.note_indices[committed_from..] {
+                chain_of_note.insert(note_index, chain_index);
+                append_note_to_chain(&mut chains[chain_index], note_index, &notes[note_index]);
+            }
+        }
+    }
+
+    debug_assert_eq!(
+        chain_of_note.len(),
+        notes.len(),
+        "every note must be committed to exactly one chain"
+    );
+
+    // Assign voice ids in chain-creation order (which follows the time
+    // order of each chain's first note).
+    let reserved_voice_ids: HashSet<&str> = locked.values().map(String::as_str).collect();
+    let mut used_ids: HashMap<String, usize> = HashMap::new();
+    let mut chain_ids: Vec<String> = Vec::with_capacity(chains.len());
+    for chain in &chains {
+        // Locked ids referenced by this chain's notes, counted in
+        // first-encountered order so a tie deterministically goes to the
+        // earliest correction.
+        let mut locked_id_counts: Vec<(&str, usize)> = Vec::new();
+        for &note_index in &chain.note_indices {
+            if let Some(locked_id) = locked.get(&notes[note_index].id) {
+                match locked_id_counts
+                    .iter_mut()
+                    .find(|(id, _)| *id == locked_id.as_str())
+                {
+                    Some(entry) => entry.1 += 1,
+                    None => locked_id_counts.push((locked_id.as_str(), 1)),
+                }
+            }
+        }
+        let claim = locked_id_counts
+            .iter()
+            .map(|&(_, count)| count)
+            .max()
+            .and_then(|max_count| {
+                locked_id_counts
+                    .iter()
+                    .find(|&&(_, count)| count == max_count)
+                    .map(|&(id, _)| id)
+            });
+        let chain_id = match claim {
+            Some(id) if !used_ids.contains_key(id) => id.to_string(),
+            _ => allocate_new_voice_id(&used_ids, &reserved_voice_ids),
+        };
+        used_ids.insert(chain_id.clone(), chain_ids.len());
+        chain_ids.push(chain_id);
+    }
+
+    for (chain_index, chain) in chains.iter().enumerate() {
+        for &note_index in &chain.note_indices {
+            notes[note_index]
+                .voice_id
+                .clone_from(&chain_ids[chain_index]);
+        }
+    }
+    // Hard per-note lock guarantee, regardless of which chain the note's
+    // fragment landed in.
+    for note in notes.iter_mut() {
+        if let Some(locked_id) = locked.get(&note.id) {
+            note.voice_id.clone_from(locked_id);
+        }
+    }
+
+    replay_assignment_reporting(notes, locked, &weights);
+    summarize_assigned_voices(notes)
 }
 
 pub fn summarize_assigned_voices(notes: &[MidiNoteDto]) -> Vec<MidiVoiceDto> {
@@ -877,12 +1523,34 @@ fn compatible_candidates(
 /// normal heuristic path. When false, every voice is scored regardless of
 /// overlap, used only for the forced-reuse path once a voice-count cap is
 /// reached and no compatible voice exists.
+///
+/// The crossing term scores each candidate against the *whole* `voices`
+/// slice (a candidate crosses voices it can't itself join), so callers
+/// that need one specific voice's cost must pass the full slice and pick
+/// their candidate out of the result rather than scoring a single-voice
+/// slice — a `std::slice::from_ref` call here silently computes a cost
+/// with no crossing context.
 fn score_candidates(
     voices: &[VoiceState],
     note: &MidiNoteDto,
     require_compatible: bool,
     weights: &CostWeights,
 ) -> Vec<Candidate> {
+    // Pitches of voices still sounding at this note's start, sorted so
+    // each candidate's crossing count is two binary searches instead of a
+    // rescan of every voice. A candidate's own pitch can never be counted
+    // against it: it is always an endpoint of the strict-inequality range.
+    let mut sounding_pitches: Vec<u8> = if weights.crossing_weight > 0.0 {
+        voices
+            .iter()
+            .filter(|voice| voice.last_end_tick > note.start_tick)
+            .map(|voice| voice.last_pitch)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    sounding_pitches.sort_unstable();
+
     voices
         .iter()
         .enumerate()
@@ -906,11 +1574,23 @@ fn score_candidates(
             } else {
                 0.0
             };
+            let crossing_count = if sounding_pitches.is_empty() {
+                0
+            } else {
+                let low = voice.last_pitch.min(note.pitch);
+                let high = voice.last_pitch.max(note.pitch);
+                let from = sounding_pitches.partition_point(|&pitch| pitch <= low);
+                let to = sounding_pitches.partition_point(|&pitch| pitch < high);
+                // `to < from` when the note repeats the voice's last pitch
+                // (an empty strict range crosses nothing).
+                to.saturating_sub(from)
+            };
             Candidate {
                 index,
                 cost: pitch_distance
                     + register_distance * weights.register_drift_weight
                     + normalized_gap * weights.gap_weight
+                    + crossing_count as f32 * weights.crossing_weight
                     - channel_bonus,
                 channel_match,
             }
@@ -1277,6 +1957,33 @@ mod tests {
     }
 
     #[test]
+    fn crossing_penalty_avoids_leaping_over_a_sounding_voice() {
+        // Two resting candidates for the pitch-65 note "t": voice-a last
+        // at 61 (distance 4, no crossing) and voice-b last at 68 (distance
+        // 3, but reaching down to 65 leaps over voice-c, still sounding at
+        // 66). Raw pitch distance alone picks voice-b; the crossing term
+        // makes leaping over the sounding voice cost more than the one
+        // extra semitone, flipping the choice to voice-a. All notes share
+        // a channel and every voice has a single note (so the channel and
+        // register terms cancel out of the comparison).
+        let mut notes = vec![
+            note("a1", 61, 0, 200),
+            note("b1", 68, 0, 200),
+            note("c1", 66, 100, 400),
+            note("t", 65, 200, 300),
+        ];
+        let locked = HashMap::from([
+            ("a1".to_string(), "voice-a".to_string()),
+            ("b1".to_string(), "voice-b".to_string()),
+            ("c1".to_string(), "voice-c".to_string()),
+        ]);
+
+        assign_heuristic_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
+
+        assert_eq!(notes[3].voice_id, "voice-a");
+    }
+
+    #[test]
     fn voice_cap_does_not_block_locked_notes() {
         let mut notes = vec![
             note("a", 60, 0, 240),
@@ -1548,26 +2255,36 @@ mod windowed_tests {
     /// measures how locally decisive a single pick was, not whether the
     /// overall grouping is cheaper.
     fn total_cost_of_committed_assignment(notes: &[MidiNoteDto], weights: &CostWeights) -> f32 {
-        let mut voice_states: HashMap<String, VoiceState> = HashMap::new();
+        // Index-aligned states (not a HashMap) so each note's cost can be
+        // scored against the full slice -- the crossing term needs the
+        // other voices as context, not just the note's own voice.
+        let mut states: Vec<VoiceState> = Vec::new();
+        let mut state_index_by_id: HashMap<String, usize> = HashMap::new();
         let mut total = 0.0f32;
 
         for note in notes {
-            if let Some(voice) = voice_states.get(&note.voice_id) {
-                total +=
-                    score_candidates(std::slice::from_ref(voice), note, false, weights)[0].cost;
-            }
+            let state_index = match state_index_by_id.get(&note.voice_id).copied() {
+                Some(state_index) => {
+                    total += score_candidates(&states, note, false, weights)[state_index].cost;
+                    state_index
+                }
+                None => {
+                    let next_index = states.len();
+                    state_index_by_id.insert(note.voice_id.clone(), next_index);
+                    states.push(VoiceState {
+                        id: note.voice_id.clone(),
+                        last_end_tick: note.end_tick,
+                        last_pitch: note.pitch,
+                        last_channel: note.channel,
+                        note_count: 0,
+                        lowest_pitch: note.pitch,
+                        highest_pitch: note.pitch,
+                    });
+                    next_index
+                }
+            };
 
-            let voice = voice_states
-                .entry(note.voice_id.clone())
-                .or_insert_with(|| VoiceState {
-                    id: note.voice_id.clone(),
-                    last_end_tick: note.end_tick,
-                    last_pitch: note.pitch,
-                    last_channel: note.channel,
-                    note_count: 0,
-                    lowest_pitch: note.pitch,
-                    highest_pitch: note.pitch,
-                });
+            let voice = &mut states[state_index];
             voice.last_end_tick = voice.last_end_tick.max(note.end_tick);
             voice.last_pitch = note.pitch;
             voice.last_channel = note.channel;
@@ -1638,5 +2355,358 @@ mod windowed_tests {
     #[test]
     fn global_mode_matches_or_beats_greedy_cost_on_a_real_separate_tracks_fixture() {
         assert_global_matches_or_beats_greedy_cost_on_fixture("boss-battle-6-separate-tracks.mid");
+    }
+}
+
+#[cfg(test)]
+mod contig_tests {
+    use super::*;
+
+    fn mk(id: &str, channel: u8, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
+        MidiNoteDto {
+            id: id.to_string(),
+            voice_id: String::new(),
+            source_track_index: 0,
+            channel,
+            pitch,
+            velocity: 100,
+            start_tick,
+            end_tick,
+            duration_ticks: end_tick.saturating_sub(start_tick),
+            assignment_confidence: 0.0,
+            assignment_reason: AssignmentReason::ClosestPitch,
+        }
+    }
+
+    #[test]
+    fn reuses_a_compatible_voice_like_greedy_does() {
+        let mut notes = vec![mk("a", 0, 60, 0, 120), mk("b", 0, 62, 120, 240)];
+
+        let voices = assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 1);
+        assert_eq!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    #[test]
+    fn separates_overlapping_notes_like_greedy_does() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240), mk("b", 0, 64, 120, 360)];
+
+        let voices = assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 2);
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    #[test]
+    fn assigns_repeatably() {
+        let original = vec![
+            mk("a", 0, 60, 0, 240),
+            mk("b", 1, 64, 120, 360),
+            mk("c", 1, 65, 360, 480),
+            mk("d", 0, 67, 480, 600),
+        ];
+        let mut first = original.clone();
+        let mut second = original;
+
+        assign_contig_voices_with_locks(
+            &mut first,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+        assign_contig_voices_with_locks(
+            &mut second,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        let first_assignments: Vec<_> = first.iter().map(|note| note.voice_id.clone()).collect();
+        let second_assignments: Vec<_> = second.iter().map(|note| note.voice_id.clone()).collect();
+        assert_eq!(first_assignments, second_assignments);
+    }
+
+    /// The mechanism the whole mode is built on: at a tick where the
+    /// polyphony count stays constant but the sounding notes are replaced,
+    /// departures are matched to arrivals by pitch order, so the low line
+    /// stays the low line and the high line stays the high line.
+    #[test]
+    fn within_contig_succession_follows_pitch_order() {
+        let mut notes = vec![
+            mk("low-1", 0, 60, 0, 100),
+            mk("high-1", 0, 70, 0, 100),
+            mk("low-2", 0, 58, 100, 200),
+            mk("high-2", 0, 72, 100, 200),
+        ];
+
+        assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(notes[0].voice_id, notes[2].voice_id);
+        assert_eq!(notes[1].voice_id, notes[3].voice_id);
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    /// A same-tick replacement on the same channel is the same instrument
+    /// continuing, even when plain pitch-order matching would pair the
+    /// lines the other way around (here the channel-0 line leaps from 60
+    /// up to 72 while the channel-1 line dives from 70 down to 58 --
+    /// pitch order alone would swap them).
+    #[test]
+    fn within_contig_succession_prefers_same_channel_over_pitch_order() {
+        let mut notes = vec![
+            mk("a1", 0, 60, 0, 100),
+            mk("b1", 1, 70, 0, 100),
+            mk("b2", 1, 58, 100, 200),
+            mk("a2", 0, 72, 100, 200),
+        ];
+
+        assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(
+            notes[0].voice_id, notes[3].voice_id,
+            "the channel-0 line should continue on channel 0"
+        );
+        assert_eq!(
+            notes[1].voice_id, notes[2].voice_id,
+            "the channel-1 line should continue on channel 1"
+        );
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    /// The adversarial fixture greedy provably gets wrong (see
+    /// `windowed_tests::finds_the_pitch_register_split_that_greedy_misses`):
+    /// here the whole seed section is one contig (the replacement at tick
+    /// 200 keeps the count at 2), so pitch-ordered succession pairs the
+    /// lines correctly without any search at all -- the case that needed a
+    /// 6-note lookahead under the note-at-a-time family is structurally
+    /// unambiguous under the contig family.
+    #[test]
+    fn finds_the_pitch_register_split_that_greedy_misses() {
+        let mut notes = vec![
+            mk("seed-a1", 0, 49, 0, 200),
+            mk("seed-b1", 1, 65, 0, 200),
+            mk("seed-a2", 0, 64, 200, 400),
+            mk("seed-b2", 1, 68, 200, 400),
+            mk("free-0", 0, 71, 420, 487),
+            mk("free-1", 1, 78, 497, 605),
+            mk("free-2", 0, 48, 616, 682),
+            mk("free-3", 0, 44, 690, 801),
+            mk("free-4", 0, 75, 824, 977),
+        ];
+
+        assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(
+            notes[0].voice_id, notes[2].voice_id,
+            "seed-a1 and seed-a2 should land in the same voice"
+        );
+        assert_eq!(
+            notes[1].voice_id, notes[3].voice_id,
+            "seed-b1 and seed-b2 should land in the same voice"
+        );
+        assert_ne!(notes[0].voice_id, notes[1].voice_id);
+    }
+
+    /// The structural advantage over connecting only *adjacent* contigs:
+    /// boundary matching considers every resting chain, so a voice that
+    /// rests through a solo passage keeps its identity when it re-enters
+    /// instead of being reborn as a new voice.
+    #[test]
+    fn a_resting_chain_reconnects_after_a_solo_passage() {
+        let mut notes = vec![
+            mk("low-1", 0, 40, 0, 200),
+            mk("high-1", 0, 72, 0, 200),
+            mk("low-2", 0, 40, 200, 400),
+            mk("high-2", 0, 72, 200, 400),
+            // Solo passage: only the high line continues.
+            mk("solo", 0, 74, 400, 800),
+            // Both lines re-enter after a rest.
+            mk("low-3", 0, 41, 900, 1100),
+            mk("high-3", 0, 73, 900, 1100),
+        ];
+
+        let voices = assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 2);
+        assert_eq!(
+            notes[5].voice_id, notes[0].voice_id,
+            "the re-entering low line should reconnect to the rested low chain"
+        );
+        assert_eq!(
+            notes[6].voice_id, notes[1].voice_id,
+            "the re-entering high line should continue the high chain"
+        );
+    }
+
+    #[test]
+    fn locked_note_stays_pinned_and_pulls_its_fragment_chain() {
+        let mut notes = vec![
+            mk("a", 0, 60, 0, 120),
+            mk("b", 0, 70, 0, 120),
+            mk("c", 0, 66, 120, 240),
+        ];
+        let locked = HashMap::from([("b".to_string(), "voice-9".to_string())]);
+
+        assign_contig_voices_with_locks(&mut notes, &locked, None, SeparationStrategy::Balanced);
+
+        assert_eq!(notes[1].voice_id, "voice-9");
+        assert_eq!(notes[1].assignment_reason, AssignmentReason::UserLocked);
+        assert_eq!(notes[1].assignment_confidence, 1.0);
+        // "a" must not collide with the reserved locked id.
+        assert_eq!(notes[0].voice_id, "voice-1");
+        // "c" is closer in pitch to the locked voice's line (70) than to
+        // "a"'s (60), so the boundary matching pulls it into the corrected
+        // voice, same as greedy's cost model would.
+        assert_eq!(notes[2].voice_id, "voice-9");
+    }
+
+    #[test]
+    fn voice_cap_forces_reuse_instead_of_opening_a_new_voice() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240), mk("b", 0, 64, 120, 360)];
+
+        assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(1),
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(notes[0].voice_id, notes[1].voice_id);
+        assert_eq!(
+            notes[1].assignment_reason,
+            AssignmentReason::VoiceCapReached
+        );
+        assert_eq!(notes[1].assignment_confidence, 0.0);
+    }
+
+    #[test]
+    fn voice_cap_still_allows_the_very_first_voice() {
+        let mut notes = vec![mk("a", 0, 60, 0, 240)];
+
+        let voices = assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(0),
+            SeparationStrategy::Balanced,
+        );
+
+        assert_eq!(voices.len(), 1);
+        assert_eq!(notes[0].assignment_reason, AssignmentReason::NewVoiceNoFit);
+    }
+
+    #[test]
+    fn voice_cap_does_not_block_locked_notes() {
+        let mut notes = vec![
+            mk("a", 0, 60, 0, 240),
+            mk("b", 0, 64, 0, 240),
+            mk("c", 0, 68, 0, 240),
+        ];
+        let locked = HashMap::from([
+            ("a".to_string(), "voice-1".to_string()),
+            ("b".to_string(), "voice-2".to_string()),
+            ("c".to_string(), "voice-3".to_string()),
+        ]);
+
+        assign_contig_voices_with_locks(&mut notes, &locked, Some(1), SeparationStrategy::Balanced);
+
+        assert_eq!(notes[0].voice_id, "voice-1");
+        assert_eq!(notes[1].voice_id, "voice-2");
+        assert_eq!(notes[2].voice_id, "voice-3");
+    }
+
+    #[test]
+    fn zero_length_notes_still_get_assigned() {
+        let mut notes = vec![mk("a", 0, 60, 0, 120), mk("zero", 0, 62, 120, 120)];
+
+        assign_contig_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+        );
+
+        assert!(!notes[1].voice_id.is_empty());
+    }
+
+    /// Smoke test against both real fixtures: every note gets a voice, the
+    /// summary is consistent with the notes, and the whole run is
+    /// deterministic -- across all four strategies.
+    #[test]
+    fn assigns_every_note_deterministically_on_real_fixtures() {
+        for fixture_file_name in [
+            "boss-battle-6-combined.mid",
+            "boss-battle-6-separate-tracks.mid",
+        ] {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("fixtures")
+                .join(fixture_file_name);
+            let bytes = std::fs::read(&path).expect("fixture should be readable");
+            let project = super::super::parser::parse_midi_project(&path, &bytes)
+                .expect("fixture should parse");
+
+            for strategy in [
+                SeparationStrategy::Balanced,
+                SeparationStrategy::ChannelPriority,
+                SeparationStrategy::RegisterPriority,
+                SeparationStrategy::StrictChannel,
+            ] {
+                let mut first = project.notes.clone();
+                let voices =
+                    assign_contig_voices_with_locks(&mut first, &HashMap::new(), None, strategy);
+
+                assert!(
+                    first.iter().all(|note| !note.voice_id.is_empty()),
+                    "{fixture_file_name} / {strategy:?}: every note should have a voice"
+                );
+                let distinct: HashSet<&str> =
+                    first.iter().map(|note| note.voice_id.as_str()).collect();
+                assert_eq!(
+                    voices.len(),
+                    distinct.len(),
+                    "{fixture_file_name} / {strategy:?}: summary should match the notes"
+                );
+
+                let mut second = project.notes.clone();
+                assign_contig_voices_with_locks(&mut second, &HashMap::new(), None, strategy);
+                let first_ids: Vec<_> = first.iter().map(|note| note.voice_id.clone()).collect();
+                let second_ids: Vec<_> = second.iter().map(|note| note.voice_id.clone()).collect();
+                assert_eq!(
+                    first_ids, second_ids,
+                    "{fixture_file_name} / {strategy:?}: assignment should be deterministic"
+                );
+            }
+        }
     }
 }
