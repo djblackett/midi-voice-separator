@@ -1593,6 +1593,35 @@ pieces, all landing at import time:
   multi-channel file and eyeball the seeded labels, the preselected
   strategy + banner hint, and the Percussion voice in the legend.
 
+### UI polish: collapsible warnings, uniform voice-legend grid
+
+Two user reports from live use after the smart-import slice:
+
+- **"Recoverable import warnings" can be huge.** The section now wraps
+  its content in a native `<details>`/`<summary>` (collapsed by
+  default — no JS state needed), with the count in the summary line;
+  `.warning-list` is additionally capped at `max-height: 260px` with
+  its own scroll so even expanded it can't dominate the page. The old
+  `.warnings h2`/`.warnings > p` selectors became
+  `.warnings summary`/`.warnings details > p`.
+- **Voice rows weren't uniform width** — `.voice-legend ul` was a
+  wrapping flexbox of intrinsic-width rows, so a voice with a long
+  label, wide stats text ("840 notes, pitches 27-87"), or a wide
+  longest-merge-option pushed neighbors out of alignment (worse now
+  that real track names exist). Changed to
+  `grid-template-columns: repeat(auto-fill, minmax(360px, 1fr))`
+  (uniform cells); the stats span takes `flex: 1` with ellipsis inside
+  its row, `.voice-merge-select` got a fixed 104px width, and
+  `.voice-name-input` widened 72px → 110px with `text-overflow:
+ellipsis` — closing the long-documented "label clips mid-character
+  with no cue" cosmetic issue from the original roadmap Phase 1
+  findings, which real track-name labels made much more visible.
+- Presentational only, no logic changes. Verified: `pnpm test`
+  (180/180, unchanged), `pnpm lint`, `pnpm format:check`, `pnpm build`
+  all clean. Visual confirmation left to the user's already-running
+  `pnpm tauri dev` session (hot-reloads CSS/JSX), since these are
+  pure-CSS/markup changes in the untested-by-convention category.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

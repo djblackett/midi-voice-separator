@@ -258,9 +258,12 @@ button {
   font-size: 14px;
 }
 
+/* Uniform cells (not a wrapping flexbox of intrinsic widths), so a voice
+   with a long label or wide stats text can't push its neighbors out of
+   alignment. */
 .voice-legend ul {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 8px 14px;
   margin: 0;
   padding: 0;
@@ -277,6 +280,16 @@ button {
   border-radius: 5px;
 }
 
+/* The note-count/pitch-range readout absorbs the leftover width in each
+   cell and truncates rather than resizing the row. */
+.voice-legend li > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .voice-legend li.active {
   background: #1e293b;
 }
@@ -291,7 +304,7 @@ button {
 }
 
 .voice-name-input {
-  width: 72px;
+  width: 110px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
@@ -299,6 +312,9 @@ button {
   font: inherit;
   font-size: 13px;
   padding: 2px 4px;
+  /* Long labels (e.g. imported track names) truncate visibly instead of
+     clipping mid-character with no cue. */
+  text-overflow: ellipsis;
 }
 
 .voice-name-input:hover,
@@ -331,6 +347,9 @@ button {
 }
 
 .voice-merge-select {
+  /* Fixed width so the longest voice label among the options can't make
+     one row's dropdown wider than another's. */
+  width: 104px;
   border: 1px solid #475569;
   border-radius: 4px;
   background: #1f2937;
@@ -470,12 +489,19 @@ kbd {
   font-size: 14px;
 }
 
-.warnings h2 {
-  margin: 0 0 6px;
+/* Collapsed by default: a messy file can produce hundreds of warnings,
+   and they shouldn't dominate the page unless asked for. */
+.warnings summary {
+  cursor: pointer;
   font-size: 14px;
+  font-weight: 600;
 }
 
-.warnings > p {
+.warnings details[open] summary {
+  margin-bottom: 6px;
+}
+
+.warnings details > p {
   margin: 0 0 10px;
   color: #fef3c7;
   font-size: 13px;
@@ -487,6 +513,10 @@ kbd {
   margin: 0;
   padding: 0;
   list-style: none;
+  /* Even expanded, the list scrolls within a bounded height rather than
+     pushing the rest of the page away. */
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .warning-list li {

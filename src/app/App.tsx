@@ -781,21 +781,23 @@ export default function App() {
 
       {displayedProject && displayedProject.warnings.length > 0 ? (
         <section className="warnings" aria-label="Import warnings">
-          <h2>Recoverable import warnings</h2>
-          <p>The MIDI file was imported, but the parser repaired or ignored these events.</p>
-          <ul className="warning-list">
-            {displayedProject.warnings.map((warning, index) => (
-              <li
-                key={`${warning.code}-${warning.trackIndex ?? "none"}-${warning.tick ?? "none"}-${index}`}
-              >
-                <div className="warning-heading">
-                  <span>{warning.code}</span>
-                  <span>{formatMidiWarningLocation(warning)}</span>
-                </div>
-                <p>{warning.message}</p>
-              </li>
-            ))}
-          </ul>
+          <details>
+            <summary>Recoverable import warnings ({displayedProject.warnings.length})</summary>
+            <p>The MIDI file was imported, but the parser repaired or ignored these events.</p>
+            <ul className="warning-list">
+              {displayedProject.warnings.map((warning, index) => (
+                <li
+                  key={`${warning.code}-${warning.trackIndex ?? "none"}-${warning.tick ?? "none"}-${index}`}
+                >
+                  <div className="warning-heading">
+                    <span>{warning.code}</span>
+                    <span>{formatMidiWarningLocation(warning)}</span>
+                  </div>
+                  <p>{warning.message}</p>
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
       ) : null}
 
