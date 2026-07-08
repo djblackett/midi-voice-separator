@@ -51,6 +51,7 @@ const project: MidiProject = {
   timeSignatures: [],
   warnings: [],
   separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 },
+  strategySuggestion: { strategy: "BALANCED", reason: "test fixture" },
 };
 
 describe("hitTestPianoRollNote", () => {

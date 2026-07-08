@@ -1511,6 +1511,88 @@ between the two pitches.
   in Global mode against a real file to eyeball the (measurably
   better) groupings.
 
+### Smart import: percussion isolation, track-name labels, strategy suggestion
+
+User chose this slice ("making the parsing more intelligent" and "big UX
+wins" turned out to be the same work) over pure-UX candidates. Three
+pieces, all landing at import time:
+
+- **Percussion isolation.** `assign_voices_with_locks`
+  (`voice_assignment.rs`) now runs a pre-pass before dispatching to any
+  mode: channel-10 (0-indexed `PERCUSSION_CHANNEL = 9`) notes go straight
+  to a dedicated `PERCUSSION_VOICE_ID = "percussion"` voice (label
+  "Percussion", new `AssignmentReason::Percussion`, confidence 1.0), and
+  the pitched remainder runs through Greedy/Global/Contig as before —
+  GM drum "pitches" are drum identities (36 = kick), and the cost model
+  was interleaving kicks into basslines wherever the numbers landed
+  close (regression-tested:
+  `a_drum_note_no_longer_attracts_the_bass_line`). Locks beat the
+  routing (a percussion note locked elsewhere follows its lock); the
+  percussion voice sits outside `max_voice_count`; a pitched note locked
+  _into_ the percussion voice merges into one listing.
+  `assign_heuristic_voices` (the parser's import path) now goes through
+  this same choke point, so import and re-run behave identically. On the
+  real separate-tracks fixture this routes 840 drum notes out of the
+  pitch model.
+- **Track names → voice labels.** The parser now captures each track's
+  first `TrackName` and labels every voice with its majority source
+  track's name (ties to the lowest track index; duplicates get " 2"/" 3"
+  suffixes; unnamed tracks keep "Voice N" defaults). **Skipped when only
+  one track bears notes** (unless it's an app-exported file) — caught by
+  running against the real combined fixture, where the lone track's name
+  ("Boss Battle 6 V1") is the _song's_ name and stamping it on all 8
+  voices was noise. On the separate-tracks fixture this yields "Bass",
+  "Lead Guitar", "Guitar Left/Right", "Percussion".
+  **Export side:** `exporter.rs` now writes each voice's real label as
+  its `TrackName` (so exports open with meaningful names in any DAW and
+  labels round-trip back on reimport — new test
+  `exports_voice_labels_as_track_names_and_reimports_them`). That name
+  used to be the fixed sentinel the parser detected app-exported files
+  by; detection moved to a `Text` meta marker
+  (`EXPORTED_VOICE_TRACK_MARKER` in `mod.rs`), with the legacy
+  `EXPORTED_VOICE_TRACK_NAME` sentinel still recognized so pre-change
+  exports keep round-tripping (regression-tested). `build_export_smf`'s
+  `Smf` lifetime is now tied to the project (labels are borrowed), so
+  test call sites bind the project before calling.
+  **Frontend:** new `seedVoiceLabelsFromImport` (`voiceManagement.ts`)
+  seeds the editable label map from import with only non-generic labels
+  ("Voice N" defaults stay out so index-based renumbering keeps
+  working); `buildVoiceList` falls back to "Percussion" for the
+  percussion voice id.
+- **Strategy suggestion.** New `suggest_strategy` in `parser.rs`
+  analyzes the melodic (non-percussion) channel distribution:
+  ≥2 significant channels (≥5% of melodic notes each) with no channel
+  above 60% → `StrictChannel`; a dominant channel or a single channel →
+  `RegisterPriority` (with reason text saying why); notes-free files →
+  `Balanced`. If drums were routed, the reason says so. Ships as a new
+  required `MidiProjectDto.strategy_suggestion: StrategySuggestionDto
+{ strategy, reason }` (fixture literals updated on both sides, Rust and
+  TS). The frontend preselects the Strategy dropdown from it on import
+  (`applyImportedProject`) and shows
+  `formatStrategySuggestion(...)` as a second full-width row in the
+  separation-summary banner (`.strategy-suggestion` in `global.css`).
+  Validated against both real fixtures: combined → RegisterPriority
+  (the strategy the register-drift work established as right for it),
+  separate-tracks → StrictChannel (the strategy that measured 0.975
+  mean confidence).
+- Housekeeping: `SeparationStrategy` (TS) moved from `commands.ts` to
+  `midiProject.ts` (it's now a domain concept appearing in the imported
+  project), re-exported from `commands.ts` so callers keep one import
+  site; the TS `AssignmentReason` union also gained the previously
+  drifted `USER_LOCKED`/`VOICE_CAP_REACHED` alongside the new
+  `PERCUSSION`.
+- Verified: `cargo test` (83/83 — 5 new percussion, 8 new parser, 1 new
+  exporter round-trip, plus the single-track-label refinement test),
+  `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo fmt --check`, `pnpm test` (180/180 — new
+  `seedVoiceLabelsFromImport`, percussion-fallback, and
+  `formatStrategySuggestion` tests), `pnpm lint`, `pnpm format:check`,
+  `pnpm build` all clean. Real-fixture behavior confirmed via a scratch
+  `#[ignore]` print test (deleted after use, findings above).
+- Not yet verified: manual `pnpm tauri dev` pass — import a
+  multi-channel file and eyeball the seeded labels, the preselected
+  strategy + banner hint, and the Percussion voice in the legend.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

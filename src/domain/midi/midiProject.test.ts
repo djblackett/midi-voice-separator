@@ -7,6 +7,7 @@ import {
   formatProjectSummary,
   formatSelectedNote,
   formatSeparationSummary,
+  formatStrategySuggestion,
   type MidiNote,
   type MidiProject,
 } from "./midiProject";
@@ -53,6 +54,7 @@ describe("formatProjectSummary", () => {
       timeSignatures: [{ tick: 0, numerator: 4, denominator: 4 }],
       warnings: [],
       separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 },
+      strategySuggestion: { strategy: "BALANCED", reason: "test fixture" },
     };
 
     expect(formatProjectSummary(project)).toBe(
@@ -185,5 +187,18 @@ describe("formatSeparationSummary", () => {
     expect(
       formatSeparationSummary({ meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 0 }, 0),
     ).toBe("No notes to separate.");
+  });
+});
+
+describe("formatStrategySuggestion", () => {
+  it("shows the human strategy name and the reason", () => {
+    expect(
+      formatStrategySuggestion({
+        strategy: "STRICT_CHANNEL",
+        reason: "13 instrument channels detected — channel is a reliable separation signal.",
+      }),
+    ).toBe(
+      "Suggested strategy: Strict channel — 13 instrument channels detected — channel is a reliable separation signal.",
+    );
   });
 });

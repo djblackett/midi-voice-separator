@@ -6,6 +6,8 @@ import {
   mergeVoiceOverrides,
   nextVoiceId,
   reconcileVoiceOrderAfterReassign,
+  seedVoiceLabelsFromImport,
+  PERCUSSION_VOICE_ID,
 } from "./voiceManagement";
 
 function note(id: string, voiceId: string, pitch: number): MidiNote {
@@ -121,5 +123,44 @@ describe("mergeVoiceOverrides", () => {
     const notes = [note("a", "voice-2", 60)];
 
     expect(mergeVoiceOverrides(notes, "voice-1", "voice-2")).toEqual({});
+  });
+});
+
+describe("seedVoiceLabelsFromImport", () => {
+  const voice = (id: string, label: string) => ({
+    id,
+    label,
+    noteCount: 1,
+    lowestPitch: 60,
+    highestPitch: 60,
+  });
+
+  it("keeps track-derived labels and drops generic defaults", () => {
+    const labels = seedVoiceLabelsFromImport([
+      voice("voice-1", "Lead"),
+      voice("voice-2", "Voice 2"),
+      voice("voice-3", "Bass"),
+    ]);
+
+    expect(labels).toEqual({ "voice-1": "Lead", "voice-3": "Bass" });
+  });
+
+  it("keeps the Percussion label so re-runs preserve it", () => {
+    const labels = seedVoiceLabelsFromImport([
+      voice("voice-1", "Voice 1"),
+      voice(PERCUSSION_VOICE_ID, "Percussion"),
+    ]);
+
+    expect(labels).toEqual({ [PERCUSSION_VOICE_ID]: "Percussion" });
+  });
+});
+
+describe("buildVoiceList percussion fallback", () => {
+  it("labels an unseeded percussion voice Percussion instead of Voice N", () => {
+    const notes = [note("d", PERCUSSION_VOICE_ID, 36)];
+
+    const voices = buildVoiceList([PERCUSSION_VOICE_ID], {}, notes);
+
+    expect(voices[0].label).toBe("Percussion");
   });
 });

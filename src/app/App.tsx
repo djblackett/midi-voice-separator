@@ -7,6 +7,7 @@ import {
   formatSelectedNote,
   formatSelectionSummary,
   formatSeparationSummary,
+  formatStrategySuggestion,
 } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
@@ -33,6 +34,7 @@ import {
   mergeVoiceOverrides,
   nextVoiceId,
   reconcileVoiceOrderAfterReassign,
+  seedVoiceLabelsFromImport,
 } from "../domain/midi/voiceManagement";
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
@@ -271,7 +273,8 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setVoiceOverrides({});
     setVoiceOrder(importedProject.voices.map((voice) => voice.id));
-    setVoiceLabels({});
+    setVoiceLabels(seedVoiceLabelsFromImport(importedProject.voices));
+    setSeparationStrategy(importedProject.strategySuggestion.strategy);
     setActiveVoiceId(null);
     setSoloVoiceId(null);
     setInteractionMode("select");
@@ -745,6 +748,9 @@ export default function App() {
               Re-run separation
             </button>
           </div>
+          <p className="strategy-suggestion">
+            {formatStrategySuggestion(displayedProject.strategySuggestion)}
+          </p>
         </section>
       ) : null}
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::Path,
 };
 
@@ -8,13 +8,14 @@ use midly::{Format, MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use crate::error::AppError;
 
 use super::model::{
-    AssignmentReason, MidiNoteDto, MidiProjectDto, MidiWarningCode, MidiWarningDto, TempoChangeDto,
-    TimeSignatureDto,
+    AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, MidiWarningCode, MidiWarningDto,
+    SeparationStrategy, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
 };
 use super::voice_assignment::{
     assign_heuristic_voices, summarize_assigned_voices, summarize_separation_quality,
+    PERCUSSION_CHANNEL,
 };
-use super::EXPORTED_VOICE_TRACK_NAME;
+use super::{EXPORTED_VOICE_TRACK_MARKER, EXPORTED_VOICE_TRACK_NAME};
 
 #[derive(Debug, Clone)]
 struct ActiveNote {
@@ -173,12 +174,24 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
             .then(left.channel.cmp(&right.channel))
             .then(left.id.cmp(&right.id))
     });
-    let voices = if !notes.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty()) {
+    let mut voices = if !notes.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty()) {
         summarize_assigned_voices(&notes)
     } else {
         assign_heuristic_voices(&mut notes)
     };
+    let track_names: Vec<Option<String>> = smf
+        .tracks
+        .iter()
+        .map(|track| extract_track_name(track))
+        .collect();
+    apply_track_name_labels(
+        &mut voices,
+        &notes,
+        &track_names,
+        exported_voice_track_count > 0,
+    );
     let separation_summary = summarize_separation_quality(&notes);
+    let strategy_suggestion = suggest_strategy(&notes);
 
     Ok(MidiProjectDto {
         file_name: path
@@ -196,12 +209,151 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
         time_signatures,
         warnings,
         separation_summary,
+        strategy_suggestion,
     })
+}
+
+/// The first named `TrackName` in a track, decoded leniently and trimmed;
+/// `None` for unnamed tracks and for the legacy fixed export sentinel
+/// (which was a detection marker, not a real name).
+fn extract_track_name(track: &[midly::TrackEvent<'_>]) -> Option<String> {
+    track.iter().find_map(|event| match &event.kind {
+        TrackEventKind::Meta(MetaMessage::TrackName(name))
+            if *name != EXPORTED_VOICE_TRACK_NAME =>
+        {
+            let decoded = String::from_utf8_lossy(name).trim().to_string();
+            (!decoded.is_empty()).then_some(decoded)
+        }
+        _ => None,
+    })
+}
+
+/// Labels each voice with the name of the track the majority of its notes
+/// came from, when that track has one — "Lead" beats "Voice 3" for
+/// orientation. Duplicate names get a numeric suffix so two tracks named
+/// "Square" yield "Square" and "Square 2". Voices whose majority track is
+/// unnamed keep their default label.
+///
+/// Skipped entirely when all notes live in a single track (unless it's an
+/// app-exported voice track, where the name genuinely is the voice's
+/// label): a lone track's name identifies the song, not an instrument, and
+/// stamping "Song Title 3" on every voice is noise rather than
+/// orientation.
+fn apply_track_name_labels(
+    voices: &mut [MidiVoiceDto],
+    notes: &[MidiNoteDto],
+    track_names: &[Option<String>],
+    has_exported_voice_tracks: bool,
+) {
+    let note_bearing_tracks: HashSet<usize> =
+        notes.iter().map(|note| note.source_track_index).collect();
+    if note_bearing_tracks.len() < 2 && !has_exported_voice_tracks {
+        return;
+    }
+
+    let mut times_used: HashMap<String, usize> = HashMap::new();
+    for voice in voices.iter_mut() {
+        let mut counts: HashMap<usize, usize> = HashMap::new();
+        for note in notes.iter().filter(|note| note.voice_id == voice.id) {
+            *counts.entry(note.source_track_index).or_default() += 1;
+        }
+        // Majority track; ties break toward the lowest track index so the
+        // outcome never depends on hash iteration order.
+        let majority_track = counts
+            .into_iter()
+            .max_by(|left, right| left.1.cmp(&right.1).then(right.0.cmp(&left.0)))
+            .map(|(track_index, _)| track_index);
+        let Some(name) = majority_track
+            .and_then(|track_index| track_names.get(track_index))
+            .and_then(|name| name.as_deref())
+        else {
+            continue;
+        };
+
+        let seen = times_used.entry(name.to_string()).or_insert(0);
+        *seen += 1;
+        voice.label = if *seen == 1 {
+            name.to_string()
+        } else {
+            format!("{name} {seen}")
+        };
+    }
+}
+
+/// Recommends a `SeparationStrategy` from the melodic (non-percussion)
+/// channel distribution: several channels each carrying a real share of
+/// the notes means channel is a trustworthy separation signal; one
+/// dominant channel means it isn't, and pitch register has to do the work.
+fn suggest_strategy(notes: &[MidiNoteDto]) -> StrategySuggestionDto {
+    let melodic_count = notes
+        .iter()
+        .filter(|note| note.channel != PERCUSSION_CHANNEL)
+        .count();
+    let percussion_count = notes.len() - melodic_count;
+    let percussion_suffix = if percussion_count > 0 {
+        " Channel-10 drums are routed to their own Percussion voice."
+    } else {
+        ""
+    };
+
+    if melodic_count == 0 {
+        return StrategySuggestionDto {
+            strategy: SeparationStrategy::Balanced,
+            reason: format!("No melodic notes to analyze.{percussion_suffix}"),
+        };
+    }
+
+    let mut channel_counts: HashMap<u8, usize> = HashMap::new();
+    for note in notes
+        .iter()
+        .filter(|note| note.channel != PERCUSSION_CHANNEL)
+    {
+        *channel_counts.entry(note.channel).or_default() += 1;
+    }
+    // A channel is significant if it holds at least 5% of melodic notes.
+    let significant_channels = channel_counts
+        .values()
+        .filter(|&&count| count * 20 >= melodic_count)
+        .count();
+    let max_share_percent = channel_counts
+        .values()
+        .map(|&count| count * 100 / melodic_count)
+        .max()
+        .unwrap_or(0);
+
+    if significant_channels >= 2 && max_share_percent <= 60 {
+        StrategySuggestionDto {
+            strategy: SeparationStrategy::StrictChannel,
+            reason: format!(
+                "{significant_channels} instrument channels detected — channel is a reliable separation signal.{percussion_suffix}"
+            ),
+        }
+    } else if significant_channels >= 2 {
+        StrategySuggestionDto {
+            strategy: SeparationStrategy::RegisterPriority,
+            reason: format!(
+                "One channel holds {max_share_percent}% of the notes — channel alone can't separate them, so pitch register leads.{percussion_suffix}"
+            ),
+        }
+    } else {
+        StrategySuggestionDto {
+            strategy: SeparationStrategy::RegisterPriority,
+            reason: format!(
+                "Nearly all notes share one channel — separating by pitch register.{percussion_suffix}"
+            ),
+        }
+    }
 }
 
 fn is_exported_voice_track(track: &[midly::TrackEvent<'_>]) -> bool {
     track.iter().any(|event| {
+        // Current exports carry a `Text` marker so the track name is free
+        // to hold the real voice label; the fixed `TrackName` sentinel is
+        // how exports before that change marked themselves.
         matches!(
+            &event.kind,
+            TrackEventKind::Meta(MetaMessage::Text(text)) if *text == EXPORTED_VOICE_TRACK_MARKER
+        ) || matches!(
             &event.kind,
             TrackEventKind::Meta(MetaMessage::TrackName(name)) if *name == EXPORTED_VOICE_TRACK_NAME
         )
@@ -511,6 +663,169 @@ mod tests {
         assert_eq!(project.voices.len(), 1);
         assert_eq!(project.duration_ticks, 960);
         assert!(project.warnings.is_empty());
+    }
+
+    fn track_name(name: &'static [u8]) -> TrackEvent<'static> {
+        event(0, TrackEventKind::Meta(MetaMessage::TrackName(name)))
+    }
+
+    #[test]
+    fn labels_voices_from_their_majority_tracks_name() {
+        let project = parse_tracks(vec![
+            vec![
+                track_name(b"Lead"),
+                note_on(0, 0, 72, 90),
+                note_off(240, 0, 72),
+            ],
+            vec![
+                track_name(b"Bass"),
+                note_on(0, 0, 40, 90),
+                note_off(240, 0, 40),
+            ],
+        ]);
+
+        assert_eq!(project.voices.len(), 2);
+        // Notes sort pitch-ascending at the same tick, so the bass note
+        // opens voice-1.
+        assert_eq!(project.voices[0].label, "Bass");
+        assert_eq!(project.voices[1].label, "Lead");
+    }
+
+    #[test]
+    fn duplicate_track_names_get_numeric_suffixes() {
+        let project = parse_tracks(vec![
+            vec![
+                track_name(b"Square"),
+                note_on(0, 0, 72, 90),
+                note_off(240, 0, 72),
+            ],
+            vec![
+                track_name(b"Square"),
+                note_on(0, 0, 40, 90),
+                note_off(240, 0, 40),
+            ],
+        ]);
+
+        let labels: Vec<&str> = project
+            .voices
+            .iter()
+            .map(|voice| voice.label.as_str())
+            .collect();
+        assert!(labels.contains(&"Square"));
+        assert!(labels.contains(&"Square 2"));
+    }
+
+    #[test]
+    fn unnamed_tracks_keep_default_voice_labels() {
+        let project = parse_tracks(vec![vec![note_on(0, 0, 60, 90), note_off(240, 0, 60)]]);
+
+        assert_eq!(project.voices[0].label, "Voice 1");
+    }
+
+    #[test]
+    fn a_single_note_bearing_tracks_name_is_the_songs_name_not_a_voice_label() {
+        // One track named "Song Title" holding two overlapping notes: the
+        // heuristic makes two voices, and neither should be stamped with
+        // the song's name.
+        let project = parse_tracks(vec![vec![
+            track_name(b"Song Title"),
+            note_on(0, 0, 60, 90),
+            note_on(0, 0, 72, 90),
+            note_off(240, 0, 60),
+            note_off(0, 0, 72),
+        ]]);
+
+        assert_eq!(project.voices.len(), 2);
+        assert_eq!(project.voices[0].label, "Voice 1");
+        assert_eq!(project.voices[1].label, "Voice 2");
+    }
+
+    #[test]
+    fn legacy_export_sentinel_still_marks_a_track_as_exported_and_never_becomes_a_label() {
+        let project = parse_tracks(vec![vec![
+            event(
+                0,
+                TrackEventKind::Meta(MetaMessage::TrackName(EXPORTED_VOICE_TRACK_NAME)),
+            ),
+            note_on(0, 0, 60, 90),
+            note_off(240, 0, 60),
+        ]]);
+
+        assert_eq!(project.notes[0].voice_id, "voice-1");
+        assert_eq!(
+            project.notes[0].assignment_reason,
+            AssignmentReason::Imported
+        );
+        assert_eq!(project.voices[0].label, "Voice 1");
+    }
+
+    #[test]
+    fn suggests_strict_channel_when_channels_share_the_notes() {
+        let project = parse_tracks(vec![vec![
+            note_on(0, 0, 60, 90),
+            note_off(240, 0, 60),
+            note_on(0, 1, 72, 90),
+            note_off(240, 1, 72),
+        ]]);
+
+        assert_eq!(
+            project.strategy_suggestion.strategy,
+            SeparationStrategy::StrictChannel
+        );
+    }
+
+    #[test]
+    fn suggests_register_priority_for_a_single_channel_file() {
+        let project = parse_tracks(vec![vec![note_on(0, 0, 60, 90), note_off(240, 0, 60)]]);
+
+        assert_eq!(
+            project.strategy_suggestion.strategy,
+            SeparationStrategy::RegisterPriority
+        );
+    }
+
+    #[test]
+    fn suggests_register_priority_when_one_channel_dominates() {
+        let mut events = Vec::new();
+        // Eight sequential notes on channel 0, one on channel 1: channel 1
+        // is significant (>5%) but channel 0's 89% share means channel
+        // continuity can't be trusted to separate the file.
+        for step in 0..8 {
+            events.push(note_on(if step == 0 { 0 } else { 60 }, 0, 60, 90));
+            events.push(note_off(60, 0, 60));
+        }
+        events.push(note_on(60, 1, 72, 90));
+        events.push(note_off(60, 1, 72));
+        let project = parse_tracks(vec![events]);
+
+        assert_eq!(
+            project.strategy_suggestion.strategy,
+            SeparationStrategy::RegisterPriority
+        );
+        assert!(project.strategy_suggestion.reason.contains("%"));
+    }
+
+    #[test]
+    fn routes_channel_ten_notes_to_the_percussion_voice_on_import() {
+        let project = parse_tracks(vec![vec![
+            note_on(0, 9, 36, 90),
+            note_off(120, 9, 36),
+            note_on(0, 0, 60, 90),
+            note_off(240, 0, 60),
+        ]]);
+
+        let drum_note = project
+            .notes
+            .iter()
+            .find(|note| note.channel == 9)
+            .expect("drum note should import");
+        assert_eq!(drum_note.voice_id, "percussion");
+        assert_eq!(drum_note.assignment_reason, AssignmentReason::Percussion);
+        assert!(project
+            .voices
+            .iter()
+            .any(|voice| voice.id == "percussion" && voice.label == "Percussion"));
+        assert!(project.strategy_suggestion.reason.contains("Percussion"));
     }
 
     #[test]

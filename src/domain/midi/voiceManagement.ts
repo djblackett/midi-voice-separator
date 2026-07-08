@@ -2,6 +2,8 @@ import type { MidiNote, MidiVoice } from "./midiProject";
 import type { VoiceOverrides } from "./voiceAssignments";
 
 const VOICE_ID_PREFIX = "voice-";
+/** Mirrors PERCUSSION_VOICE_ID in the Rust voice_assignment.rs. */
+export const PERCUSSION_VOICE_ID = "percussion";
 
 export function nextVoiceId(voiceOrder: readonly string[]): string {
   const usedNumbers = voiceOrder
@@ -22,12 +24,32 @@ export function buildVoiceList(
 
     return {
       id: voiceId,
-      label: voiceLabels[voiceId] ?? `Voice ${index + 1}`,
+      label:
+        voiceLabels[voiceId] ??
+        (voiceId === PERCUSSION_VOICE_ID ? "Percussion" : `Voice ${index + 1}`),
       noteCount: voiceNotes.length,
       lowestPitch: pitches.length > 0 ? Math.min(...pitches) : 0,
       highestPitch: pitches.length > 0 ? Math.max(...pitches) : 0,
     };
   });
+}
+
+/**
+ * Seeds the editable voice-label map from a freshly imported project's
+ * voices: only labels the backend derived from something real (a source
+ * track's name, or the dedicated Percussion voice) are kept — generic
+ * "Voice N" defaults stay out of the map so `buildVoiceList`'s
+ * index-based fallback keeps renumbering them naturally as voices are
+ * added and removed.
+ */
+export function seedVoiceLabelsFromImport(voices: readonly MidiVoice[]): Record<string, string> {
+  const labels: Record<string, string> = {};
+  voices.forEach((voice, index) => {
+    if (voice.label !== `Voice ${index + 1}`) {
+      labels[voice.id] = voice.label;
+    }
+  });
+  return labels;
 }
 
 export function mergeVoiceOrder(

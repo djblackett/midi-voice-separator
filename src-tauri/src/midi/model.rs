@@ -14,6 +14,19 @@ pub struct MidiProjectDto {
     pub time_signatures: Vec<TimeSignatureDto>,
     pub warnings: Vec<MidiWarningDto>,
     pub separation_summary: SeparationSummaryDto,
+    pub strategy_suggestion: StrategySuggestionDto,
+}
+
+/// Which `SeparationStrategy` the import analysis recommends for this
+/// file, with a human-readable reason — computed once at parse time from
+/// the melodic channel distribution (see `suggest_strategy` in
+/// `parser.rs`). The frontend preselects the strategy dropdown with it and
+/// shows the reason, but the user stays free to override.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategySuggestionDto {
+    pub strategy: SeparationStrategy,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -41,6 +54,11 @@ pub enum AssignmentReason {
     NewVoiceNoFit,
     UserLocked,
     VoiceCapReached,
+    /// Channel-10 percussion: GM drum "pitches" are drum identities (36 =
+    /// kick, 42 = closed hihat), not pitches, so these notes are routed to
+    /// a dedicated percussion voice instead of ever entering the
+    /// pitch/register cost model.
+    Percussion,
 }
 
 /// Selects which cost-model weighting "Re-run separation" scores unlocked

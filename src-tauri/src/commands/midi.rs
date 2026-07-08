@@ -93,7 +93,7 @@ mod tests {
     use crate::error::AppErrorCode;
     use crate::midi::model::{
         AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
-        TempoChangeDto, TimeSignatureDto,
+        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
     };
     use std::path::PathBuf;
 
@@ -142,6 +142,10 @@ mod tests {
                 mean_confidence: 1.0,
                 low_confidence_note_count: 0,
                 voice_count: 1,
+            },
+            strategy_suggestion: StrategySuggestionDto {
+                strategy: SeparationStrategy::Balanced,
+                reason: "test fixture".to_string(),
             },
         }
     }

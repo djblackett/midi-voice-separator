@@ -10,13 +10,48 @@ export interface MidiProject {
   timeSignatures: TimeSignature[];
   warnings: MidiWarning[];
   separationSummary: SeparationSummary;
+  strategySuggestion: StrategySuggestion;
 }
 
 export type AssignmentReason =
   | "IMPORTED"
   | "CHANNEL_CONTINUITY"
   | "CLOSEST_PITCH"
-  | "NEW_VOICE_NO_FIT";
+  | "NEW_VOICE_NO_FIT"
+  | "USER_LOCKED"
+  | "VOICE_CAP_REACHED"
+  | "PERCUSSION";
+
+/**
+ * Cost-model weighting "Re-run separation" scores unlocked notes with.
+ * Mirrors `SeparationStrategy` in the Rust `model.rs`.
+ */
+export type SeparationStrategy =
+  | "BALANCED"
+  | "CHANNEL_PRIORITY"
+  | "REGISTER_PRIORITY"
+  | "STRICT_CHANNEL";
+
+/**
+ * The strategy the import analysis recommends for this file, with a
+ * human-readable reason. Computed once at parse time from the melodic
+ * channel distribution; the strategy dropdown is preselected with it.
+ */
+export interface StrategySuggestion {
+  strategy: SeparationStrategy;
+  reason: string;
+}
+
+export const STRATEGY_LABELS: Record<SeparationStrategy, string> = {
+  BALANCED: "Balanced",
+  CHANNEL_PRIORITY: "Channel priority",
+  REGISTER_PRIORITY: "Register priority",
+  STRICT_CHANNEL: "Strict channel",
+};
+
+export function formatStrategySuggestion(suggestion: StrategySuggestion): string {
+  return `Suggested strategy: ${STRATEGY_LABELS[suggestion.strategy]} — ${suggestion.reason}`;
+}
 
 // Mirrors the Rust heuristic's LOW_CONFIDENCE_THRESHOLD. Kept as the single
 // frontend source of truth for "is this note flagged for review" so the

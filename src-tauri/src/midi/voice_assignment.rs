@@ -121,13 +121,105 @@ struct Candidate {
     channel_match: bool,
 }
 
+/// MIDI channel 10 (0-indexed 9) is percussion under General MIDI: note
+/// numbers there are drum identities, not pitches.
+pub const PERCUSSION_CHANNEL: u8 = 9;
+/// Dedicated voice id for channel-10 notes. Never collides with the
+/// heuristic's own `voice-N` ids by construction.
+pub const PERCUSSION_VOICE_ID: &str = "percussion";
+const PERCUSSION_VOICE_LABEL: &str = "Percussion";
+
 pub fn assign_heuristic_voices(notes: &mut [MidiNoteDto]) -> Vec<MidiVoiceDto> {
-    assign_heuristic_voices_with_locks(notes, &HashMap::new(), None, SeparationStrategy::Balanced)
+    assign_voices_with_locks(
+        notes,
+        &HashMap::new(),
+        None,
+        SeparationStrategy::Balanced,
+        AssignmentMode::Greedy,
+    )
+}
+
+/// Assigns every note a voice: channel-10 percussion goes to a dedicated
+/// voice (its note numbers are drum identities, not pitches — the
+/// pitch/register cost model must never score them), and the remaining
+/// pitched notes run through whichever algorithm `mode` selects, with
+/// `strategy` picking the cost weighting. A user lock on a percussion
+/// note wins over the percussion routing, like locks win everywhere; the
+/// percussion voice sits outside `max_voice_count`, since it isn't a
+/// heuristic guess that a cap should be able to squeeze.
+pub fn assign_voices_with_locks(
+    notes: &mut [MidiNoteDto],
+    locked: &HashMap<String, String>,
+    max_voice_count: Option<usize>,
+    strategy: SeparationStrategy,
+    mode: AssignmentMode,
+) -> Vec<MidiVoiceDto> {
+    let percussion_indices: Vec<usize> = notes
+        .iter()
+        .enumerate()
+        .filter(|(_, note)| note.channel == PERCUSSION_CHANNEL && !locked.contains_key(&note.id))
+        .map(|(index, _)| index)
+        .collect();
+
+    if percussion_indices.is_empty() {
+        return run_assignment_mode(notes, locked, max_voice_count, strategy, mode);
+    }
+
+    for &index in &percussion_indices {
+        let note = &mut notes[index];
+        note.voice_id = PERCUSSION_VOICE_ID.to_string();
+        note.assignment_confidence = 1.0;
+        note.assignment_reason = AssignmentReason::Percussion;
+    }
+
+    // Run the chosen algorithm over the pitched notes only, then write the
+    // results back into their original slots.
+    let pitched_indices: Vec<usize> = (0..notes.len())
+        .filter(|index| {
+            notes[*index].channel != PERCUSSION_CHANNEL || locked.contains_key(&notes[*index].id)
+        })
+        .collect();
+    let mut pitched: Vec<MidiNoteDto> = pitched_indices
+        .iter()
+        .map(|&index| notes[index].clone())
+        .collect();
+    let mut voices = run_assignment_mode(&mut pitched, locked, max_voice_count, strategy, mode);
+    for (position, &index) in pitched_indices.iter().enumerate() {
+        notes[index] = pitched[position].clone();
+    }
+
+    let percussion_pitches: Vec<u8> = percussion_indices
+        .iter()
+        .map(|&index| notes[index].pitch)
+        .collect();
+    let lowest = percussion_pitches.iter().copied().min().unwrap_or_default();
+    let highest = percussion_pitches.iter().copied().max().unwrap_or_default();
+    // A user can lock a pitched note into the percussion voice, in which
+    // case the algorithm already created a voice with this id — fold the
+    // percussion notes into it instead of listing the id twice.
+    match voices
+        .iter_mut()
+        .find(|voice| voice.id == PERCUSSION_VOICE_ID)
+    {
+        Some(existing) => {
+            existing.note_count += percussion_pitches.len();
+            existing.lowest_pitch = existing.lowest_pitch.min(lowest);
+            existing.highest_pitch = existing.highest_pitch.max(highest);
+        }
+        None => voices.push(MidiVoiceDto {
+            id: PERCUSSION_VOICE_ID.to_string(),
+            label: PERCUSSION_VOICE_LABEL.to_string(),
+            note_count: percussion_pitches.len(),
+            lowest_pitch: lowest,
+            highest_pitch: highest,
+        }),
+    }
+    voices
 }
 
 /// Dispatches to whichever assignment algorithm `mode` selects. `strategy`
-/// (the cost weighting) applies to either one.
-pub fn assign_voices_with_locks(
+/// (the cost weighting) applies to any of them.
+fn run_assignment_mode(
     notes: &mut [MidiNoteDto],
     locked: &HashMap<String, String>,
     max_voice_count: Option<usize>,
@@ -2708,5 +2800,167 @@ mod contig_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod percussion_tests {
+    use super::*;
+
+    fn mk(id: &str, channel: u8, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
+        MidiNoteDto {
+            id: id.to_string(),
+            voice_id: String::new(),
+            source_track_index: 0,
+            channel,
+            pitch,
+            velocity: 100,
+            start_tick,
+            end_tick,
+            duration_ticks: end_tick.saturating_sub(start_tick),
+            assignment_confidence: 0.0,
+            assignment_reason: AssignmentReason::ClosestPitch,
+        }
+    }
+
+    #[test]
+    fn routes_channel_ten_notes_to_the_percussion_voice_in_every_mode() {
+        for mode in [
+            AssignmentMode::Greedy,
+            AssignmentMode::Global,
+            AssignmentMode::Contig,
+        ] {
+            let mut notes = vec![
+                mk("kick", PERCUSSION_CHANNEL, 36, 0, 120),
+                mk("melody-1", 0, 60, 0, 120),
+                mk("hihat", PERCUSSION_CHANNEL, 42, 60, 180),
+                mk("melody-2", 0, 62, 120, 240),
+            ];
+
+            let voices = assign_voices_with_locks(
+                &mut notes,
+                &HashMap::new(),
+                None,
+                SeparationStrategy::Balanced,
+                mode,
+            );
+
+            assert_eq!(notes[0].voice_id, PERCUSSION_VOICE_ID, "{mode:?}");
+            assert_eq!(notes[2].voice_id, PERCUSSION_VOICE_ID, "{mode:?}");
+            assert_eq!(notes[0].assignment_reason, AssignmentReason::Percussion);
+            assert_eq!(notes[0].assignment_confidence, 1.0);
+            // The two melody notes are sequential and should share one
+            // pitched voice untouched by the drums.
+            assert_eq!(notes[1].voice_id, notes[3].voice_id, "{mode:?}");
+            assert_ne!(notes[1].voice_id, PERCUSSION_VOICE_ID, "{mode:?}");
+
+            let percussion_voice = voices
+                .iter()
+                .find(|voice| voice.id == PERCUSSION_VOICE_ID)
+                .expect("percussion voice should be listed");
+            assert_eq!(percussion_voice.label, "Percussion");
+            assert_eq!(percussion_voice.note_count, 2);
+            assert_eq!(percussion_voice.lowest_pitch, 36);
+            assert_eq!(percussion_voice.highest_pitch, 42);
+        }
+    }
+
+    /// The failure mode that motivated percussion isolation: a drum note's
+    /// "pitch" (a GM drum identity) sitting numerically near a bass line
+    /// used to attract the bass's next note into the drum voice.
+    #[test]
+    fn a_drum_note_no_longer_attracts_the_bass_line() {
+        let mut notes = vec![
+            mk("bass-1", 0, 40, 0, 100),
+            mk("kick", PERCUSSION_CHANNEL, 36, 0, 100),
+            mk("bass-2", 0, 36, 100, 200),
+        ];
+
+        assign_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            None,
+            SeparationStrategy::Balanced,
+            AssignmentMode::Greedy,
+        );
+
+        assert_eq!(
+            notes[2].voice_id, notes[0].voice_id,
+            "the pitch-36 bass note should continue the bass voice, not follow the pitch-36 kick"
+        );
+        assert_eq!(notes[1].voice_id, PERCUSSION_VOICE_ID);
+    }
+
+    #[test]
+    fn a_locked_percussion_note_follows_its_lock() {
+        let mut notes = vec![
+            mk("kick", PERCUSSION_CHANNEL, 36, 0, 120),
+            mk("snare", PERCUSSION_CHANNEL, 38, 60, 180),
+        ];
+        let locked = HashMap::from([("kick".to_string(), "voice-5".to_string())]);
+
+        assign_voices_with_locks(
+            &mut notes,
+            &locked,
+            None,
+            SeparationStrategy::Balanced,
+            AssignmentMode::Greedy,
+        );
+
+        assert_eq!(notes[0].voice_id, "voice-5");
+        assert_eq!(notes[0].assignment_reason, AssignmentReason::UserLocked);
+        assert_eq!(notes[1].voice_id, PERCUSSION_VOICE_ID);
+    }
+
+    #[test]
+    fn percussion_voice_sits_outside_the_voice_cap() {
+        let mut notes = vec![
+            mk("melody", 0, 60, 0, 120),
+            mk("kick", PERCUSSION_CHANNEL, 36, 0, 120),
+            mk("snare", PERCUSSION_CHANNEL, 38, 60, 180),
+        ];
+
+        let voices = assign_voices_with_locks(
+            &mut notes,
+            &HashMap::new(),
+            Some(1),
+            SeparationStrategy::Balanced,
+            AssignmentMode::Greedy,
+        );
+
+        // The cap of 1 constrains the pitched notes only; percussion still
+        // gets its dedicated voice on top.
+        assert_eq!(voices.len(), 2);
+        assert_eq!(notes[1].voice_id, PERCUSSION_VOICE_ID);
+        assert_eq!(notes[2].voice_id, PERCUSSION_VOICE_ID);
+        assert_ne!(notes[0].voice_id, PERCUSSION_VOICE_ID);
+    }
+
+    #[test]
+    fn a_pitched_note_locked_into_the_percussion_voice_merges_into_one_listing() {
+        let mut notes = vec![
+            mk("kick", PERCUSSION_CHANNEL, 36, 0, 120),
+            mk("melody", 0, 60, 0, 120),
+        ];
+        let locked = HashMap::from([("melody".to_string(), PERCUSSION_VOICE_ID.to_string())]);
+
+        let voices = assign_voices_with_locks(
+            &mut notes,
+            &locked,
+            None,
+            SeparationStrategy::Balanced,
+            AssignmentMode::Greedy,
+        );
+
+        let percussion_listings = voices
+            .iter()
+            .filter(|voice| voice.id == PERCUSSION_VOICE_ID)
+            .count();
+        assert_eq!(percussion_listings, 1);
+        let percussion_voice = voices
+            .iter()
+            .find(|voice| voice.id == PERCUSSION_VOICE_ID)
+            .expect("percussion voice should be listed");
+        assert_eq!(percussion_voice.note_count, 2);
     }
 }

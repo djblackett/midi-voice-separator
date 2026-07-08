@@ -7,7 +7,7 @@ use midly::{
 
 use crate::error::AppError;
 
-use super::{model::MidiProjectDto, EXPORTED_VOICE_TRACK_NAME};
+use super::{model::MidiProjectDto, EXPORTED_VOICE_TRACK_MARKER};
 
 const MAX_MIDI_DELTA: u64 = 0x0fff_ffff;
 
@@ -27,8 +27,8 @@ pub fn export_midi_bytes(project: &MidiProjectDto) -> Result<Vec<u8>, AppError> 
     Ok(bytes)
 }
 
-fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'static>, AppError> {
-    let mut tracks = vec![build_conductor_track(project)?];
+fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'_>, AppError> {
+    let mut tracks: Vec<Vec<TrackEvent<'_>>> = vec![build_conductor_track(project)?];
     let voice_ids: HashSet<&str> = project
         .voices
         .iter()
@@ -41,7 +41,11 @@ fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'static>, AppError> 
             .iter()
             .filter(|note| note.voice_id == voice.id)
             .collect::<Vec<_>>();
-        tracks.push(build_voice_track(&voice_notes, project.duration_ticks)?);
+        tracks.push(build_voice_track(
+            &voice_notes,
+            project.duration_ticks,
+            voice.label.as_bytes(),
+        )?);
     }
 
     let unlisted_voice_notes = project
@@ -53,6 +57,7 @@ fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'static>, AppError> 
         tracks.push(build_voice_track(
             &unlisted_voice_notes,
             project.duration_ticks,
+            b"Unassigned",
         )?);
     }
 
@@ -96,10 +101,11 @@ fn build_conductor_track(project: &MidiProjectDto) -> Result<Vec<TrackEvent<'sta
     events_to_track(events, project.duration_ticks)
 }
 
-fn build_voice_track(
+fn build_voice_track<'a>(
     notes: &[&super::model::MidiNoteDto],
     duration_ticks: u64,
-) -> Result<Vec<TrackEvent<'static>>, AppError> {
+    label: &'a [u8],
+) -> Result<Vec<TrackEvent<'a>>, AppError> {
     let mut events = Vec::new();
 
     for note in notes {
@@ -129,10 +135,20 @@ fn build_voice_track(
         });
     }
 
-    let mut track = vec![TrackEvent {
-        delta: u28::new(0),
-        kind: TrackEventKind::Meta(MetaMessage::TrackName(EXPORTED_VOICE_TRACK_NAME)),
-    }];
+    // The `Text` marker is how reimport recognizes an app-exported voice
+    // track; the `TrackName` carries the real voice label so exports open
+    // with meaningful names in any DAW and round-trip labels back into
+    // this app.
+    let mut track = vec![
+        TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::Text(EXPORTED_VOICE_TRACK_MARKER)),
+        },
+        TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::TrackName(label)),
+        },
+    ];
     track.extend(events_to_track(events, duration_ticks)?);
 
     Ok(track)
@@ -190,8 +206,8 @@ fn denominator_power(denominator: u8) -> u8 {
 mod tests {
     use super::*;
     use crate::midi::model::{
-        AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, SeparationSummaryDto,
-        TempoChangeDto, TimeSignatureDto,
+        AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, SeparationStrategy,
+        SeparationSummaryDto, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
     };
     use crate::midi::parser::parse_midi_project;
     use std::path::Path;
@@ -254,12 +270,17 @@ mod tests {
                 low_confidence_note_count: 0,
                 voice_count: 2,
             },
+            strategy_suggestion: StrategySuggestionDto {
+                strategy: SeparationStrategy::Balanced,
+                reason: "test fixture".to_string(),
+            },
         }
     }
 
     #[test]
     fn writes_conductor_plus_one_track_per_voice() {
-        let smf = build_export_smf(&project()).expect("project should export");
+        let project = project();
+        let smf = build_export_smf(&project).expect("project should export");
 
         assert_eq!(smf.header.format, Format::Parallel);
         assert_eq!(smf.tracks.len(), 3);
@@ -267,17 +288,37 @@ mod tests {
 
     #[test]
     fn writes_voice_events_as_delta_times() {
-        let smf = build_export_smf(&project()).expect("project should export");
+        let project = project();
+        let smf = build_export_smf(&project).expect("project should export");
         let first_voice_track = &smf.tracks[1];
 
         assert_eq!(first_voice_track[0].delta.as_int(), 0);
         assert!(matches!(
             first_voice_track[0].kind,
-            TrackEventKind::Meta(MetaMessage::TrackName(EXPORTED_VOICE_TRACK_NAME))
+            TrackEventKind::Meta(MetaMessage::Text(EXPORTED_VOICE_TRACK_MARKER))
         ));
-        assert_eq!(first_voice_track[1].delta.as_int(), 0);
-        assert_eq!(first_voice_track[2].delta.as_int(), 480);
+        assert!(matches!(
+            first_voice_track[1].kind,
+            TrackEventKind::Meta(MetaMessage::TrackName(name)) if name == b"Voice 1"
+        ));
+        assert_eq!(first_voice_track[2].delta.as_int(), 0);
         assert_eq!(first_voice_track[3].delta.as_int(), 480);
+        assert_eq!(first_voice_track[4].delta.as_int(), 480);
+    }
+
+    #[test]
+    fn exports_voice_labels_as_track_names_and_reimports_them() {
+        let mut project = project();
+        project.voices[0].label = "Lead".to_string();
+        project.voices[1].label = "Bass".to_string();
+
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let imported = parse_midi_project(Path::new("labels.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        assert_eq!(imported.voices.len(), 2);
+        assert_eq!(imported.voices[0].label, "Lead");
+        assert_eq!(imported.voices[1].label, "Bass");
     }
 
     #[test]
@@ -307,7 +348,8 @@ mod tests {
 
     #[test]
     fn includes_tempo_and_time_signature_events() {
-        let smf = build_export_smf(&project()).expect("project should export");
+        let project = project();
+        let smf = build_export_smf(&project).expect("project should export");
         let conductor = &smf.tracks[0];
 
         assert!(matches!(

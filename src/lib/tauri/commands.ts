@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { MidiProject } from "../../domain/midi/midiProject";
+import type { MidiProject, SeparationStrategy } from "../../domain/midi/midiProject";
 
 const COMMANDS = {
   backendStatus: "backend_status",
@@ -24,16 +24,11 @@ export interface ExportMidiResult {
   noteCount: number;
 }
 
-/**
- * Cost-model weighting "Re-run separation" scores unlocked notes with.
- * Different files respond differently — see `SeparationStrategy` in
- * `voice_assignment.rs` for what each preset actually weights.
- */
-export type SeparationStrategy =
-  | "BALANCED"
-  | "CHANNEL_PRIORITY"
-  | "REGISTER_PRIORITY"
-  | "STRICT_CHANNEL";
+// `SeparationStrategy` is a domain concept (it also appears in the
+// imported project's strategy suggestion), so its definition lives in
+// `midiProject.ts`; re-exported here so command callers keep one import
+// site for command-related types.
+export type { SeparationStrategy } from "../../domain/midi/midiProject";
 
 /**
  * Selects which assignment algorithm scores/searches for a voice per note
