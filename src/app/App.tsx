@@ -39,6 +39,7 @@ import {
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
   formatVoiceDiagnosticSummary,
   noteIdsForVoice,
@@ -627,6 +628,36 @@ export default function App() {
     setExportResult(null);
   }
 
+  function handleSplitVoiceByChannel(voiceId: string) {
+    if (!displayedProject) {
+      return;
+    }
+
+    const repair = buildSplitVoiceByChannelRepair(displayedProject.notes, voiceOrder, voiceId);
+    if (!repair) {
+      return;
+    }
+
+    const sourceLabel =
+      displayedProject.voices.find((voice) => voice.id === voiceId)?.label ?? voiceId;
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
+    setVoiceOrder(repair.voiceOrder);
+    setVoiceLabels((currentLabels) => ({
+      ...currentLabels,
+      [repair.newVoiceId]: `${sourceLabel} ${formatMidiChannel(repair.movedChannel)}`,
+    }));
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of repair.movedNoteIds) {
+        next.delete(noteId);
+      }
+      return next;
+    });
+    setSelectedNoteIds(new Set(repair.movedNoteIds));
+    setActiveVoiceId(repair.newVoiceId);
+    setExportResult(null);
+  }
   function handleTogglePaintMode() {
     setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
   }
@@ -850,6 +881,16 @@ export default function App() {
                       >
                         Focus in roll
                       </button>
+                      {Object.keys(diagnostic.channelDistribution).length > 1 ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => handleSplitVoiceByChannel(diagnostic.voiceId)}
+                          disabled={isReassigning}
+                        >
+                          Split by channel
+                        </button>
+                      ) : null}
                       {diagnostic.suspicious ? (
                         <button
                           type="button"

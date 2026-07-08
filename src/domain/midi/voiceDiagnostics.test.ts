@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MidiNote, MidiProject, MidiVoice } from "./midiProject";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
   formatVoiceDiagnosticSummary,
   maxSimultaneousPolyphony,
@@ -86,6 +87,7 @@ describe("analyzeVoiceDiagnostics", () => {
     });
     expect(diagnostics[0].suspiciousReasons).toEqual([
       "span 63 semitones",
+      "2 significant channels",
       "2 large leaps",
       "1 cap-forced notes",
       "2 low-confidence notes",
@@ -105,6 +107,18 @@ describe("analyzeVoiceDiagnostics", () => {
     expect(diagnostics[0].suspiciousReasons).toEqual([]);
   });
 
+  it("flags a compact voice that mixes multiple significant channels", () => {
+    const diagnostics = analyzeVoiceDiagnostics(
+      project([
+        note("a", "voice-1", 60, 0, { channel: 0 }),
+        note("b", "voice-1", 62, 120, { channel: 1 }),
+        note("c", "voice-1", 64, 240, { channel: 1 }),
+      ]),
+    );
+
+    expect(diagnostics[0].suspicious).toBe(true);
+    expect(diagnostics[0].suspiciousReasons).toEqual(["2 significant channels"]);
+  });
   it("uses voice placeholders for an empty voice", () => {
     const diagnostics = analyzeVoiceDiagnostics(project([], [voice("voice-1", "Empty", 0, 0)]));
 
@@ -279,6 +293,43 @@ describe("buildSplitVoiceByPitchRepair", () => {
 
     expect(buildSplitVoiceByPitchRepair(notes, ["voice-1"], "voice-1", 90)).toBeNull();
     expect(buildSplitVoiceByPitchRepair(notes, ["voice-1"], "voice-1", 10)).toBeNull();
+  });
+});
+
+describe("buildSplitVoiceByChannelRepair", () => {
+  it("moves the largest non-dominant channel into a new voice", () => {
+    const repair = buildSplitVoiceByChannelRepair(
+      [
+        note("lead-a", "voice-1", 72, 0, { channel: 2 }),
+        note("bass-a", "voice-1", 40, 120, { channel: 0 }),
+        note("lead-b", "voice-1", 74, 240, { channel: 2 }),
+        note("lead-c", "voice-1", 76, 300, { channel: 2 }),
+        note("bass-b", "voice-1", 43, 360, { channel: 0 }),
+        note("ornament", "voice-1", 80, 480, { channel: 1 }),
+        note("other", "voice-2", 60, 0, { channel: 0 }),
+      ],
+      ["voice-1", "voice-2"],
+      "voice-1",
+    );
+
+    expect(repair).toEqual({
+      sourceVoiceId: "voice-1",
+      newVoiceId: "voice-3",
+      movedChannel: 0,
+      overrides: { "bass-a": "voice-3", "bass-b": "voice-3" },
+      movedNoteIds: ["bass-a", "bass-b"],
+      voiceOrder: ["voice-1", "voice-2", "voice-3"],
+    });
+  });
+
+  it("returns null when the source voice uses only one channel", () => {
+    const repair = buildSplitVoiceByChannelRepair(
+      [note("a", "voice-1", 60, 0, { channel: 0 }), note("b", "voice-1", 64, 120, { channel: 0 })],
+      ["voice-1"],
+      "voice-1",
+    );
+
+    expect(repair).toBeNull();
   });
 });
 

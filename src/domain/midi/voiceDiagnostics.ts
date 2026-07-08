@@ -11,6 +11,7 @@ export const WIDE_PITCH_SPAN_SEMITONES = 36;
 export const LARGE_LEAP_SEMITONES = 12;
 export const HIGH_LARGE_LEAP_RATIO = 0.08;
 export const HIGH_LOW_CONFIDENCE_RATIO = 0.18;
+export const MIXED_VOICE_CHANNEL_RATIO = 0.2;
 export const SIGNIFICANT_CHANNEL_RATIO = 0.05;
 export const DOMINANT_CHANNEL_RATIO = 0.6;
 export const POLYPHONY_CAP_PRESSURE_RATIO = 1.5;
@@ -34,6 +35,15 @@ export interface SplitVoiceByPitchRepair {
   sourceVoiceId: string;
   newVoiceId: string;
   threshold: number;
+  overrides: VoiceOverrides;
+  movedNoteIds: string[];
+  voiceOrder: string[];
+}
+
+export interface SplitVoiceByChannelRepair {
+  sourceVoiceId: string;
+  newVoiceId: string;
+  movedChannel: number;
   overrides: VoiceOverrides;
   movedNoteIds: string[];
   voiceOrder: string[];
@@ -79,12 +89,25 @@ function channelDistribution(notes: readonly MidiNote[]): Record<number, number>
   return distribution;
 }
 
+function significantVoiceChannelCount(
+  diagnostic: Pick<VoiceDiagnostic, "channelDistribution" | "noteCount">,
+): number {
+  return Object.values(diagnostic.channelDistribution).filter(
+    (count) =>
+      diagnostic.noteCount > 0 && count / diagnostic.noteCount >= MIXED_VOICE_CHANNEL_RATIO,
+  ).length;
+}
+
 function suspiciousReasonsFor(
   diagnostic: Omit<VoiceDiagnostic, "suspiciousReasons" | "suspicious">,
 ): string[] {
   const reasons: string[] = [];
   if (diagnostic.pitchSpan >= WIDE_PITCH_SPAN_SEMITONES) {
     reasons.push(`span ${diagnostic.pitchSpan} semitones`);
+  }
+  const significantChannelCount = significantVoiceChannelCount(diagnostic);
+  if (significantChannelCount >= 2) {
+    reasons.push(`${significantChannelCount} significant channels`);
   }
   if (
     diagnostic.noteCount > 0 &&
@@ -205,6 +228,46 @@ export function buildSplitVoiceByPitchRepair(
   };
 }
 
+function sortedChannelCounts(
+  notes: readonly MidiNote[],
+): Array<{ channel: number; count: number }> {
+  return Object.entries(channelDistribution(notes))
+    .map(([channel, count]) => ({ channel: Number(channel), count }))
+    .sort((left, right) => right.count - left.count || left.channel - right.channel);
+}
+
+export function buildSplitVoiceByChannelRepair(
+  notes: readonly MidiNote[],
+  voiceOrder: readonly string[],
+  sourceVoiceId: string,
+): SplitVoiceByChannelRepair | null {
+  const sourceNotes = notes.filter((note) => note.voiceId === sourceVoiceId);
+  const channelCounts = sortedChannelCounts(sourceNotes);
+  if (channelCounts.length < 2) {
+    return null;
+  }
+
+  const movedChannel = channelCounts[1].channel;
+  const movedNotes = sourceNotes.filter((note) => note.channel === movedChannel);
+  if (movedNotes.length === 0 || movedNotes.length === sourceNotes.length) {
+    return null;
+  }
+
+  const newVoiceId = nextVoiceId(voiceOrder);
+  const overrides: VoiceOverrides = {};
+  for (const note of movedNotes) {
+    overrides[note.id] = newVoiceId;
+  }
+
+  return {
+    sourceVoiceId,
+    newVoiceId,
+    movedChannel,
+    overrides,
+    movedNoteIds: movedNotes.map((note) => note.id),
+    voiceOrder: [...voiceOrder, newVoiceId],
+  };
+}
 export function maxSimultaneousPolyphony(notes: readonly MidiNote[]): number {
   const events = notes.flatMap((note) => [
     { tick: note.startTick, delta: 1 },
