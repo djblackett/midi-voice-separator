@@ -16,6 +16,10 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:1420",
     trace: "on-first-retry",
+    // Playback specs create a real Web Audio AudioContext; Chromium's
+    // autoplay policy can otherwise leave it suspended even after a real
+    // click-driven gesture in some headless configurations.
+    launchOptions: { args: ["--autoplay-policy=no-user-gesture-required"] },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

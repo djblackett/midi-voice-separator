@@ -23,12 +23,23 @@ export interface ReassignArgs {
   mode: string;
 }
 
+export interface CommandError {
+  code: string;
+  message: string;
+}
+
 export interface TauriMockOptions {
   importedProject: MidiProject;
   /** Called for the "Re-run separation" command; defaults to a no-op (returns the project unchanged). */
   reassign?: (args: ReassignArgs) => MidiProject;
   importPath?: string;
   exportPath?: string;
+  /** When set, `import_midi` rejects with this instead of resolving `importedProject`. */
+  importError?: CommandError;
+  /** When set, `export_midi` rejects with this instead of resolving a success result. */
+  exportError?: CommandError;
+  /** When set, `reassign_voices` rejects with this instead of calling `reassign`. */
+  reassignError?: CommandError;
 }
 
 export async function installFakeTauri(page: Page, options: TauriMockOptions): Promise<void> {
@@ -40,7 +51,7 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
   );
 
   await page.addInitScript(
-    ({ importedProject, importPath, exportPath }) => {
+    ({ importedProject, importPath, exportPath, importError, exportError, reassignError }) => {
       (
         window as unknown as { __TAURI_EVENT_PLUGIN_INTERNALS__: unknown }
       ).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -63,6 +74,9 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
             return { status: "ready", application: "chiptune-voice-separator" };
           }
           if (cmd === "import_midi") {
+            if (importError) {
+              throw importError;
+            }
             return importedProject;
           }
           if (cmd === "plugin:dialog|open") {
@@ -75,6 +89,9 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
             return 0;
           }
           if (cmd === "export_midi") {
+            if (exportError) {
+              throw exportError;
+            }
             const project = (args as { project: { notes: unknown[]; voices: unknown[] } }).project;
             return {
               path: exportPath,
@@ -83,6 +100,9 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
             };
           }
           if (cmd === "reassign_voices") {
+            if (reassignError) {
+              throw reassignError;
+            }
             return (
               window as unknown as { __fakeReassign: (a: unknown) => Promise<unknown> }
             ).__fakeReassign(args);
@@ -91,7 +111,14 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
         },
       };
     },
-    { importedProject: options.importedProject, importPath, exportPath },
+    {
+      importedProject: options.importedProject,
+      importPath,
+      exportPath,
+      importError: options.importError,
+      exportError: options.exportError,
+      reassignError: options.reassignError,
+    },
   );
 }
 

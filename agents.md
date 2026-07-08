@@ -1832,6 +1832,109 @@ suite (see the new `e2e/` Code Map entry above for the fixture design):
   server (`reuseExistingServer` locally); `pnpm test` (252/252,
   unchanged), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean.
 
+### Coverage tooling, then E2E specs for the rest of the pre-existing app
+
+Follow-up, same session: user asked whether more test coverage was
+possible/worthwhile. Installed `@vitest/coverage-v8` as a permanent
+`pnpm test:coverage` (not a one-off) to answer with real numbers instead
+of guessing. Findings, grounded in data: `domain/midi` 96%, the new
+`editorHistory.ts`/`editorSnapshots.ts` both 100% — the visible 0%
+categories (`App.tsx`, `PianoRoll.tsx`, `drawPianoRoll.ts`'s canvas draw
+calls, `playbackEngine.ts`) are exactly the categories this file already
+documents as deliberately excluded from unit testing in favor of
+E2E/manual verification, not new findings. The one real, actionable gap:
+the E2E suite (previous entry above) only covered Slices 1-4
+(snapshots/diff), leaving the rest of the app's pre-existing feature
+surface — everything previously "verified" only via one-off throwaway
+scripts — with zero permanent regression protection. User agreed to work
+through it, no particular priority order.
+
+Added 8 new spec files (34 new scenarios) to `e2e/`, one per feature area,
+reusing/extending `e2e/fixtures/tauriMock.ts`:
+
+- **`import-export.e2e.ts`**: successful import (file summary/details),
+  failed import (`.inline-error` banner, no project loaded), successful
+  export (`.export-success` banner with counts/path), failed export.
+  `installFakeTauri` gained `importError`/`exportError`/`reassignError`
+  options (`CommandError` — `{code, message}`, thrown from the relevant
+  fake command so `toCommandError`'s shape check picks it up correctly)
+  to drive these. Drag-and-drop import stays out of scope, same as native
+  file dialogs — Tauri 2 intercepts it at the webview level
+  (`getCurrentWebview().onDragDropEvent`, not an ordinary HTML5 drop
+  event), which would need faking the full event-emission protocol for
+  little marginal coverage beyond the button path (both end at
+  `import_midi`).
+- **`voice-legend.e2e.ts`**: `+ New voice`, rename, merge (+ undo),
+  solo toggle, reorder. **Real gotcha hit while writing the reorder
+  test**: voice labels fall back to a positional `Voice ${index+1}`
+  default when no explicit `voiceLabels` entry exists, so they _shift
+  with reordering_ — a label isn't a stable identity anchor unless the
+  voice has actually been renamed. Fixed by renaming each voice first
+  (Bass/Lead/Drums) so the row-locator helper keeps tracking the same
+  voice through the reorder.
+- **`selection-and-reassignment.e2e.ts`**: swatch-click selection ->
+  1-9 bulk reassignment -> undo/redo, Escape-clears-selection,
+  single-vs-multi-note detail view. Deliberately drives selection via the
+  voice-swatch click (a real, already-supported path) rather than direct
+  canvas click/marquee — replicating `buildViewport`'s pixel math just to
+  click the right spot would be high-effort for gesture logic that's
+  already ~100% unit-tested (`selection.ts`/`hitTest.ts`); the swatch
+  path reaches the actually-untested part (App.tsx's keydown handler).
+- **`paint-mode.e2e.ts`**: the one canvas gesture worth reproducing
+  pixel-for-pixel, since nothing else reaches `onPaintNotes ->
+pushHistorySnapshot -> setVoiceOverrides`. A `noteScreenCenter` helper
+  mirrors `coordinates.ts`'s `tickToX`/`pitchToY` and `hitTest.ts`'s
+  `PIANO_ROLL_LABEL_WIDTH` gutter offset, at the _default_ zoom/pan where
+  both `visibleTickRange` and `visiblePitchRange` are proven identity
+  transforms over the full project span by their own unit tests — so the
+  math holds without replicating zoom/pan state. Real canvas
+  `page.mouse.move/down/up` click on a computed note position correctly
+  reassigns it, as one undo step. Also covers the paint-mode number-key
+  brush-select branch (vs. bulk-reassign) and the toolbar hint text.
+- **`pitch-ranges.e2e.ts`**: rule-list descriptions from marker pitches,
+  Apply-ranges redistribution by pitch, undo, and — the one worth calling
+  out — reapplying ranges after a hand correction preserves the
+  hand-corrected note rather than silently snapping it back
+  (`applyRangePatchPreservingHandCorrections`'s whole reason to exist).
+  Hit one arithmetic mistake while writing it (an intermediate note-count
+  assertion was off by one voice's worth of notes) — caught immediately
+  by the test failing, not shipped.
+- **`review-mode.e2e.ts`**: flagged-count button, first-flagged-by-time
+  selection, `Tab`/`Shift+Tab` stepping with wraparound in both
+  directions — a direct behavioral spec of `findNextFlaggedNoteId`.
+- **`playback.e2e.ts`**: Play advances the real time readout (genuine
+  Web Audio, not simulated), Pause freezes it, Stop resets to zero,
+  switching to the Piano instrument preloads samples against the dev
+  server's real static assets with zero console errors. `playwright.config.ts`
+  gained `launchOptions.args: ["--autoplay-policy=no-user-gesture-required"]`
+  globally so a real click-driven `AudioContext.resume()` can't be left
+  suspended by Chromium's autoplay policy in some headless configurations.
+  Minimap-click seeking stays out of scope — a second canvas-coordinate
+  surface with lower marginal value than Play/Pause/Stop.
+- **`voice-diagnostics.e2e.ts`**: suspicious-voice flagging (mixed
+  channels), "Focus in roll" (select + solo), single-voice channel split,
+  undo, and the batch "Split all mixed-channel voices" action.
+
+**A second, more consequential bug caught while writing these — a
+systemic footgun worth remembering**: Playwright's `getByLabel` does
+_substring_ matching by default, not exact matching. A channel-split
+repair names its new voice `"<source label> Channel N"` (e.g. "Voice 1
+Channel 2") — a literal superstring of the source voice's own label — so
+an inexact `getByLabel("Select notes in Voice 1")` also matched the
+split-off voice's swatch, producing a Playwright strict-mode "resolved to
+2 elements" error. Root-caused via the failure's own captured
+accessibility-tree snapshot (`error-context.md`) rather than guessing.
+Fixed by adding `{ exact: true }` to every `voiceRow` helper's
+`getByLabel` call across all affected spec files, and anchoring
+`diagnosticRow`'s `hasText` filter on `` `^${label}:` `` (matching
+`formatVoiceDiagnosticSummary`'s own `"<label>: "` separator) for the
+same reason. Any future spec that locates a row by a voice's label should
+default to exact matching from the start.
+
+- Verified: `pnpm test:e2e` (42/42, up from 8, ~8s total), `pnpm test`
+  (252/252, unchanged), `pnpm lint`, `pnpm format:check`, `pnpm build`
+  all clean. No Rust changes.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to
