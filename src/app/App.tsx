@@ -41,6 +41,7 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByPitchRepair,
   formatVoiceDiagnosticSummary,
+  noteIdsForVoice,
   recommendSeparationAction,
   sortVoiceDiagnosticsForDisplay,
 } from "../domain/midi/voiceDiagnostics";
@@ -642,15 +643,22 @@ export default function App() {
     }
   }
 
+  function handleInspectDiagnosticVoice(voiceId: string) {
+    if (!displayedProject) {
+      return;
+    }
+
+    setActiveVoiceId(voiceId);
+    setSoloVoiceId(voiceId);
+    setSelectedNoteIds(new Set(noteIdsForVoice(displayedProject.notes, voiceId)));
+  }
+
   function handleSelectVoiceSwatch(voiceId: string) {
     setActiveVoiceId((current) => (current === voiceId ? null : voiceId));
     if (!displayedProject) {
       return;
     }
-    const voiceNoteIds = displayedProject.notes
-      .filter((note) => note.voiceId === voiceId)
-      .map((note) => note.id);
-    setSelectedNoteIds(new Set(voiceNoteIds));
+    setSelectedNoteIds(new Set(noteIdsForVoice(displayedProject.notes, voiceId)));
   }
 
   return (
@@ -834,16 +842,25 @@ export default function App() {
                           : "No obvious sanity flags."}
                       </span>
                     </div>
-                    {diagnostic.suspicious ? (
+                    <div className="voice-diagnostics-actions">
                       <button
                         type="button"
                         className="secondary-button"
-                        onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
-                        disabled={isReassigning}
+                        onClick={() => handleInspectDiagnosticVoice(diagnostic.voiceId)}
                       >
-                        Split by pitch
+                        Focus in roll
                       </button>
-                    ) : null}
+                      {diagnostic.suspicious ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
+                          disabled={isReassigning}
+                        >
+                          Split by pitch
+                        </button>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

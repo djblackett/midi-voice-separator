@@ -319,6 +319,13 @@ button {
   white-space: nowrap;
 }
 
+.voice-diagnostics-list li > .voice-diagnostics-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .voice-diagnostics-list .secondary-button {
   flex-shrink: 0;
   padding: 6px 10px;

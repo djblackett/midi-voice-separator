@@ -5,6 +5,7 @@ import {
   buildSplitVoiceByPitchRepair,
   formatVoiceDiagnosticSummary,
   maxSimultaneousPolyphony,
+  noteIdsForVoice,
   recommendSeparationAction,
   sortVoiceDiagnosticsForDisplay,
 } from "./voiceDiagnostics";
@@ -118,6 +119,16 @@ describe("analyzeVoiceDiagnostics", () => {
 });
 
 describe("diagnostic display helpers", () => {
+  it("returns note ids for a selected voice in project order", () => {
+    const notes = [
+      note("a", "voice-1", 60, 0),
+      note("b", "voice-2", 72, 0),
+      note("c", "voice-1", 64, 120),
+    ];
+
+    expect(noteIdsForVoice(notes, "voice-1")).toEqual(["a", "c"]);
+  });
+
   it("sorts suspicious voices before clean ones", () => {
     const diagnostics = analyzeVoiceDiagnostics(
       project(

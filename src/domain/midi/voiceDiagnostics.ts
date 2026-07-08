@@ -44,6 +44,10 @@ export interface SeparationRecommendation {
   maxPolyphony: number;
 }
 
+export function noteIdsForVoice(notes: readonly MidiNote[], voiceId: string): string[] {
+  return notes.filter((note) => note.voiceId === voiceId).map((note) => note.id);
+}
+
 function notesByVoice(notes: readonly MidiNote[]): Map<string, MidiNote[]> {
   const grouped = new Map<string, MidiNote[]>();
   for (const note of notes) {
