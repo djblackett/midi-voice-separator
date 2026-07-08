@@ -38,6 +38,13 @@ import {
 } from "../domain/midi/voiceManagement";
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
+  analyzeVoiceDiagnostics,
+  buildSplitVoiceByPitchRepair,
+  formatVoiceDiagnosticSummary,
+  recommendSeparationAction,
+  sortVoiceDiagnosticsForDisplay,
+} from "../domain/midi/voiceDiagnostics";
+import {
   applyRangePatchPreservingHandCorrections,
   buildDefaultPitchMarkers,
   buildDefaultVoiceRangeRules,
@@ -80,6 +87,11 @@ function toAppCommandError(commandError: unknown): AppCommandError {
     typeof commandError.message === "string"
     ? { code: commandError.code, message: commandError.message }
     : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) };
+}
+
+function parseMaxVoiceCount(input: string): number | undefined {
+  const parsed = Number.parseInt(input, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export default function App() {
@@ -130,6 +142,21 @@ export default function App() {
     () => buildDefaultVoiceRangeRules(displayedProject?.voices.map((voice) => voice.id) ?? []),
     [displayedProject],
   );
+  const voiceDiagnostics = useMemo(
+    () => (displayedProject ? analyzeVoiceDiagnostics(displayedProject) : []),
+    [displayedProject],
+  );
+  const sortedVoiceDiagnostics = useMemo(
+    () => sortVoiceDiagnosticsForDisplay(voiceDiagnostics),
+    [voiceDiagnostics],
+  );
+  const suspiciousVoiceCount = voiceDiagnostics.filter(
+    (diagnostic) => diagnostic.suspicious,
+  ).length;
+  const selectedMaxVoiceCount = parseMaxVoiceCount(maxVoiceCountInput);
+  const separationRecommendation = displayedProject
+    ? recommendSeparationAction(displayedProject, voiceDiagnostics, selectedMaxVoiceCount)
+    : null;
   const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -352,11 +379,7 @@ export default function App() {
       return;
     }
 
-    const parsedMaxVoiceCount = Number.parseInt(maxVoiceCountInput, 10);
-    const maxVoiceCount =
-      Number.isInteger(parsedMaxVoiceCount) && parsedMaxVoiceCount > 0
-        ? parsedMaxVoiceCount
-        : undefined;
+    const maxVoiceCount = parseMaxVoiceCount(maxVoiceCountInput);
 
     setIsReassigning(true);
     setReassignError(null);
@@ -572,6 +595,37 @@ export default function App() {
     setExportResult(null);
   }
 
+  function handleSplitVoiceByPitch(voiceId: string) {
+    if (!displayedProject) {
+      return;
+    }
+
+    const repair = buildSplitVoiceByPitchRepair(displayedProject.notes, voiceOrder, voiceId);
+    if (!repair) {
+      return;
+    }
+
+    const sourceLabel =
+      displayedProject.voices.find((voice) => voice.id === voiceId)?.label ?? voiceId;
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
+    setVoiceOrder(repair.voiceOrder);
+    setVoiceLabels((currentLabels) => ({
+      ...currentLabels,
+      [repair.newVoiceId]: `${sourceLabel} high`,
+    }));
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of repair.movedNoteIds) {
+        next.delete(noteId);
+      }
+      return next;
+    });
+    setSelectedNoteIds(new Set(repair.movedNoteIds));
+    setActiveVoiceId(repair.newVoiceId);
+    setExportResult(null);
+  }
+
   function handleTogglePaintMode() {
     setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
   }
@@ -753,6 +807,50 @@ export default function App() {
           <p className="strategy-suggestion">
             {formatStrategySuggestion(displayedProject.strategySuggestion)}
           </p>
+        </section>
+      ) : null}
+
+      {displayedProject ? (
+        <section className="voice-diagnostics" aria-label="Voice diagnostics">
+          <details open={suspiciousVoiceCount > 0}>
+            <summary>
+              Voice diagnostics: {suspiciousVoiceCount} suspicious of {voiceDiagnostics.length}
+            </summary>
+            {separationRecommendation ? (
+              <p className="voice-diagnostics-recommendation">{separationRecommendation.message}</p>
+            ) : null}
+            {sortedVoiceDiagnostics.length > 0 ? (
+              <ul className="voice-diagnostics-list">
+                {sortedVoiceDiagnostics.map((diagnostic) => (
+                  <li
+                    key={diagnostic.voiceId}
+                    className={diagnostic.suspicious ? "suspicious" : undefined}
+                  >
+                    <div>
+                      <strong>{formatVoiceDiagnosticSummary(diagnostic)}</strong>
+                      <span>
+                        {diagnostic.suspiciousReasons.length > 0
+                          ? `Reasons: ${diagnostic.suspiciousReasons.join(", ")}`
+                          : "No obvious sanity flags."}
+                      </span>
+                    </div>
+                    {diagnostic.suspicious ? (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
+                        disabled={isReassigning}
+                      >
+                        Split by pitch
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="voice-diagnostics-empty">No voices to diagnose.</p>
+            )}
+          </details>
         </section>
       ) : null}
 

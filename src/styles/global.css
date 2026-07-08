@@ -209,6 +209,7 @@ button {
 .inline-error,
 .warnings,
 .voice-legend,
+.voice-diagnostics,
 .range-rules,
 .selection-details,
 .file-details {
@@ -249,6 +250,7 @@ button {
 }
 
 .voice-legend,
+.voice-diagnostics,
 .range-rules {
   border: 1px solid #334155;
   background: #0f172a;
@@ -258,6 +260,69 @@ button {
 .range-rules h2 {
   margin: 0 0 8px;
   font-size: 14px;
+}
+
+.voice-diagnostics summary {
+  cursor: pointer;
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.voice-diagnostics-recommendation,
+.voice-diagnostics-empty {
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.voice-diagnostics-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-diagnostics-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #1f2937;
+  padding-top: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.voice-diagnostics-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.voice-diagnostics-list li.suspicious strong {
+  color: #fde68a;
+}
+
+.voice-diagnostics-list li > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.voice-diagnostics-list span {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-diagnostics-list .secondary-button {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 
 /* Uniform cells (not a wrapping flexbox of intrinsic widths), so a voice
