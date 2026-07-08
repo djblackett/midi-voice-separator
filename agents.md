@@ -131,6 +131,27 @@ Primary stack:
   moment piano is selected, and guards the now-async `startFrom` with a
   request-id so a pause/stop/newer-play issued during a slow first sample
   load can't start stale playback afterwards).
+- `e2e/`: permanent Playwright end-to-end suite (`*.e2e.ts`, run via
+  `pnpm test:e2e`; config at repo-root `playwright.config.ts`, `testDir:
+"./e2e"`/`testMatch: "**/*.e2e.ts"` so vitest's own default `*.spec.ts`/
+  `*.test.ts` glob never picks these files up). `e2e/fixtures/tauriMock.ts`
+  is the reusable version of the faked-Tauri-IPC pattern every prior manual
+  verification pass rewrote from scratch as a throwaway script:
+  `installFakeTauri(page, { importedProject, reassign? })` fakes
+  `window.__TAURI_INTERNALS__.invoke` (`backend_status`, `import_midi`,
+  `export_midi`, `plugin:dialog|open`/`|save`, `plugin:event|listen`/
+  `|unlisten`) plus `__TAURI_EVENT_PLUGIN_INTERNALS__`; the optional
+  `reassign` callback is wired through `page.exposeFunction` (not baked
+  into the injected script string) so each spec can express its "Re-run
+  separation" fixture behavior as an ordinary typed Node closure. Also
+  exports `note`/`voice`/`buildFixtureProject` builders mirroring the
+  `MidiNote`/`MidiVoice`/`MidiProject` shapes. `playwright.config.ts`'s
+  `webServer` reuses an already-running `pnpm tauri dev`/`pnpm dev` on
+  port 1420 locally (`reuseExistingServer: !process.env.CI`) and starts
+  one fresh in CI. Same standing limitation as every manual pass before
+  it: no `tauri-driver`/WebDriver is configured, so these tests exercise
+  the real frontend bundle and its wiring, not the native window, file
+  dialog, or actual Rust IPC.
 
 ## Active Plan
 
@@ -1692,6 +1713,125 @@ is a bit chaotic" — add a decent-sounding piano option.
   how it sounds — a human listen (piano tone, no clipping on dense
   passages, the 2.5× gain level) is the remaining check.
 
+### Snapshot/diff/compare feature (Slices 1-4) and a permanent Playwright E2E suite
+
+User-provided plan (`PLAN.local.md`, kept out of the repo like every other
+plan file, gitignored via matching the existing `*.local` glob's spirit —
+see the file for the full slice breakdown and Binding Contracts C1-C7)
+implementing editor snapshots, a voice-matched assignment diff engine, and
+a diff summary panel — the foundation slices of a larger snapshot/compare/
+review roadmap. Each slice was committed independently with its own
+verification pass.
+
+- **Slice 1 — snapshot data model.** New `src/app/editorSnapshots.ts`:
+  `NamedSnapshot` wraps the existing `EditorSnapshot` (from
+  `editorHistory.ts`) with `id`/`name`/`createdAt`/`source`/
+  `rerunSettings` rather than duplicating its fields, so `project` and
+  `rangeAssignedNoteIds` are always captured together with the three
+  already-tracked pieces of state — a deliberate guard against two
+  documented bugs: the Phase-7 half-revert (restoring overrides without
+  `project` across a re-run boundary) and the range-provenance bug
+  (restoring overrides without `rangeAssignedNoteIds`).
+  `materializeAssignments` (note id -> effective voice id) was added here
+  first, then relocated to `domain/midi/voiceAssignments.ts` next to
+  `applyVoiceOverrides` once the diff engine (Slice 3) needed it — a
+  domain module importing from the app layer would have inverted the
+  codebase's existing one-way dependency direction; `editorSnapshots.ts`
+  re-exports it for its own callers.
+- **Slice 2 — snapshot UI + auto-snapshots.** A `.editor-snapshots` panel
+  (Save/Restore/Rename/Delete). Automatic snapshots fire on import, and on
+  "Before rerun"/"After rerun" — the before-rerun one is captured inside
+  `handleReassign`'s existing closure at the exact point
+  `pushHistorySnapshot()` already captures pre-mutation state, so a failed
+  re-run records no snapshot either. Restore pushes the current state onto
+  `editorHistory` first, then applies the target via the same setter
+  sequence `handleUndo` uses — restore is itself a normal undoable action,
+  not a special case. Restoring rewrites `voiceOverrides`, which doubles
+  as the lock set the next re-run honors, so the panel says so directly.
+  Re-run settings travel with a snapshot but only apply via an explicit
+  "Use these settings" button — restoring never silently changes the
+  Strategy/Search/Max-voices selectors, since those are documented UI
+  preferences, not corrigible state. Auto-generated before/after-rerun
+  entries are capped at 5 each (oldest dropped); import/manual/restore
+  snapshots are never pruned. A new import replaces the snapshot list
+  entirely, since note ids embed the source track index and are
+  meaningless across a different import.
+- **Slice 3 — voice-matched assignment diff engine.** New
+  `src/domain/midi/assignmentDiff.ts`. `matchVoices` pairs two sides'
+  voices by maximum shared-note overlap (greedy), not by id — a full
+  re-run reallocates fresh `voice-N` ids, so id-based comparison would
+  read every re-run as "all voices removed, all voices added" even when
+  the actual grouping barely changed. The percussion voice is pre-matched
+  to itself by its fixed id when present on both sides, and excluded
+  entirely (never added/removed/matched) when present on only one —
+  its count is reported separately via `percussionDelta`.
+  `compareAssignments` operates only on materialized (post-override)
+  assignments, computes `changedNoteIds` against the _matched_ voice
+  (so a permutation-only re-run reports zero reassignments), separates
+  notes-only-on-one-side from genuine reassignments, tracks
+  `locksPreservedCount`, and gates confidence improved/worsened deltas on
+  both sides sharing the same strategy _and_ search mode — Global mode
+  measurably produces lower confidence for better assignments (see the
+  register-aware/strategy-selector entries above), so a cross-mode
+  confidence comparison would be actively misleading rather than merely
+  imprecise. `diffAssignments` is the entry point: it refuses to compare
+  two (near-)disjoint note-id sets (below 50% shared) rather than
+  rendering a meaningless full diff — this is the case that happens
+  whenever one side crossed an export/reimport boundary, since note ids
+  are regenerated on reimport.
+- **Slice 4 — diff summary panel.** A `.diff-summary` "What changed?"
+  section with a comparison-target `<select>` (Import / most recent
+  snapshot / any snapshot by name) feeding `diffAssignments(target,
+current)`. Confidence renders "Not comparable" instead of numbers when
+  gated off; the disjoint-id guard renders its `reason` instead of a
+  diff. The selected target id is App-level state future slices (piano
+  roll overlay, scoped playback) will read.
+  - **Validated on the real running app, not just unit tests**: a
+    faked-IPC Playwright pass confirmed a Register-priority re-run that
+    reallocated voice ids (`voice-1`/`voice-2` -> `voice-5`/`voice-6`)
+    reported **0 voices added, 0 removed, 1 genuine reassignment** — the
+    concrete proof that voice-matching prevents the diff from reading as
+    id-permutation noise, which was the core risk an architecture review
+    flagged before implementation started.
+  - Verified per-slice: `pnpm test` (252/252 across all four slices),
+    `pnpm lint`, `pnpm format:check`, `pnpm build` all clean at every
+    commit. No Rust changes — entirely frontend.
+
+**Follow-up, same session**: the user found the diff panel's raw numbers
+hard to eyeball in isolation and asked for real GUI regression tests
+instead of another throwaway verification script, plus named scenarios
+that double as a manual-testing guide. Set up a permanent Playwright E2E
+suite (see the new `e2e/` Code Map entry above for the fixture design):
+
+- `@playwright/test` added as a devDependency (browsers were already
+  cached at `%LOCALAPPDATA%/ms-playwright` from prior throwaway-script
+  passes); `playwright.config.ts` at the repo root, `pnpm test:e2e` /
+  `pnpm test:e2e:ui` scripts added.
+- `e2e/snapshots.e2e.ts` (5 scenarios: import creates one snapshot;
+  manual save/rename/delete; re-run records before/after-rerun
+  snapshots; **restoring a pre-rerun snapshot reverts the voice
+  structure and undoing that restore reverts back** — the scenario this
+  whole slice's C4 contract exists to protect; "Use these settings"
+  applies without restoring state) and `e2e/diff-summary.e2e.ts` (3
+  scenarios: zero-diff baseline; the id-reallocation-is-not-noise claim
+  from Slice 4's manual pass, now a permanent regression test; confidence
+  comparability gating both ways) replace what were one-off `.cjs`
+  scratch scripts with permanent, named, committed specs.
+- One real bug caught while writing the specs, in the _test_ code, not
+  the app: a Playwright `Locator` built from `.filter({ has: ... })`
+  doesn't re-evaluate its filter after the underlying DOM changes (e.g.
+  after renaming a snapshot's name input) — the "rename" test had to
+  re-derive the row locator by its new value before the subsequent
+  "delete" step, or the click times out waiting for a filter that no
+  longer matches anything.
+- `.gitignore` gained `/playwright-report`, `/test-results`,
+  `/blob-report`. `e2e/*.e2e.ts` naming (not `*.spec.ts`/`*.test.ts`)
+  was chosen specifically so vitest's zero-config default test glob
+  never picks these files up — no vitest config changes were needed.
+- Verified: all 8 E2E specs pass in ~3s reusing the already-running dev
+  server (`reuseExistingServer` locally); `pnpm test` (252/252,
+  unchanged), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to
@@ -1735,6 +1875,13 @@ For desktop startup validation:
 
 ```powershell
 pnpm tauri dev
+```
+
+For frontend end-to-end behavior (real dev-server bundle, faked Tauri IPC —
+see `e2e/fixtures/tauriMock.ts` and the note under Code Map):
+
+```powershell
+pnpm test:e2e
 ```
 
 Record which checks passed in the handoff or final response. If a check cannot
