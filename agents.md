@@ -1884,6 +1884,15 @@ see `e2e/fixtures/tauriMock.ts` and the note under Code Map):
 pnpm test:e2e
 ```
 
+For frontend unit-test coverage (`@vitest/coverage-v8`; the deliberately
+untested categories — `App.tsx`/`PianoRoll.tsx` component wiring,
+`drawPianoRoll.ts` canvas draw calls, `playbackEngine.ts` real Web Audio —
+show as 0% by design, verified instead via `pnpm test:e2e` and manual passes):
+
+```powershell
+pnpm test:coverage
+```
+
 Record which checks passed in the handoff or final response. If a check cannot
 run, state why.
 
