@@ -69,6 +69,14 @@ import {
   undoHistory,
   type EditorHistoryState,
 } from "./editorHistory";
+import {
+  appendSnapshot,
+  createNamedSnapshot,
+  formatSnapshotSummary,
+  restoreEditorState,
+  type NamedSnapshot,
+  type RerunSettings,
+} from "./editorSnapshots";
 import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
@@ -128,6 +136,8 @@ export default function App() {
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
   const [isDragOver, setIsDragOver] = useState(false);
   const [instrument, setInstrument] = useState<Instrument>("chiptune");
+  const [namedSnapshots, setNamedSnapshots] = useState<NamedSnapshot[]>([]);
+  const [snapshotNameDraft, setSnapshotNameDraft] = useState("");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -353,11 +363,14 @@ export default function App() {
   }, [isImporting, isExporting, isReassigning]);
 
   function applyImportedProject(importedProject: MidiProject) {
+    const importVoiceOrder = importedProject.voices.map((voice) => voice.id);
+    const importVoiceLabels = seedVoiceLabelsFromImport(importedProject.voices);
+
     setProject(importedProject);
     setSelectedNoteIds(new Set());
     setVoiceOverrides({});
-    setVoiceOrder(importedProject.voices.map((voice) => voice.id));
-    setVoiceLabels(seedVoiceLabelsFromImport(importedProject.voices));
+    setVoiceOrder(importVoiceOrder);
+    setVoiceLabels(importVoiceLabels);
     setSeparationStrategy(importedProject.strategySuggestion.strategy);
     setActiveVoiceId(null);
     setSoloVoiceId(null);
@@ -368,6 +381,26 @@ export default function App() {
     setMaxVoiceCountInput("");
     setExportResult(null);
     setExportError(null);
+    // A new import invalidates every prior snapshot: note ids embed the
+    // source track index, so snapshots from a different import reference
+    // ids this project can never contain (see editorSnapshots.ts C2).
+    setNamedSnapshots([
+      createNamedSnapshot(
+        {
+          project: importedProject,
+          voiceOverrides: {},
+          voiceOrder: importVoiceOrder,
+          voiceLabels: importVoiceLabels,
+          rangeAssignedNoteIds: new Set(),
+        },
+        {
+          strategy: importedProject.strategySuggestion.strategy,
+          assignmentMode: "GREEDY",
+          maxVoiceCount: null,
+        },
+        "import",
+      ),
+    ]);
   }
 
   async function handleImport() {
@@ -447,12 +480,46 @@ export default function App() {
         separationStrategy,
         assignmentMode,
       );
+      const rerunSettings: RerunSettings = {
+        strategy: separationStrategy,
+        assignmentMode,
+        maxVoiceCount: maxVoiceCount ?? null,
+      };
+      // Captured from this closure's pre-mutation state, the same
+      // discipline pushHistorySnapshot() below relies on: a failed
+      // reassignVoices call above would have thrown, so no snapshot (auto
+      // or undo) is recorded for a no-op re-run attempt.
       pushHistorySnapshot();
+      setNamedSnapshots((current) =>
+        appendSnapshot(
+          current,
+          createNamedSnapshot(
+            { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds },
+            rerunSettings,
+            "before-rerun",
+          ),
+        ),
+      );
+      const nextVoiceOrder = reconcileVoiceOrderAfterReassign(
+        voiceOrder,
+        reassignedProject.notes.map((note) => note.voiceId),
+      );
       setProject(reassignedProject);
-      setVoiceOrder((currentOrder) =>
-        reconcileVoiceOrderAfterReassign(
-          currentOrder,
-          reassignedProject.notes.map((note) => note.voiceId),
+      setVoiceOrder(nextVoiceOrder);
+      setNamedSnapshots((current) =>
+        appendSnapshot(
+          current,
+          createNamedSnapshot(
+            {
+              project: reassignedProject,
+              voiceOverrides,
+              voiceOrder: nextVoiceOrder,
+              voiceLabels,
+              rangeAssignedNoteIds,
+            },
+            rerunSettings,
+            "after-rerun",
+          ),
         ),
       );
       setExportResult(null);
@@ -522,6 +589,68 @@ export default function App() {
     setVoiceLabels(result.snapshot.voiceLabels);
     setRangeAssignedNoteIds(result.snapshot.rangeAssignedNoteIds);
     setExportResult(null);
+  }
+
+  function handleSaveSnapshot() {
+    if (!project) {
+      return;
+    }
+    const name = snapshotNameDraft.trim();
+    setNamedSnapshots((current) =>
+      appendSnapshot(
+        current,
+        createNamedSnapshot(
+          { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds },
+          {
+            strategy: separationStrategy,
+            assignmentMode,
+            maxVoiceCount: selectedMaxVoiceCount ?? null,
+          },
+          "manual",
+          name === "" ? undefined : name,
+        ),
+      ),
+    );
+    setSnapshotNameDraft("");
+  }
+
+  // Restoring rewrites voiceOverrides, which doubles as the lock set the
+  // next "Re-run separation" honors -- see editorSnapshots.ts C4. Goes
+  // through pushHistorySnapshot() first so it is itself a normal undoable
+  // action, same as every other mutating handler in this file.
+  function handleRestoreSnapshot(snapshot: NamedSnapshot) {
+    pushHistorySnapshot();
+    const restored = restoreEditorState(snapshot);
+    setProject(restored.project);
+    setVoiceOverrides(restored.voiceOverrides);
+    setVoiceOrder(restored.voiceOrder);
+    setVoiceLabels(restored.voiceLabels);
+    setRangeAssignedNoteIds(restored.rangeAssignedNoteIds);
+    setSelectedNoteIds(new Set());
+    setExportResult(null);
+  }
+
+  function handleRenameSnapshot(id: string, name: string) {
+    setNamedSnapshots((current) =>
+      current.map((entry) => (entry.id === id ? { ...entry, name } : entry)),
+    );
+  }
+
+  function handleDeleteSnapshot(id: string) {
+    setNamedSnapshots((current) => current.filter((entry) => entry.id !== id));
+  }
+
+  // Settings travel with a snapshot but only apply on request -- restoring
+  // a snapshot deliberately leaves the Strategy/Search/Max-voices selectors
+  // alone, since those are UI preferences, not corrigible editor state.
+  function handleUseSnapshotSettings(snapshot: NamedSnapshot) {
+    setSeparationStrategy(snapshot.rerunSettings.strategy);
+    setAssignmentMode(snapshot.rerunSettings.assignmentMode);
+    setMaxVoiceCountInput(
+      snapshot.rerunSettings.maxVoiceCount === null
+        ? ""
+        : String(snapshot.rerunSettings.maxVoiceCount),
+    );
   }
 
   function handleCreateVoice() {
@@ -1250,6 +1379,76 @@ export default function App() {
             </ul>
           ) : (
             <p className="range-rules-empty">Create at least one voice before applying ranges.</p>
+          )}
+        </section>
+      ) : null}
+
+      {displayedProject ? (
+        <section className="editor-snapshots" aria-label="Editor snapshots">
+          <div className="editor-snapshots-header">
+            <h2>Snapshots</h2>
+            <div className="editor-snapshots-save">
+              <input
+                type="text"
+                className="snapshot-name-input"
+                placeholder="Snapshot name"
+                value={snapshotNameDraft}
+                onChange={(event) => setSnapshotNameDraft(event.target.value)}
+                aria-label="New snapshot name"
+              />
+              <button type="button" className="secondary-button" onClick={handleSaveSnapshot}>
+                Save snapshot
+              </button>
+            </div>
+          </div>
+          <p className="editor-snapshots-hint">
+            Restoring a snapshot also restores which notes are locked for re-runs.
+          </p>
+          {namedSnapshots.length > 0 ? (
+            <ul className="snapshot-list">
+              {namedSnapshots
+                .slice()
+                .reverse()
+                .map((snapshot) => (
+                  <li key={snapshot.id}>
+                    <div className="snapshot-meta">
+                      <input
+                        className="snapshot-name-input"
+                        value={snapshot.name}
+                        onChange={(event) => handleRenameSnapshot(snapshot.id, event.target.value)}
+                        aria-label={`Rename snapshot ${snapshot.name}`}
+                      />
+                      <span>{formatSnapshotSummary(snapshot)}</span>
+                    </div>
+                    <div className="snapshot-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleUseSnapshotSettings(snapshot)}
+                      >
+                        Use these settings
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleRestoreSnapshot(snapshot)}
+                        disabled={isReassigning}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => handleDeleteSnapshot(snapshot.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="snapshot-list-empty">No snapshots yet.</p>
           )}
         </section>
       ) : null}

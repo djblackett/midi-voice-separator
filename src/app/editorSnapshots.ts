@@ -1,5 +1,9 @@
 import type { AssignmentMode } from "../lib/tauri/commands";
-import type { MidiProject, SeparationStrategy } from "../domain/midi/midiProject";
+import {
+  STRATEGY_LABELS,
+  type MidiProject,
+  type SeparationStrategy,
+} from "../domain/midi/midiProject";
 import type { EditorSnapshot } from "./editorHistory";
 
 export type SnapshotSource = "import" | "manual" | "before-rerun" | "after-rerun" | "restore";
@@ -48,9 +52,35 @@ const SOURCE_DEFAULT_NAMES: Record<SnapshotSource, string> = {
   restore: "Restore point",
 };
 
+export function formatSnapshotTimestamp(createdAt: number): string {
+  return new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 export function defaultSnapshotName(source: SnapshotSource, createdAt: number): string {
-  const time = new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return `${SOURCE_DEFAULT_NAMES[source]} — ${time}`;
+  return `${SOURCE_DEFAULT_NAMES[source]} — ${formatSnapshotTimestamp(createdAt)}`;
+}
+
+/** Short, human-readable label for a snapshot's source, for list display. */
+export function formatSnapshotSource(source: SnapshotSource): string {
+  return SOURCE_DEFAULT_NAMES[source];
+}
+
+const ASSIGNMENT_MODE_SHORT_LABELS: Record<AssignmentMode, string> = {
+  GREEDY: "Greedy",
+  GLOBAL: "Global",
+  CONTIG: "Contig",
+};
+
+/** One-line summary of the re-run settings a snapshot was produced under. */
+export function formatRerunSettings(settings: RerunSettings): string {
+  const voices =
+    settings.maxVoiceCount === null ? "auto voices" : `max ${settings.maxVoiceCount} voices`;
+  return `${STRATEGY_LABELS[settings.strategy]} · ${ASSIGNMENT_MODE_SHORT_LABELS[settings.assignmentMode]} · ${voices}`;
+}
+
+/** One-line "source · time · re-run settings" summary for a snapshot list row. */
+export function formatSnapshotSummary(snapshot: NamedSnapshot): string {
+  return `${formatSnapshotSource(snapshot.source)} · ${formatSnapshotTimestamp(snapshot.createdAt)} · ${formatRerunSettings(snapshot.rerunSettings)}`;
 }
 
 export function createNamedSnapshot(
@@ -73,6 +103,33 @@ export function createNamedSnapshot(
 /** Returns the wrapped `EditorSnapshot` to apply via the same setters undo/redo uses. */
 export function restoreEditorState(snapshot: NamedSnapshot): EditorSnapshot {
   return snapshot.state;
+}
+
+const AUTO_SNAPSHOT_SOURCE_CAP = 5;
+
+/**
+ * Appends a new snapshot, then prunes older auto-generated `before-rerun`/
+ * `after-rerun` entries beyond `AUTO_SNAPSHOT_SOURCE_CAP` each (oldest
+ * dropped first) so a session with many re-runs doesn't grow the list
+ * unbounded. `import`/`manual`/`restore` snapshots are never pruned — only
+ * the two sources a single "Re-run separation" click can spam.
+ */
+export function appendSnapshot(
+  snapshots: readonly NamedSnapshot[],
+  snapshot: NamedSnapshot,
+): NamedSnapshot[] {
+  const next = [...snapshots, snapshot];
+  const beforeRerunIds = next
+    .filter((entry) => entry.source === "before-rerun")
+    .map((entry) => entry.id);
+  const afterRerunIds = next
+    .filter((entry) => entry.source === "after-rerun")
+    .map((entry) => entry.id);
+  const droppedIds = new Set([
+    ...beforeRerunIds.slice(0, Math.max(0, beforeRerunIds.length - AUTO_SNAPSHOT_SOURCE_CAP)),
+    ...afterRerunIds.slice(0, Math.max(0, afterRerunIds.length - AUTO_SNAPSHOT_SOURCE_CAP)),
+  ]);
+  return droppedIds.size === 0 ? next : next.filter((entry) => !droppedIds.has(entry.id));
 }
 
 /**

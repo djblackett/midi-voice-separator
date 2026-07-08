@@ -211,6 +211,7 @@ button {
 .voice-legend,
 .voice-diagnostics,
 .range-rules,
+.editor-snapshots,
 .selection-details,
 .file-details {
   margin: 12px 24px 0;
@@ -251,13 +252,15 @@ button {
 
 .voice-legend,
 .voice-diagnostics,
-.range-rules {
+.range-rules,
+.editor-snapshots {
   border: 1px solid #334155;
   background: #0f172a;
 }
 
 .voice-legend h2,
-.range-rules h2 {
+.range-rules h2,
+.editor-snapshots h2 {
   margin: 0 0 8px;
   font-size: 14px;
 }
@@ -504,6 +507,106 @@ button {
 
 .range-rules-empty {
   margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.editor-snapshots-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.editor-snapshots-save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-snapshots-hint {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.snapshot-name-input {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+.editor-snapshots-save .snapshot-name-input {
+  width: 160px;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.snapshot-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid #1f2937;
+  padding-top: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.snapshot-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.snapshot-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.snapshot-meta span {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-meta .snapshot-name-input {
+  width: 150px;
+  flex-shrink: 0;
+}
+
+.snapshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.snapshot-actions .secondary-button {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.snapshot-list-empty {
+  margin: 10px 0 0;
   color: #94a3b8;
   font-size: 13px;
 }
