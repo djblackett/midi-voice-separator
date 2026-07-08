@@ -55,6 +55,7 @@ import {
 } from "./editorHistory";
 import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
+import type { Instrument } from "../features/playback/playbackEngine";
 import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
 
 function getErrorMessage(error: unknown): string {
@@ -105,6 +106,7 @@ export default function App() {
   const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
   const [isDragOver, setIsDragOver] = useState(false);
+  const [instrument, setInstrument] = useState<Instrument>("chiptune");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -128,7 +130,7 @@ export default function App() {
     () => buildDefaultVoiceRangeRules(displayedProject?.voices.map((voice) => voice.id) ?? []),
     [displayedProject],
   );
-  const playback = usePlaybackEngine(displayedProject, soloVoiceId);
+  const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
     [displayedProject],
@@ -984,6 +986,18 @@ export default function App() {
           >
             Stop
           </button>
+          <label className="instrument-label">
+            Sound
+            <select
+              className="instrument-select"
+              value={instrument}
+              onChange={(event) => setInstrument(event.target.value as Instrument)}
+              aria-label="Playback instrument"
+            >
+              <option value="chiptune">Chiptune</option>
+              <option value="piano">Piano</option>
+            </select>
+          </label>
           <span className="playback-time">
             {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
             {formatPlaybackTime(playbackDurationSeconds)}

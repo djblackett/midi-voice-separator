@@ -51,8 +51,10 @@ tracks.
   too thin to read or click precisely at the default zoomed-out view. A minimap shows the
   current horizontal window against the full timeline, and review-mode `Tab`-stepping auto-pans
   on both axes (without changing zoom) to bring an off-screen flagged note into view.
-- MIDI playback: Play/Pause/Stop and a time readout, synthesized with square/triangle/
-  sawtooth oscillators cycling by voice (so a voice sounds consistent with how it looks), a
+- MIDI playback: Play/Pause/Stop and a time readout, with a choice of two sounds — chiptune
+  (square/triangle/sawtooth oscillators cycling by voice, so a voice sounds consistent with
+  how it looks) or a sampled grand piano (the CC-BY Salamander Grand Piano set, bundled in
+  `public/samples/salamander/`, easier on the ears when the music gets dense) — plus a
   playhead that page-follows during playback, and a minimap that doubles as a seek control.
   Respects the existing voice Solo toggle (only the soloed voice is audible).
 - Export of corrected voice assignments to a new Standard MIDI File (one track per voice).
@@ -61,8 +63,9 @@ tracks.
 ## Non-capabilities
 
 This version does not yet perform DAW routing, audio separation, or machine learning.
-Playback is synthesized tones, not sample/soundfont-based, and has no looping or per-voice
-volume beyond the existing Solo toggle. The current voice assignment is a heuristic, not a
+Playback has no looping or per-voice volume beyond the existing Solo toggle, and no
+general soundfont support (the piano sound is a single bundled sample set, not a
+user-selectable soundfont). The current voice assignment is a heuristic, not a
 finished musical separation algorithm.
 
 ## Windows prerequisites

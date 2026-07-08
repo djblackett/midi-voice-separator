@@ -14,6 +14,8 @@ export interface ScheduledNote {
   id: string;
   startSeconds: number;
   endSeconds: number;
+  /** MIDI pitch, kept alongside frequency so the piano sampler can pick the nearest sample. */
+  pitch: number;
   frequency: number;
   gain: number;
   waveform: Waveform;
@@ -55,6 +57,7 @@ export function buildScheduledNotes(
       startSeconds:
         tickToSeconds(tempoMap, effectiveStartTick) - tickToSeconds(tempoMap, startTick),
       endSeconds: tickToSeconds(tempoMap, note.endTick) - tickToSeconds(tempoMap, startTick),
+      pitch: note.pitch,
       frequency: midiPitchToFrequency(note.pitch),
       gain: NOTE_GAIN,
       waveform: waveformForVoice(note.voiceId),

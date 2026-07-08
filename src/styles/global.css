@@ -185,7 +185,8 @@ button {
 }
 
 .separation-strategy-label,
-.assignment-mode-label {
+.assignment-mode-label,
+.instrument-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -194,7 +195,8 @@ button {
 }
 
 .separation-strategy-select,
-.assignment-mode-select {
+.assignment-mode-select,
+.instrument-select {
   border: 1px solid #475569;
   border-radius: 4px;
   background: #1f2937;

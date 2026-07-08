@@ -42,6 +42,7 @@ describe("buildScheduledNotes", () => {
     expect(scheduled[0].startSeconds).toBeCloseTo(0, 5);
     expect(scheduled[0].endSeconds).toBeCloseTo(0.5, 5);
     expect(scheduled[0].frequency).toBeCloseTo(261.63, 1);
+    expect(scheduled[0].pitch).toBe(60);
   });
 
   it("excludes a note that ends at or before the resume point", () => {

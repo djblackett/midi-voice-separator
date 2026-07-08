@@ -108,16 +108,29 @@ Primary stack:
   past the resume point, truncates a mid-note resume instead of skipping
   or mistiming it, filters to a soloed voice, picks a waveform per voice
   via `drawPianoRoll.ts`'s exported `voiceColorIndex` so a voice sounds
-  consistent with how it looks), `formatPlaybackTime.ts`. Thin and
-  untested (real audio I/O, same category as `PianoRoll.tsx`'s
-  pointer-event glue): `playbackEngine.ts` (a small `PlaybackEngine` class
-  wrapping one `AudioContext`; `play()` creates an oscillator+gain-envelope
-  node pair per scheduled note and tracks all of them so `stop()` can
-  immediately silence everything including notes scheduled in the future,
-  not just whatever's currently sounding) and `usePlaybackEngine.ts` (the
-  React hook tying the engine to `isPlaying`/`currentTick` state, polled
-  every 50ms rather than via `requestAnimationFrame` — simpler and
-  sufficient at this update rate).
+  consistent with how it looks), `formatPlaybackTime.ts`, and
+  `pianoSampler.ts`'s pitch math (`nearestSamplePitch`,
+  `sampleFileForPitch` — maps any MIDI pitch to the closest of the 30
+  bundled Salamander piano samples in `public/samples/salamander/`,
+  sampled every minor third A0-C8 so playback-rate shifting never exceeds
+  1.5 semitones). Thin and untested (real audio I/O, same category as
+  `PianoRoll.tsx`'s pointer-event glue): `pianoSampler.ts`'s
+  `PianoSampler` class (fetch + decodeAudioData cache, retry-safe on
+  failure), `playbackEngine.ts` (a small `PlaybackEngine` class wrapping
+  one `AudioContext`; `play(notes, instrument)` creates either an
+  oscillator+gain pair per note — chiptune — or an
+  `AudioBufferSourceNode` playing the nearest piano sample through a
+  shared `DynamicsCompressorNode` bus — piano — and tracks all of them so
+  `stop()` can immediately silence everything including notes scheduled
+  in the future; `prepare(instrument)` resolves once the piano sample set
+  is loaded, and `play` falls back to chiptune synthesis if loading
+  failed) and `usePlaybackEngine.ts` (the React hook tying the engine to
+  `isPlaying`/`currentTick` state, polled every 50ms rather than via
+  `requestAnimationFrame` — simpler and sufficient at this update rate;
+  takes the `Instrument` as a third parameter, preloads samples the
+  moment piano is selected, and guards the now-async `startFrom` with a
+  request-id so a pause/stop/newer-play issued during a slow first sample
+  load can't start stale playback afterwards).
 
 ## Active Plan
 
@@ -1621,6 +1634,63 @@ ellipsis` — closing the long-documented "label clips mid-character
   all clean. Visual confirmation left to the user's already-running
   `pnpm tauri dev` session (hot-reloads CSS/JSX), since these are
   pure-CSS/markup changes in the untested-by-convention category.
+
+### Sampled piano playback instrument
+
+User request: the chiptune oscillators "can be a bit much when the music
+is a bit chaotic" — add a decent-sounding piano option.
+
+- **Samples**: bundled the Salamander Grand Piano set (Yamaha C5 by
+  Alexander Holm, CC-BY-3.0 — see
+  `public/samples/salamander/ATTRIBUTION.md`) as 30 mp3s (~2.0MB total),
+  every minor third A0-C8, from the Tone.js audio collection. Served as
+  static Vite `public/` assets, so they ship inside the Tauri bundle and
+  need no network at runtime.
+- **New `pianoSampler.ts`**: pure `nearestSamplePitch` (round to the
+  3-semitone grid, clamped to A0-C8) and `sampleFileForPitch` (sharp
+  spelling, e.g. "Ds4.mp3"), plus the thin `PianoSampler` fetch/decode
+  cache. A failed load clears the cached promise so a later attempt
+  retries instead of being poisoned forever.
+- **`playbackEngine.ts`**: `play(notes, instrument)` now dispatches per
+  note to the existing oscillator path or a new
+  `AudioBufferSourceNode` path (`playbackRate = 2^(Δsemitones/12)`,
+  ≤1.5 st shift). Piano notes are mixed at `note.gain × 2.5` (samples
+  decay naturally instead of holding full amplitude) with a 0.1s
+  note-off release, through a shared `DynamicsCompressorNode` bus so
+  dense/chaotic chords don't clip. `ActiveNode` generalized from
+  `oscillator` to `source: AudioScheduledSourceNode` — `stop()`
+  semantics unchanged. `prepare(instrument)` loads the sample set (no-op
+  for chiptune); if samples aren't loaded at `play` time (fetch failed),
+  it falls back to chiptune synthesis rather than playing silence.
+- **`usePlaybackEngine.ts`**: takes `instrument` as a third parameter.
+  `startFrom` is now async (awaits `prepare` before scheduling) with a
+  `playRequestIdRef` guard — pause/stop/new-play/new-import all bump it,
+  so a slow first sample load can't start stale playback after the user
+  moved on. An effect preloads the samples the moment the instrument
+  select switches to piano, so the first Play doesn't stall. Matches the
+  existing solo-voice precedent: an instrument change during playback
+  takes effect on the next play/seek, not mid-flight.
+- **`App.tsx`**: `instrument` state plus a "Sound" `<select>`
+  (Chiptune/Piano) in the playback toolbar between Stop and the time
+  readout; `.instrument-label`/`.instrument-select` reuse the existing
+  strategy-select styles in `global.css`.
+- **`scheduledNotes.ts`**: `ScheduledNote` gained `pitch` (alongside
+  `frequency`) so the sampler can pick the nearest sample.
+- Verified: `pnpm test` (188/188 — new `pianoSampler.test.ts` covering
+  grid rounding, ≤1.5-semitone bound over the whole range, clamping,
+  and file naming; `scheduledNotes.test.ts` asserts the new `pitch`),
+  `pnpm lint`, `pnpm format:check`, `pnpm build` all clean. No Rust
+  changes. Manually drove the real dev-server bundle (same faked-IPC
+  Playwright technique as prior passes, against the user's already-
+  running dev server): chiptune Play triggers zero sample fetches;
+  selecting Piano preloads all 30 samples (all HTTP 200); piano Play
+  advances the readout; minimap seek mid-play, rapid Play/Pause cycles,
+  and switching back to chiptune all behave; and a probe aborting every
+  sample request still plays via the chiptune fallback — all with zero
+  console/page errors. **Stated limitation, same as the original
+  playback phase**: automation confirms scheduling/UI correctness, not
+  how it sounds — a human listen (piano tone, no clipping on dense
+  passages, the 2.5× gain level) is the remaining check.
 
 ## Architecture Invariants
 
