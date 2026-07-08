@@ -4,6 +4,7 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
+  formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
   maxSimultaneousPolyphony,
   noteIdsForVoice,
@@ -163,6 +164,19 @@ describe("diagnostic display helpers", () => {
 
     expect(formatVoiceDiagnosticSummary(diagnostic)).toBe(
       "Voice 1: 2 notes, span 40 semitones, 1 large leaps, 0 low-confidence notes",
+    );
+  });
+  it("formats a compact channel distribution line", () => {
+    const diagnostic = analyzeVoiceDiagnostics(
+      project([
+        note("a", "voice-1", 40, 0, { channel: 2 }),
+        note("b", "voice-1", 42, 120, { channel: 2 }),
+        note("c", "voice-1", 80, 240, { channel: 0 }),
+      ]),
+    )[0];
+
+    expect(formatVoiceChannelDistribution(diagnostic)).toBe(
+      "Channels: Channel 3: 2 (67%), Channel 1: 1 (33%)",
     );
   });
 });

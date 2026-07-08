@@ -41,6 +41,7 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
+  formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
   noteIdsForVoice,
   recommendSeparationAction,
@@ -872,6 +873,7 @@ export default function App() {
                           ? `Reasons: ${diagnostic.suspiciousReasons.join(", ")}`
                           : "No obvious sanity flags."}
                       </span>
+                      <span>{formatVoiceChannelDistribution(diagnostic)}</span>
                     </div>
                     <div className="voice-diagnostics-actions">
                       <button

@@ -175,6 +175,20 @@ export function sortVoiceDiagnosticsForDisplay(
 export function formatVoiceDiagnosticSummary(diagnostic: VoiceDiagnostic): string {
   return `${diagnostic.label}: ${diagnostic.noteCount} notes, span ${diagnostic.pitchSpan} semitones, ${diagnostic.largeLeapCount} large leaps, ${diagnostic.lowConfidenceNoteCount} low-confidence notes`;
 }
+export function formatVoiceChannelDistribution(diagnostic: VoiceDiagnostic): string {
+  const entries = Object.entries(diagnostic.channelDistribution)
+    .map(([channel, count]) => ({ channel: Number(channel), count }))
+    .sort((left, right) => right.count - left.count || left.channel - right.channel);
+  if (entries.length === 0) {
+    return "Channels: none";
+  }
+
+  const parts = entries.map(({ channel, count }) => {
+    const ratio = diagnostic.noteCount > 0 ? count / diagnostic.noteCount : 0;
+    return `Channel ${channel + 1}: ${count} (${Math.round(ratio * 100)}%)`;
+  });
+  return `Channels: ${parts.join(", ")}`;
+}
 function largestPitchGapThreshold(pitches: readonly number[]): number {
   const uniquePitches = [...new Set(pitches)].sort((left, right) => left - right);
   const midpoint = (uniquePitches[0] + uniquePitches[uniquePitches.length - 1]) / 2;
