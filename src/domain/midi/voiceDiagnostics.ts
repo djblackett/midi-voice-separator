@@ -152,7 +152,25 @@ export function sortVoiceDiagnosticsForDisplay(
 export function formatVoiceDiagnosticSummary(diagnostic: VoiceDiagnostic): string {
   return `${diagnostic.label}: ${diagnostic.noteCount} notes, span ${diagnostic.pitchSpan} semitones, ${diagnostic.largeLeapCount} large leaps, ${diagnostic.lowConfidenceNoteCount} low-confidence notes`;
 }
+function largestPitchGapThreshold(pitches: readonly number[]): number {
+  const uniquePitches = [...new Set(pitches)].sort((left, right) => left - right);
+  const midpoint = (uniquePitches[0] + uniquePitches[uniquePitches.length - 1]) / 2;
+  let bestLowerPitch = uniquePitches[0];
+  let bestGap = 0;
 
+  for (let index = 1; index < uniquePitches.length; index += 1) {
+    const lowerPitch = uniquePitches[index - 1];
+    const gap = uniquePitches[index] - lowerPitch;
+    const isBetterTie =
+      gap === bestGap && Math.abs(lowerPitch - midpoint) < Math.abs(bestLowerPitch - midpoint);
+    if (gap > bestGap || isBetterTie) {
+      bestGap = gap;
+      bestLowerPitch = lowerPitch;
+    }
+  }
+
+  return bestLowerPitch;
+}
 export function buildSplitVoiceByPitchRepair(
   notes: readonly MidiNote[],
   voiceOrder: readonly string[],
@@ -165,7 +183,7 @@ export function buildSplitVoiceByPitchRepair(
   }
 
   const pitches = sourceNotes.map((note) => note.pitch);
-  const splitThreshold = threshold ?? Math.floor((Math.min(...pitches) + Math.max(...pitches)) / 2);
+  const splitThreshold = threshold ?? largestPitchGapThreshold(pitches);
   const movedNotes = sourceNotes.filter((note) => note.pitch > splitThreshold);
   if (movedNotes.length === 0 || movedNotes.length === sourceNotes.length) {
     return null;

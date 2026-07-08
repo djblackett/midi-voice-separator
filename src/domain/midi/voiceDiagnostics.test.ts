@@ -223,7 +223,7 @@ describe("recommendSeparationAction", () => {
 });
 
 describe("buildSplitVoiceByPitchRepair", () => {
-  it("moves notes above the midpoint into a new voice and appends it to voice order", () => {
+  it("moves notes above the selected pitch gap into a new voice and appends it to voice order", () => {
     const repair = buildSplitVoiceByPitchRepair(
       [
         note("low", "voice-1", 40, 0),
@@ -243,6 +243,23 @@ describe("buildSplitVoiceByPitchRepair", () => {
       movedNoteIds: ["high"],
       voiceOrder: ["voice-1", "voice-2", "voice-3"],
     });
+  });
+
+  it("uses the largest pitch gap instead of the numeric midpoint by default", () => {
+    const repair = buildSplitVoiceByPitchRepair(
+      [
+        note("bass", "voice-1", 20, 0),
+        note("lead-a", "voice-1", 60, 120),
+        note("lead-b", "voice-1", 62, 240),
+        note("lead-c", "voice-1", 64, 360),
+        note("accent", "voice-1", 90, 480),
+      ],
+      ["voice-1"],
+      "voice-1",
+    );
+
+    expect(repair?.threshold).toBe(20);
+    expect(repair?.movedNoteIds).toEqual(["lead-a", "lead-b", "lead-c", "accent"]);
   });
 
   it("accepts an explicit split threshold", () => {
