@@ -41,6 +41,8 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
+  formatSplitVoiceByChannelRepairLabel,
+  formatSplitVoiceByPitchRepairLabel,
   formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
   noteIdsForVoice,
@@ -153,6 +155,32 @@ export default function App() {
     () => sortVoiceDiagnosticsForDisplay(voiceDiagnostics),
     [voiceDiagnostics],
   );
+  const voiceSplitPreviews = useMemo(() => {
+    const previews = new Map<
+      string,
+      {
+        channelRepair: ReturnType<typeof buildSplitVoiceByChannelRepair>;
+        pitchRepair: ReturnType<typeof buildSplitVoiceByPitchRepair>;
+      }
+    >();
+    if (!displayedProject) {
+      return previews;
+    }
+
+    for (const diagnostic of voiceDiagnostics) {
+      previews.set(diagnostic.voiceId, {
+        channelRepair: buildSplitVoiceByChannelRepair(
+          displayedProject.notes,
+          voiceOrder,
+          diagnostic.voiceId,
+        ),
+        pitchRepair: diagnostic.suspicious
+          ? buildSplitVoiceByPitchRepair(displayedProject.notes, voiceOrder, diagnostic.voiceId)
+          : null,
+      });
+    }
+    return previews;
+  }, [displayedProject, voiceDiagnostics, voiceOrder]);
   const suspiciousVoiceCount = voiceDiagnostics.filter(
     (diagnostic) => diagnostic.suspicious,
   ).length;
@@ -861,51 +889,54 @@ export default function App() {
             ) : null}
             {sortedVoiceDiagnostics.length > 0 ? (
               <ul className="voice-diagnostics-list">
-                {sortedVoiceDiagnostics.map((diagnostic) => (
-                  <li
-                    key={diagnostic.voiceId}
-                    className={diagnostic.suspicious ? "suspicious" : undefined}
-                  >
-                    <div>
-                      <strong>{formatVoiceDiagnosticSummary(diagnostic)}</strong>
-                      <span>
-                        {diagnostic.suspiciousReasons.length > 0
-                          ? `Reasons: ${diagnostic.suspiciousReasons.join(", ")}`
-                          : "No obvious sanity flags."}
-                      </span>
-                      <span>{formatVoiceChannelDistribution(diagnostic)}</span>
-                    </div>
-                    <div className="voice-diagnostics-actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => handleInspectDiagnosticVoice(diagnostic.voiceId)}
-                      >
-                        Focus in roll
-                      </button>
-                      {Object.keys(diagnostic.channelDistribution).length > 1 ? (
+                {sortedVoiceDiagnostics.map((diagnostic) => {
+                  const splitPreview = voiceSplitPreviews.get(diagnostic.voiceId);
+                  return (
+                    <li
+                      key={diagnostic.voiceId}
+                      className={diagnostic.suspicious ? "suspicious" : undefined}
+                    >
+                      <div>
+                        <strong>{formatVoiceDiagnosticSummary(diagnostic)}</strong>
+                        <span>
+                          {diagnostic.suspiciousReasons.length > 0
+                            ? `Reasons: ${diagnostic.suspiciousReasons.join(", ")}`
+                            : "No obvious sanity flags."}
+                        </span>
+                        <span>{formatVoiceChannelDistribution(diagnostic)}</span>
+                      </div>
+                      <div className="voice-diagnostics-actions">
                         <button
                           type="button"
                           className="secondary-button"
-                          onClick={() => handleSplitVoiceByChannel(diagnostic.voiceId)}
-                          disabled={isReassigning}
+                          onClick={() => handleInspectDiagnosticVoice(diagnostic.voiceId)}
                         >
-                          Split by channel
+                          Focus in roll
                         </button>
-                      ) : null}
-                      {diagnostic.suspicious ? (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
-                          disabled={isReassigning}
-                        >
-                          Split by pitch
-                        </button>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
+                        {splitPreview?.channelRepair ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => handleSplitVoiceByChannel(diagnostic.voiceId)}
+                            disabled={isReassigning}
+                          >
+                            {formatSplitVoiceByChannelRepairLabel(splitPreview.channelRepair)}
+                          </button>
+                        ) : null}
+                        {splitPreview?.pitchRepair ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
+                            disabled={isReassigning}
+                          >
+                            {formatSplitVoiceByPitchRepairLabel(splitPreview.pitchRepair)}
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="voice-diagnostics-empty">No voices to diagnose.</p>

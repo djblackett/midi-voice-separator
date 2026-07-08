@@ -1,6 +1,8 @@
 import {
   LOW_CONFIDENCE_THRESHOLD,
   STRATEGY_LABELS,
+  formatMidiChannel,
+  formatPitchName,
   type MidiNote,
   type MidiProject,
 } from "./midiProject";
@@ -189,6 +191,19 @@ export function formatVoiceChannelDistribution(diagnostic: VoiceDiagnostic): str
   });
   return `Channels: ${parts.join(", ")}`;
 }
+
+function formatMovedNoteCount(count: number): string {
+  return `${count} ${count === 1 ? "note" : "notes"}`;
+}
+
+export function formatSplitVoiceByPitchRepairLabel(repair: SplitVoiceByPitchRepair): string {
+  return `Split above ${formatPitchName(repair.threshold)} (${formatMovedNoteCount(repair.movedNoteIds.length)})`;
+}
+
+export function formatSplitVoiceByChannelRepairLabel(repair: SplitVoiceByChannelRepair): string {
+  return `Split ${formatMidiChannel(repair.movedChannel)} (${formatMovedNoteCount(repair.movedNoteIds.length)})`;
+}
+
 function largestPitchGapThreshold(pitches: readonly number[]): number {
   const uniquePitches = [...new Set(pitches)].sort((left, right) => left - right);
   const midpoint = (uniquePitches[0] + uniquePitches[uniquePitches.length - 1]) / 2;

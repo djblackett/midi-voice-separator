@@ -4,6 +4,8 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
+  formatSplitVoiceByChannelRepairLabel,
+  formatSplitVoiceByPitchRepairLabel,
   formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
   maxSimultaneousPolyphony,
@@ -177,6 +179,29 @@ describe("diagnostic display helpers", () => {
 
     expect(formatVoiceChannelDistribution(diagnostic)).toBe(
       "Channels: Channel 3: 2 (67%), Channel 1: 1 (33%)",
+    );
+  });
+  it("formats split repair button labels with the chosen cutoff or channel", () => {
+    const pitchRepair = buildSplitVoiceByPitchRepair(
+      [note("low", "voice-1", 36, 0), note("high", "voice-1", 72, 120)],
+      ["voice-1"],
+      "voice-1",
+    );
+    const channelRepair = buildSplitVoiceByChannelRepair(
+      [
+        note("lead-a", "voice-1", 72, 0, { channel: 2 }),
+        note("lead-b", "voice-1", 74, 120, { channel: 2 }),
+        note("bass", "voice-1", 40, 240, { channel: 0 }),
+      ],
+      ["voice-1"],
+      "voice-1",
+    );
+
+    expect(pitchRepair && formatSplitVoiceByPitchRepairLabel(pitchRepair)).toBe(
+      "Split above C2 (1 note)",
+    );
+    expect(channelRepair && formatSplitVoiceByChannelRepairLabel(channelRepair)).toBe(
+      "Split Channel 1 (1 note)",
     );
   });
 });
