@@ -51,6 +51,13 @@ export interface SplitVoiceByChannelRepair {
   voiceOrder: string[];
 }
 
+export interface SplitAllMixedChannelsRepair {
+  repairs: SplitVoiceByChannelRepair[];
+  overrides: VoiceOverrides;
+  movedNoteIds: string[];
+  voiceOrder: string[];
+}
+
 export interface SeparationRecommendation {
   message: string;
   maxPolyphony: number;
@@ -312,6 +319,41 @@ export function buildSplitVoiceByChannelRepair(
     voiceOrder: [...voiceOrder, newVoiceId],
   };
 }
+
+export function buildSplitAllMixedChannelsRepair(
+  notes: readonly MidiNote[],
+  voiceOrder: readonly string[],
+  sourceVoiceIds: readonly string[],
+): SplitAllMixedChannelsRepair | null {
+  let nextVoiceOrder = [...voiceOrder];
+  const repairs: SplitVoiceByChannelRepair[] = [];
+  const overrides: VoiceOverrides = {};
+  const movedNoteIds: string[] = [];
+
+  for (const sourceVoiceId of sourceVoiceIds) {
+    const repair = buildSplitVoiceByChannelRepair(notes, nextVoiceOrder, sourceVoiceId);
+    if (!repair) {
+      continue;
+    }
+
+    repairs.push(repair);
+    Object.assign(overrides, repair.overrides);
+    movedNoteIds.push(...repair.movedNoteIds);
+    nextVoiceOrder = repair.voiceOrder;
+  }
+
+  if (repairs.length === 0) {
+    return null;
+  }
+
+  return {
+    repairs,
+    overrides,
+    movedNoteIds,
+    voiceOrder: nextVoiceOrder,
+  };
+}
+
 export function maxSimultaneousPolyphony(notes: readonly MidiNote[]): number {
   const events = notes.flatMap((note) => [
     { tick: note.startTick, delta: 1 },

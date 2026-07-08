@@ -39,6 +39,7 @@ import {
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitAllMixedChannelsRepair,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
   formatSplitVoiceByChannelRepairLabel,
@@ -197,6 +198,9 @@ export default function App() {
     }
     return noteIdsByVoice;
   }, [displayedProject, voiceDiagnostics]);
+  const channelSplitVoiceIds = sortedVoiceDiagnostics
+    .filter((diagnostic) => voiceSplitPreviews.get(diagnostic.voiceId)?.channelRepair)
+    .map((diagnostic) => diagnostic.voiceId);
   const suspiciousVoiceCount = voiceDiagnostics.filter(
     (diagnostic) => diagnostic.suspicious,
   ).length;
@@ -673,6 +677,43 @@ export default function App() {
     setExportResult(null);
   }
 
+  function handleSplitAllMixedChannels() {
+    if (!displayedProject || channelSplitVoiceIds.length === 0) {
+      return;
+    }
+
+    const repair = buildSplitAllMixedChannelsRepair(
+      displayedProject.notes,
+      voiceOrder,
+      channelSplitVoiceIds,
+    );
+    if (!repair) {
+      return;
+    }
+
+    const sourceLabels = new Map(displayedProject.voices.map((voice) => [voice.id, voice.label]));
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
+    setVoiceOrder(repair.voiceOrder);
+    setVoiceLabels((currentLabels) => {
+      const nextLabels = { ...currentLabels };
+      for (const item of repair.repairs) {
+        const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
+        nextLabels[item.newVoiceId] = `${sourceLabel} ${formatMidiChannel(item.movedChannel)}`;
+      }
+      return nextLabels;
+    });
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of repair.movedNoteIds) {
+        next.delete(noteId);
+      }
+      return next;
+    });
+    setSelectedNoteIds(new Set(repair.movedNoteIds));
+    setActiveVoiceId(repair.repairs[0]?.newVoiceId ?? null);
+    setExportResult(null);
+  }
   function handleSplitVoiceByChannel(voiceId: string) {
     if (!displayedProject) {
       return;
@@ -908,6 +949,18 @@ export default function App() {
             {separationRecommendation ? (
               <p className="voice-diagnostics-recommendation">{separationRecommendation.message}</p>
             ) : null}
+            {channelSplitVoiceIds.length > 1 ? (
+              <div className="voice-diagnostics-toolbar">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleSplitAllMixedChannels}
+                  disabled={isReassigning}
+                >
+                  Split all mixed-channel voices ({channelSplitVoiceIds.length})
+                </button>
+              </div>
+            ) : null}{" "}
             {sortedVoiceDiagnostics.length > 0 ? (
               <ul className="voice-diagnostics-list">
                 {sortedVoiceDiagnostics.map((diagnostic) => {

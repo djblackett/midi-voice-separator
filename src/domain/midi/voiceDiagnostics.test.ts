@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MidiNote, MidiProject, MidiVoice } from "./midiProject";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitAllMixedChannelsRepair,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
   flaggedNoteIdsForVoice,
@@ -388,6 +389,26 @@ describe("buildSplitVoiceByChannelRepair", () => {
   });
 });
 
+it("builds one batch repair for multiple mixed-channel voices", () => {
+  const repair = buildSplitAllMixedChannelsRepair(
+    [
+      note("v1-main", "voice-1", 72, 0, { channel: 2 }),
+      note("v1-move", "voice-1", 40, 120, { channel: 0 }),
+      note("v1-main-2", "voice-1", 74, 240, { channel: 2 }),
+      note("v2-main", "voice-2", 60, 0, { channel: 1 }),
+      note("v2-main-2", "voice-2", 62, 120, { channel: 1 }),
+      note("v2-move", "voice-2", 84, 240, { channel: 3 }),
+      note("clean", "voice-3", 50, 0, { channel: 0 }),
+    ],
+    ["voice-1", "voice-2", "voice-3"],
+    ["voice-1", "voice-2", "voice-3"],
+  );
+
+  expect(repair?.repairs.map((item) => item.newVoiceId)).toEqual(["voice-4", "voice-5"]);
+  expect(repair?.overrides).toEqual({ "v1-move": "voice-4", "v2-move": "voice-5" });
+  expect(repair?.movedNoteIds).toEqual(["v1-move", "v2-move"]);
+  expect(repair?.voiceOrder).toEqual(["voice-1", "voice-2", "voice-3", "voice-4", "voice-5"]);
+});
 describe("maxSimultaneousPolyphony", () => {
   it("counts overlapping notes and treats zero-length notes as one tick", () => {
     const notes = [

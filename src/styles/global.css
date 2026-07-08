@@ -276,6 +276,12 @@ button {
   font-size: 13px;
 }
 
+.voice-diagnostics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
 .voice-diagnostics-list {
   display: grid;
   gap: 8px;
