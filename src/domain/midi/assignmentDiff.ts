@@ -374,3 +374,47 @@ export function diffAssignments(before: DiffSide, after: DiffSide): DiffResult {
   const matching = matchVoices(before, after);
   return compareAssignments(before, after, matching);
 }
+
+/** Notes present on only one side -- neither reassigned nor unchanged, since there's nothing on the other side to compare against. */
+export function formatOnlyInOneSideSummary(diff: AssignmentDiff): string | null {
+  const { onlyInBeforeNoteIds, onlyInAfterNoteIds } = diff;
+  if (onlyInBeforeNoteIds.length === 0 && onlyInAfterNoteIds.length === 0) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (onlyInBeforeNoteIds.length > 0) {
+    parts.push(`${onlyInBeforeNoteIds.length} only in the earlier state`);
+  }
+  if (onlyInAfterNoteIds.length > 0) {
+    parts.push(`${onlyInAfterNoteIds.length} only in the current state`);
+  }
+  return `${parts.join(", ")}.`;
+}
+
+export function formatPercussionDelta(delta: PercussionDelta): string {
+  return delta.beforeCount === delta.afterCount
+    ? `${delta.afterCount} percussion notes (unchanged).`
+    : `Percussion notes: ${delta.beforeCount} → ${delta.afterCount}.`;
+}
+
+/** Confidence deltas are only meaningful within one strategy/search-mode pair (C5). */
+export function formatConfidenceDelta(diff: AssignmentDiff): string {
+  if (!diff.confidenceComparable || !diff.confidence) {
+    return "Not comparable — the two sides used a different strategy or search mode.";
+  }
+
+  const { improvedNoteIds, worsenedNoteIds } = diff.confidence;
+  if (improvedNoteIds.length === 0 && worsenedNoteIds.length === 0) {
+    return "No confidence change.";
+  }
+
+  const parts: string[] = [];
+  if (improvedNoteIds.length > 0) {
+    parts.push(`${improvedNoteIds.length} improved`);
+  }
+  if (worsenedNoteIds.length > 0) {
+    parts.push(`${worsenedNoteIds.length} worsened`);
+  }
+  return `${parts.join(", ")}.`;
+}

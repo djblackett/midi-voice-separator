@@ -3,6 +3,9 @@ import type { MidiNote, MidiVoice } from "./midiProject";
 import {
   compareAssignments,
   diffAssignments,
+  formatConfidenceDelta,
+  formatOnlyInOneSideSummary,
+  formatPercussionDelta,
   matchVoices,
   toDiffSide,
   type AssignmentDiff,
@@ -403,5 +406,86 @@ describe("toDiffSide", () => {
     expect(result?.voices.map((v) => v.id)).toEqual(["voice-1", "voice-2"]);
     expect(result?.voices.find((v) => v.id === "voice-2")?.label).toBe("New voice");
     expect(result?.lockedNoteIds.has("b")).toBe(true);
+  });
+});
+
+describe("formatOnlyInOneSideSummary", () => {
+  function diffWith(onlyInBefore: string[], onlyInAfter: string[]): AssignmentDiff {
+    return {
+      comparable: true,
+      changedNoteIds: [],
+      onlyInBeforeNoteIds: onlyInBefore,
+      onlyInAfterNoteIds: onlyInAfter,
+      addedVoiceIds: [],
+      removedVoiceIds: [],
+      changedVoiceLabels: [],
+      locksPreservedCount: 0,
+      percussionDelta: null,
+      confidenceComparable: true,
+      confidence: { improvedNoteIds: [], worsenedNoteIds: [] },
+    };
+  }
+
+  it("returns null when every note is shared", () => {
+    expect(formatOnlyInOneSideSummary(diffWith([], []))).toBeNull();
+  });
+
+  it("reports both counts when notes exist on only one side each", () => {
+    expect(formatOnlyInOneSideSummary(diffWith(["a"], ["b", "c"]))).toBe(
+      "1 only in the earlier state, 2 only in the current state.",
+    );
+  });
+});
+
+describe("formatPercussionDelta", () => {
+  it("reports 'unchanged' when the count didn't move", () => {
+    expect(formatPercussionDelta({ beforeCount: 5, afterCount: 5 })).toBe(
+      "5 percussion notes (unchanged).",
+    );
+  });
+
+  it("shows the before -> after arrow when the count changed", () => {
+    expect(formatPercussionDelta({ beforeCount: 5, afterCount: 3 })).toBe(
+      "Percussion notes: 5 → 3.",
+    );
+  });
+});
+
+describe("formatConfidenceDelta", () => {
+  function diffWith(overrides: Partial<AssignmentDiff>): AssignmentDiff {
+    return {
+      comparable: true,
+      changedNoteIds: [],
+      onlyInBeforeNoteIds: [],
+      onlyInAfterNoteIds: [],
+      addedVoiceIds: [],
+      removedVoiceIds: [],
+      changedVoiceLabels: [],
+      locksPreservedCount: 0,
+      percussionDelta: null,
+      confidenceComparable: true,
+      confidence: { improvedNoteIds: [], worsenedNoteIds: [] },
+      ...overrides,
+    };
+  }
+
+  it("explains why when not comparable, regardless of confidence contents", () => {
+    expect(formatConfidenceDelta(diffWith({ confidenceComparable: false, confidence: null }))).toBe(
+      "Not comparable — the two sides used a different strategy or search mode.",
+    );
+  });
+
+  it("reports 'no change' when comparable but nothing crossed the threshold", () => {
+    expect(formatConfidenceDelta(diffWith({}))).toBe("No confidence change.");
+  });
+
+  it("reports both improved and worsened counts when comparable", () => {
+    expect(
+      formatConfidenceDelta(
+        diffWith({
+          confidence: { improvedNoteIds: ["a", "b"], worsenedNoteIds: ["c"] },
+        }),
+      ),
+    ).toBe("2 improved, 1 worsened.");
   });
 });

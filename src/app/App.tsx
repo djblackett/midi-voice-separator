@@ -73,10 +73,18 @@ import {
   appendSnapshot,
   createNamedSnapshot,
   formatSnapshotSummary,
+  formatSnapshotTimestamp,
   restoreEditorState,
   type NamedSnapshot,
   type RerunSettings,
 } from "./editorSnapshots";
+import {
+  diffAssignments,
+  formatConfidenceDelta,
+  formatOnlyInOneSideSummary,
+  formatPercussionDelta,
+  toDiffSide,
+} from "../domain/midi/assignmentDiff";
 import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
@@ -138,6 +146,7 @@ export default function App() {
   const [instrument, setInstrument] = useState<Instrument>("chiptune");
   const [namedSnapshots, setNamedSnapshots] = useState<NamedSnapshot[]>([]);
   const [snapshotNameDraft, setSnapshotNameDraft] = useState("");
+  const [diffTargetId, setDiffTargetId] = useState("");
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -222,6 +231,36 @@ export default function App() {
   const separationRecommendation = displayedProject
     ? recommendSeparationAction(displayedProject, voiceDiagnostics, selectedMaxVoiceCount)
     : null;
+  const currentRerunSettings = useMemo(
+    () => ({
+      strategy: separationStrategy,
+      assignmentMode,
+      maxVoiceCount: selectedMaxVoiceCount ?? null,
+    }),
+    [separationStrategy, assignmentMode, selectedMaxVoiceCount],
+  );
+  const importSnapshot = namedSnapshots.find((entry) => entry.source === "import");
+  const mostRecentSnapshot =
+    namedSnapshots.length > 0 ? namedSnapshots[namedSnapshots.length - 1] : undefined;
+  const diffTarget = namedSnapshots.find((entry) => entry.id === diffTargetId) ?? null;
+  // Diffs the selected snapshot (the reference/"before" side) against the
+  // live current state ("after"), never a raw project or override map
+  // alone (C6) -- toDiffSide reconstructs the same displayed composition
+  // App.tsx itself renders.
+  const assignmentDiffResult = useMemo(() => {
+    if (!diffTarget) {
+      return null;
+    }
+    const targetSide = toDiffSide(diffTarget.state, diffTarget.rerunSettings);
+    const currentSide = toDiffSide(
+      { project, voiceOverrides, voiceOrder, voiceLabels },
+      currentRerunSettings,
+    );
+    if (!targetSide || !currentSide) {
+      return null;
+    }
+    return diffAssignments(targetSide, currentSide);
+  }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, currentRerunSettings]);
   const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -401,6 +440,7 @@ export default function App() {
         "import",
       ),
     ]);
+    setDiffTargetId("");
   }
 
   async function handleImport() {
@@ -638,6 +678,7 @@ export default function App() {
 
   function handleDeleteSnapshot(id: string) {
     setNamedSnapshots((current) => current.filter((entry) => entry.id !== id));
+    setDiffTargetId((current) => (current === id ? "" : current));
   }
 
   // Settings travel with a snapshot but only apply on request -- restoring
@@ -1449,6 +1490,93 @@ export default function App() {
             </ul>
           ) : (
             <p className="snapshot-list-empty">No snapshots yet.</p>
+          )}
+        </section>
+      ) : null}
+
+      {displayedProject ? (
+        <section className="diff-summary" aria-label="Assignment diff summary">
+          <div className="diff-summary-header">
+            <h2>What changed?</h2>
+            <label className="diff-target-label">
+              Compare current to
+              <select
+                className="diff-target-select"
+                value={diffTargetId}
+                onChange={(event) => setDiffTargetId(event.target.value)}
+                aria-label="Snapshot to compare the current state against"
+              >
+                <option value="">No comparison</option>
+                {importSnapshot ? (
+                  <option value={importSnapshot.id}>
+                    Import ({formatSnapshotTimestamp(importSnapshot.createdAt)})
+                  </option>
+                ) : null}
+                {mostRecentSnapshot && mostRecentSnapshot.id !== importSnapshot?.id ? (
+                  <option value={mostRecentSnapshot.id}>
+                    Most recent snapshot ({formatSnapshotTimestamp(mostRecentSnapshot.createdAt)})
+                  </option>
+                ) : null}
+                {namedSnapshots
+                  .filter(
+                    (entry) =>
+                      entry.id !== importSnapshot?.id && entry.id !== mostRecentSnapshot?.id,
+                  )
+                  .slice()
+                  .reverse()
+                  .map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+          {!diffTargetId ? (
+            <p className="diff-summary-empty">Choose a snapshot above to see what changed.</p>
+          ) : !assignmentDiffResult ? (
+            <p className="diff-summary-empty">Nothing to compare yet.</p>
+          ) : !assignmentDiffResult.comparable ? (
+            <p className="diff-summary-incomparable">{assignmentDiffResult.reason}</p>
+          ) : (
+            <>
+              <dl className="diff-summary-stats">
+                <div>
+                  <dt>Notes reassigned</dt>
+                  <dd>{assignmentDiffResult.changedNoteIds.length}</dd>
+                </div>
+                <div>
+                  <dt>Voices added</dt>
+                  <dd>{assignmentDiffResult.addedVoiceIds.length}</dd>
+                </div>
+                <div>
+                  <dt>Voices removed</dt>
+                  <dd>{assignmentDiffResult.removedVoiceIds.length}</dd>
+                </div>
+                <div>
+                  <dt>Labels changed</dt>
+                  <dd>{assignmentDiffResult.changedVoiceLabels.length}</dd>
+                </div>
+                <div>
+                  <dt>Locks preserved</dt>
+                  <dd>{assignmentDiffResult.locksPreservedCount}</dd>
+                </div>
+                <div>
+                  <dt>Confidence</dt>
+                  <dd>{formatConfidenceDelta(assignmentDiffResult)}</dd>
+                </div>
+              </dl>
+              {assignmentDiffResult.percussionDelta ? (
+                <p className="diff-summary-note">
+                  {formatPercussionDelta(assignmentDiffResult.percussionDelta)}
+                </p>
+              ) : null}
+              {formatOnlyInOneSideSummary(assignmentDiffResult) ? (
+                <p className="diff-summary-note">
+                  {formatOnlyInOneSideSummary(assignmentDiffResult)}
+                </p>
+              ) : null}
+            </>
           )}
         </section>
       ) : null}
