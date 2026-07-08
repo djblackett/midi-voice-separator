@@ -1,10 +1,12 @@
 import type { AssignmentMode } from "../lib/tauri/commands";
-import {
-  STRATEGY_LABELS,
-  type MidiProject,
-  type SeparationStrategy,
-} from "../domain/midi/midiProject";
+import { STRATEGY_LABELS, type SeparationStrategy } from "../domain/midi/midiProject";
+import { materializeAssignments } from "../domain/midi/voiceAssignments";
 import type { EditorSnapshot } from "./editorHistory";
+
+// Re-exported for callers that already import it from here; the
+// implementation lives in domain/midi/voiceAssignments.ts alongside
+// applyVoiceOverrides, which computes the same composition per-note.
+export { materializeAssignments };
 
 export type SnapshotSource = "import" | "manual" | "before-rerun" | "after-rerun" | "restore";
 
@@ -130,23 +132,4 @@ export function appendSnapshot(
     ...afterRerunIds.slice(0, Math.max(0, afterRerunIds.length - AUTO_SNAPSHOT_SOURCE_CAP)),
   ]);
   return droppedIds.size === 0 ? next : next.filter((entry) => !droppedIds.has(entry.id));
-}
-
-/**
- * The materialized (displayed) voice assignment for every note: the override
- * if one exists, otherwise the note's own `voiceId`. This is the composition
- * `displayedProject` already uses (`applyVoiceOverrides`) and must be the
- * single basis for any assignment comparison — never the raw project or the
- * override map alone, since either one in isolation omits information the
- * other supplies.
- */
-export function materializeAssignments(
-  project: MidiProject,
-  voiceOverrides: Record<string, string>,
-): ReadonlyMap<string, string> {
-  const assignments = new Map<string, string>();
-  for (const note of project.notes) {
-    assignments.set(note.id, voiceOverrides[note.id] ?? note.voiceId);
-  }
-  return assignments;
 }

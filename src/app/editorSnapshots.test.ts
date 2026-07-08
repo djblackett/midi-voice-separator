@@ -8,7 +8,6 @@ import {
   formatSnapshotSource,
   formatSnapshotSummary,
   formatSnapshotTimestamp,
-  materializeAssignments,
   resetSnapshotIdSequence,
   restoreEditorState,
   type NamedSnapshot,
@@ -220,24 +219,5 @@ describe("formatSnapshotSummary", () => {
     expect(formatSnapshotSummary(snapshot)).toBe(
       `${formatSnapshotSource("before-rerun")} · ${formatSnapshotTimestamp(0)} · ${formatRerunSettings(rerunSettings)}`,
     );
-  });
-});
-
-describe("materializeAssignments", () => {
-  it("uses the override when one exists, otherwise the note's own voiceId", () => {
-    const proj = project([note("a", "voice-1"), note("b", "voice-1")]);
-
-    const assignments = materializeAssignments(proj, { a: "voice-2" });
-
-    expect(assignments.get("a")).toBe("voice-2");
-    expect(assignments.get("b")).toBe("voice-1");
-  });
-
-  it("matches the same composition applyVoiceOverrides uses", () => {
-    const proj = project([note("a", "voice-1")]);
-
-    const assignments = materializeAssignments(proj, {});
-
-    expect(assignments.get("a")).toBe("voice-1");
   });
 });

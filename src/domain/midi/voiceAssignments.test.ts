@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MidiProject } from "./midiProject";
-import { applyVoiceOverrides, voiceIdForNumber } from "./voiceAssignments";
+import { applyVoiceOverrides, materializeAssignments, voiceIdForNumber } from "./voiceAssignments";
 
 const project: MidiProject = {
   fileName: "song.mid",
@@ -73,6 +73,26 @@ describe("applyVoiceOverrides", () => {
 
     expect(derived.notes[0].voiceId).toBe("voice-1");
     expect(derived.notes[2].voiceId).toBe("voice-2");
+  });
+});
+
+describe("materializeAssignments", () => {
+  it("uses the override when one exists, otherwise the note's own voiceId", () => {
+    const assignments = materializeAssignments(project, { "note-2": "voice-2" });
+
+    expect(assignments.get("note-1")).toBe("voice-1");
+    expect(assignments.get("note-2")).toBe("voice-2");
+    expect(assignments.get("note-3")).toBe("voice-2");
+  });
+
+  it("matches the same composition applyVoiceOverrides uses", () => {
+    const overrides = { "note-2": "voice-2" };
+    const applied = applyVoiceOverrides(project, overrides);
+    const assignments = materializeAssignments(project, overrides);
+
+    for (const note of applied.notes) {
+      expect(assignments.get(note.id)).toBe(note.voiceId);
+    }
   });
 });
 
