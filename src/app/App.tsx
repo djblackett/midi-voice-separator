@@ -39,6 +39,7 @@ import {
 import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitAllWidePitchRepair,
   buildSplitAllMixedChannelsRepair,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
@@ -200,6 +201,9 @@ export default function App() {
   }, [displayedProject, voiceDiagnostics]);
   const channelSplitVoiceIds = sortedVoiceDiagnostics
     .filter((diagnostic) => voiceSplitPreviews.get(diagnostic.voiceId)?.channelRepair)
+    .map((diagnostic) => diagnostic.voiceId);
+  const pitchSplitVoiceIds = sortedVoiceDiagnostics
+    .filter((diagnostic) => voiceSplitPreviews.get(diagnostic.voiceId)?.pitchRepair)
     .map((diagnostic) => diagnostic.voiceId);
   const suspiciousVoiceCount = voiceDiagnostics.filter(
     (diagnostic) => diagnostic.suspicious,
@@ -677,6 +681,43 @@ export default function App() {
     setExportResult(null);
   }
 
+  function handleSplitAllWidePitchVoices() {
+    if (!displayedProject || pitchSplitVoiceIds.length === 0) {
+      return;
+    }
+
+    const repair = buildSplitAllWidePitchRepair(
+      displayedProject.notes,
+      voiceOrder,
+      pitchSplitVoiceIds,
+    );
+    if (!repair) {
+      return;
+    }
+
+    const sourceLabels = new Map(displayedProject.voices.map((voice) => [voice.id, voice.label]));
+    pushHistorySnapshot();
+    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
+    setVoiceOrder(repair.voiceOrder);
+    setVoiceLabels((currentLabels) => {
+      const nextLabels = { ...currentLabels };
+      for (const item of repair.repairs) {
+        const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
+        nextLabels[item.newVoiceId] = `${sourceLabel} high`;
+      }
+      return nextLabels;
+    });
+    setRangeAssignedNoteIds((current) => {
+      const next = new Set(current);
+      for (const noteId of repair.movedNoteIds) {
+        next.delete(noteId);
+      }
+      return next;
+    });
+    setSelectedNoteIds(new Set(repair.movedNoteIds));
+    setActiveVoiceId(repair.repairs[0]?.newVoiceId ?? null);
+    setExportResult(null);
+  }
   function handleSplitAllMixedChannels() {
     if (!displayedProject || channelSplitVoiceIds.length === 0) {
       return;
@@ -948,19 +989,31 @@ export default function App() {
             </summary>
             {separationRecommendation ? (
               <p className="voice-diagnostics-recommendation">{separationRecommendation.message}</p>
-            ) : null}
-            {channelSplitVoiceIds.length > 1 ? (
-              <div className="voice-diagnostics-toolbar">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleSplitAllMixedChannels}
-                  disabled={isReassigning}
-                >
-                  Split all mixed-channel voices ({channelSplitVoiceIds.length})
-                </button>
-              </div>
             ) : null}{" "}
+            {channelSplitVoiceIds.length > 1 || pitchSplitVoiceIds.length > 1 ? (
+              <div className="voice-diagnostics-toolbar">
+                {channelSplitVoiceIds.length > 1 ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleSplitAllMixedChannels}
+                    disabled={isReassigning}
+                  >
+                    Split all mixed-channel voices ({channelSplitVoiceIds.length})
+                  </button>
+                ) : null}
+                {pitchSplitVoiceIds.length > 1 ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleSplitAllWidePitchVoices}
+                    disabled={isReassigning}
+                  >
+                    Split all wide voices ({pitchSplitVoiceIds.length})
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {sortedVoiceDiagnostics.length > 0 ? (
               <ul className="voice-diagnostics-list">
                 {sortedVoiceDiagnostics.map((diagnostic) => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MidiNote, MidiProject, MidiVoice } from "./midiProject";
 import {
   analyzeVoiceDiagnostics,
+  buildSplitAllWidePitchRepair,
   buildSplitAllMixedChannelsRepair,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
@@ -352,6 +353,24 @@ describe("buildSplitVoiceByPitchRepair", () => {
   });
 });
 
+it("builds one batch repair for multiple wide-pitch voices", () => {
+  const repair = buildSplitAllWidePitchRepair(
+    [
+      note("v1-low", "voice-1", 30, 0),
+      note("v1-high", "voice-1", 78, 120),
+      note("v2-low", "voice-2", 35, 0),
+      note("v2-high", "voice-2", 82, 120),
+      note("clean", "voice-3", 50, 0),
+    ],
+    ["voice-1", "voice-2", "voice-3"],
+    ["voice-1", "voice-2", "voice-3"],
+  );
+
+  expect(repair?.repairs.map((item) => item.newVoiceId)).toEqual(["voice-4", "voice-5"]);
+  expect(repair?.overrides).toEqual({ "v1-high": "voice-4", "v2-high": "voice-5" });
+  expect(repair?.movedNoteIds).toEqual(["v1-high", "v2-high"]);
+  expect(repair?.voiceOrder).toEqual(["voice-1", "voice-2", "voice-3", "voice-4", "voice-5"]);
+});
 describe("buildSplitVoiceByChannelRepair", () => {
   it("moves the largest non-dominant channel into a new voice", () => {
     const repair = buildSplitVoiceByChannelRepair(

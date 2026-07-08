@@ -58,6 +58,13 @@ export interface SplitAllMixedChannelsRepair {
   voiceOrder: string[];
 }
 
+export interface SplitAllWidePitchRepair {
+  repairs: SplitVoiceByPitchRepair[];
+  overrides: VoiceOverrides;
+  movedNoteIds: string[];
+  voiceOrder: string[];
+}
+
 export interface SeparationRecommendation {
   message: string;
   maxPolyphony: number;
@@ -276,6 +283,40 @@ export function buildSplitVoiceByPitchRepair(
     overrides,
     movedNoteIds: movedNotes.map((note) => note.id),
     voiceOrder: [...voiceOrder, newVoiceId],
+  };
+}
+
+export function buildSplitAllWidePitchRepair(
+  notes: readonly MidiNote[],
+  voiceOrder: readonly string[],
+  sourceVoiceIds: readonly string[],
+): SplitAllWidePitchRepair | null {
+  let nextVoiceOrder = [...voiceOrder];
+  const repairs: SplitVoiceByPitchRepair[] = [];
+  const overrides: VoiceOverrides = {};
+  const movedNoteIds: string[] = [];
+
+  for (const sourceVoiceId of sourceVoiceIds) {
+    const repair = buildSplitVoiceByPitchRepair(notes, nextVoiceOrder, sourceVoiceId);
+    if (!repair) {
+      continue;
+    }
+
+    repairs.push(repair);
+    Object.assign(overrides, repair.overrides);
+    movedNoteIds.push(...repair.movedNoteIds);
+    nextVoiceOrder = repair.voiceOrder;
+  }
+
+  if (repairs.length === 0) {
+    return null;
+  }
+
+  return {
+    repairs,
+    overrides,
+    movedNoteIds,
+    voiceOrder: nextVoiceOrder,
   };
 }
 
