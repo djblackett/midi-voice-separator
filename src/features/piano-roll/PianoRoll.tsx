@@ -55,6 +55,12 @@ interface PianoRollProps {
   currentPlaybackTick?: number | null;
   isPlaying?: boolean;
   onSeek?: (tick: number) => void;
+  /** Note ids the active diff comparison reports as reassigned (Slice 4). */
+  changedNoteIds?: ReadonlySet<string>;
+  /** noteId -> voiceId on the diff's compared ("before") side, for the changed-note edge cue's color. */
+  previousVoiceId?: ReadonlyMap<string, string>;
+  /** When true, only draw notes in `changedNoteIds`. */
+  onlyChangedNotes?: boolean;
 }
 
 export function PianoRoll({
@@ -70,6 +76,9 @@ export function PianoRoll({
   currentPlaybackTick = null,
   isPlaying = false,
   onSeek = () => {},
+  changedNoteIds = new Set(),
+  previousVoiceId = new Map(),
+  onlyChangedNotes = false,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -120,6 +129,16 @@ export function PianoRoll({
       setPitchViewportWindow(defaultPitchViewportWindow());
     }
   }, [project?.durationTicks]);
+
+  const interactionProject = useMemo(() => {
+    if (!project || !onlyChangedNotes) {
+      return project;
+    }
+    return {
+      ...project,
+      notes: project.notes.filter((note) => changedNoteIds.has(note.id)),
+    };
+  }, [project, onlyChangedNotes, changedNoteIds]);
 
   const tickRange = useMemo(() => {
     if (!project) {
@@ -186,8 +205,10 @@ export function PianoRoll({
     if (!marqueeRect) {
       return null;
     }
-    return hitTestPianoRollNotesInRect(marqueeRect, project, viewport).map((note) => note.id);
-  }, [marqueeRect, project, viewport]);
+    return hitTestPianoRollNotesInRect(marqueeRect, interactionProject, viewport).map(
+      (note) => note.id,
+    );
+  }, [marqueeRect, interactionProject, viewport]);
 
   const effectiveSelection = useMemo(() => {
     if (!marqueePreviewIds || !dragStartRef.current) {
@@ -219,6 +240,9 @@ export function PianoRoll({
       paintedNoteIdsRef.current,
       pitchMarkers,
       currentPlaybackTick,
+      changedNoteIds,
+      previousVoiceId,
+      onlyChangedNotes,
     );
   }
 
@@ -250,6 +274,9 @@ export function PianoRoll({
       paintedNoteIdsRef.current,
       pitchMarkers,
       currentPlaybackTick,
+      changedNoteIds,
+      previousVoiceId,
+      onlyChangedNotes,
     );
   }, [
     project,
@@ -260,6 +287,9 @@ export function PianoRoll({
     soloVoiceId,
     pitchMarkers,
     currentPlaybackTick,
+    changedNoteIds,
+    previousVoiceId,
+    onlyChangedNotes,
   ]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -319,7 +349,7 @@ export function PianoRoll({
       }
       isPaintingRef.current = true;
       paintedNoteIdsRef.current = new Map();
-      const note = hitTestPianoRollNote(pointFromEvent(event), project, viewport);
+      const note = hitTestPianoRollNote(pointFromEvent(event), interactionProject, viewport);
       if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
         paintedNoteIdsRef.current.set(note.id, activeVoiceId);
         redrawCanvas();
@@ -343,7 +373,7 @@ export function PianoRoll({
       if (!isPaintingRef.current || !activeVoiceId) {
         return;
       }
-      const note = hitTestPianoRollNote(pointFromEvent(event), project, viewport);
+      const note = hitTestPianoRollNote(pointFromEvent(event), interactionProject, viewport);
       if (note && shouldPaintNote(note, activeVoiceId, new Set(paintedNoteIdsRef.current.keys()))) {
         paintedNoteIdsRef.current.set(note.id, activeVoiceId);
         redrawCanvas();
@@ -354,7 +384,7 @@ export function PianoRoll({
     const dragStart = dragStartRef.current;
     if (!dragStart) {
       const point = pointFromEvent(event);
-      const note = hitTestPianoRollNote(point, project, viewport);
+      const note = hitTestPianoRollNote(point, interactionProject, viewport);
       setHoveredNote(note ? { note, point } : null);
       return;
     }
@@ -397,7 +427,7 @@ export function PianoRoll({
     if (marqueeRect) {
       const noteIds = hitTestPianoRollNotesInRect(
         { x0: dragStart.point.x, y0: dragStart.point.y, x1: point.x, y1: point.y },
-        project,
+        interactionProject,
         viewport,
       ).map((note) => note.id);
       onSelectionChange(
@@ -408,7 +438,7 @@ export function PianoRoll({
         }),
       );
     } else {
-      const note = hitTestPianoRollNote(point, project, viewport);
+      const note = hitTestPianoRollNote(point, interactionProject, viewport);
       onSelectionChange(
         resolveSelection(selectedNoteIds, {
           type: "click",

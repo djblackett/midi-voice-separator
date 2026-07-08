@@ -2,7 +2,7 @@
 
 Repo: `chiptune-voice-separator` (c:\Users\davej\dev\midi-separator)
 Date: 2026-07-08
-Status: planned, not started.
+Status: Slices 1-5 implemented; paused at the Slice 5 manual readability check.
 
 This plan supersedes the earlier draft of the same feature set. It keeps that
 draft's slice discipline and milestone order but resolves the contracts a

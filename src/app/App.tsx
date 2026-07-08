@@ -147,6 +147,8 @@ export default function App() {
   const [namedSnapshots, setNamedSnapshots] = useState<NamedSnapshot[]>([]);
   const [snapshotNameDraft, setSnapshotNameDraft] = useState("");
   const [diffTargetId, setDiffTargetId] = useState("");
+  const [showChangedNotes, setShowChangedNotes] = useState(false);
+  const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -261,6 +263,30 @@ export default function App() {
     }
     return diffAssignments(targetSide, currentSide);
   }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, currentRerunSettings]);
+  // The diff target's own materialized assignments -- the "before" side's
+  // noteId -> voiceId map, reused directly as the changed-note overlay's
+  // "previous voice" lookup rather than recomputing it from the diff
+  // result. Depends only on diffTarget (not the live editor state), since
+  // it's always the target/"before" side.
+  const changedNotePreviousVoiceId = useMemo(() => {
+    if (!diffTarget) {
+      return new Map<string, string>();
+    }
+    const targetSide = toDiffSide(diffTarget.state, diffTarget.rerunSettings);
+    return targetSide?.assignments ?? new Map<string, string>();
+  }, [diffTarget]);
+  const pianoRollChangedNoteIds = useMemo(() => {
+    if (!showChangedNotes || !assignmentDiffResult || !assignmentDiffResult.comparable) {
+      return new Set<string>();
+    }
+    return new Set(assignmentDiffResult.changedNoteIds);
+  }, [showChangedNotes, assignmentDiffResult]);
+  const canShowChangedNotes =
+    assignmentDiffResult !== null &&
+    assignmentDiffResult.comparable &&
+    assignmentDiffResult.changedNoteIds.length > 0;
+  const pianoRollOnlyChangedNotes =
+    showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
   const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -441,6 +467,8 @@ export default function App() {
       ),
     ]);
     setDiffTargetId("");
+    setShowChangedNotes(false);
+    setOnlyChangedNotes(false);
   }
 
   async function handleImport() {
@@ -678,7 +706,11 @@ export default function App() {
 
   function handleDeleteSnapshot(id: string) {
     setNamedSnapshots((current) => current.filter((entry) => entry.id !== id));
-    setDiffTargetId((current) => (current === id ? "" : current));
+    if (diffTargetId === id) {
+      setDiffTargetId("");
+      setShowChangedNotes(false);
+      setOnlyChangedNotes(false);
+    }
   }
 
   // Settings travel with a snapshot but only apply on request -- restoring
@@ -692,6 +724,12 @@ export default function App() {
         ? ""
         : String(snapshot.rerunSettings.maxVoiceCount),
     );
+  }
+
+  function handleDiffTargetChange(nextTargetId: string) {
+    setDiffTargetId(nextTargetId);
+    setShowChangedNotes(false);
+    setOnlyChangedNotes(false);
   }
 
   function handleCreateVoice() {
@@ -1503,7 +1541,7 @@ export default function App() {
               <select
                 className="diff-target-select"
                 value={diffTargetId}
-                onChange={(event) => setDiffTargetId(event.target.value)}
+                onChange={(event) => handleDiffTargetChange(event.target.value)}
                 aria-label="Snapshot to compare the current state against"
               >
                 <option value="">No comparison</option>
@@ -1576,6 +1614,31 @@ export default function App() {
                   {formatOnlyInOneSideSummary(assignmentDiffResult)}
                 </p>
               ) : null}
+              <div className="diff-visual-controls" aria-label="Piano-roll change display">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showChangedNotes}
+                    onChange={(event) => {
+                      setShowChangedNotes(event.target.checked);
+                      if (!event.target.checked) {
+                        setOnlyChangedNotes(false);
+                      }
+                    }}
+                    disabled={!canShowChangedNotes}
+                  />
+                  Show changes in piano roll
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={onlyChangedNotes}
+                    onChange={(event) => setOnlyChangedNotes(event.target.checked)}
+                    disabled={!canShowChangedNotes || !showChangedNotes}
+                  />
+                  Only changed notes
+                </label>
+              </div>
             </>
           )}
         </section>
@@ -1704,6 +1767,9 @@ export default function App() {
           currentPlaybackTick={playback.currentTick}
           isPlaying={playback.isPlaying}
           onSeek={playback.seek}
+          changedNoteIds={pianoRollChangedNoteIds}
+          previousVoiceId={changedNotePreviousVoiceId}
+          onlyChangedNotes={pianoRollOnlyChangedNotes}
         />
       </section>
 

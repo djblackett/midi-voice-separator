@@ -48,6 +48,8 @@ function context(overrides: Partial<NoteRenderContext> = {}): NoteRenderContext 
     selectedNoteIds: new Set(),
     soloVoiceId: null,
     paintPreview: new Map(),
+    changedNoteIds: new Set(),
+    previousVoiceId: new Map(),
     ...overrides,
   };
 }
@@ -120,5 +122,146 @@ describe("resolveNoteRenderStyle", () => {
     const style = resolveNoteRenderStyle(note({ assignmentConfidence: 0.5 }), context());
 
     expect(style.isLowConfidence).toBe(false);
+  });
+
+  it("flags a note in changedNoteIds as changed", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a" }),
+      context({ changedNoteIds: new Set(["a"]) }),
+    );
+
+    expect(style.isChanged).toBe(true);
+  });
+
+  it("resolves the changed-edge color from the previous voice", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a" }),
+      context({
+        changedNoteIds: new Set(["a"]),
+        previousVoiceId: new Map([["a", "voice-3"]]),
+      }),
+    );
+
+    expect(style.changeEdgeColor).toBe(getVoiceFillColor("voice-3"));
+  });
+
+  it("has a null changed-edge color when the previous voice is unknown", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a" }),
+      context({ changedNoteIds: new Set(["a"]) }),
+    );
+
+    expect(style.showChangedEdge).toBe(true);
+    expect(style.changeEdgeColor).toBeNull();
+  });
+
+  it("does not compute a changed-edge color for an unchanged note even with a previousVoiceId entry", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a" }),
+      context({ previousVoiceId: new Map([["a", "voice-3"]]) }),
+    );
+
+    expect(style.isChanged).toBe(false);
+    expect(style.showChangedEdge).toBe(false);
+    expect(style.changeEdgeColor).toBeNull();
+  });
+
+  it("shows the changed edge cue independently of the paint-preview color (independent channels)", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a", voiceId: "voice-1" }),
+      context({
+        changedNoteIds: new Set(["a"]),
+        paintPreview: new Map([["a", "voice-2"]]),
+      }),
+    );
+
+    expect(style.showChangedEdge).toBe(true);
+    expect(style.fillColor).toBe(getVoiceFillColor("voice-2"));
+  });
+
+  describe("cue precedence (selection > changed edge > low-confidence dash)", () => {
+    // Full truth table over the three border-competing cues. Solo dimming
+    // and paint-preview color are independent channels and are not part of
+    // this matrix (see the dedicated tests above/below).
+    const cases: Array<{
+      isSelected: boolean;
+      isChanged: boolean;
+      isLowConfidence: boolean;
+      expectShowChangedEdge: boolean;
+      expectShowLowConfidenceDash: boolean;
+    }> = [
+      {
+        isSelected: false,
+        isChanged: false,
+        isLowConfidence: false,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: false,
+        isChanged: false,
+        isLowConfidence: true,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: true,
+      },
+      {
+        isSelected: false,
+        isChanged: true,
+        isLowConfidence: false,
+        expectShowChangedEdge: true,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: false,
+        isChanged: true,
+        isLowConfidence: true,
+        expectShowChangedEdge: true,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: true,
+        isChanged: false,
+        isLowConfidence: false,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: true,
+        isChanged: false,
+        isLowConfidence: true,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: true,
+        isChanged: true,
+        isLowConfidence: false,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: false,
+      },
+      {
+        isSelected: true,
+        isChanged: true,
+        isLowConfidence: true,
+        expectShowChangedEdge: false,
+        expectShowLowConfidenceDash: false,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const label = `selected=${testCase.isSelected} changed=${testCase.isChanged} lowConfidence=${testCase.isLowConfidence}`;
+      it(`${label} -> changedEdge=${testCase.expectShowChangedEdge} lowConfidenceDash=${testCase.expectShowLowConfidenceDash}`, () => {
+        const style = resolveNoteRenderStyle(
+          note({ id: "a", assignmentConfidence: testCase.isLowConfidence ? 0.2 : 1 }),
+          context({
+            selectedNoteIds: testCase.isSelected ? new Set(["a"]) : new Set(),
+            changedNoteIds: testCase.isChanged ? new Set(["a"]) : new Set(),
+          }),
+        );
+
+        expect(style.showChangedEdge).toBe(testCase.expectShowChangedEdge);
+        expect(style.showLowConfidenceDash).toBe(testCase.expectShowLowConfidenceDash);
+      });
+    }
   });
 });

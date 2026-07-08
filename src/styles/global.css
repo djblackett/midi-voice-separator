@@ -672,6 +672,30 @@ button {
   font-weight: 700;
 }
 
+.diff-visual-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 0;
+}
+
+.diff-visual-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.diff-visual-controls input {
+  accent-color: #38bdf8;
+}
+
+.diff-visual-controls label:has(input:disabled) {
+  color: #64748b;
+}
+
 .selection-details {
   border: 1px solid #334155;
   background: #111827;

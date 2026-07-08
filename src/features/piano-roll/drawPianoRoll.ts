@@ -22,6 +22,9 @@ const VOICE_COLORS = [
   "#e879f9",
   "#2dd4bf",
 ];
+/** Fallback for the changed-note edge cue when the previous voice isn't known (e.g. the note didn't exist on the compared side). */
+const DEFAULT_CHANGE_EDGE_COLOR = "#facc15";
+const CHANGE_EDGE_WIDTH_PX = 3;
 const VOICE_STROKES = [
   "#7dd3fc",
   "#c4b5fd",
@@ -131,27 +134,70 @@ export interface NoteRenderStyle {
   isSelected: boolean;
   isDimmed: boolean;
   isLowConfidence: boolean;
+  isChanged: boolean;
+  /**
+   * Whether the changed-note edge cue should actually render. `isChanged`
+   * is a plain fact (is this note id in `changedNoteIds`); this is the
+   * fact after precedence — selection suppresses it, since the selection
+   * stroke already owns the note's border.
+   */
+  showChangedEdge: boolean;
+  /**
+   * Whether the low-confidence dashed outline should actually render.
+   * Selection and the changed-note edge cue both suppress it — all three
+   * (selection stroke, changed edge, confidence dash) would otherwise
+   * compete for the same border, so only the highest-precedence one wins.
+   */
+  showLowConfidenceDash: boolean;
+  /** The previous voice's fill color, for the changed-note edge cue. `null` when the note has no known previous voice (e.g. it didn't exist on the compared side) even though `showChangedEdge` is true. */
+  changeEdgeColor: string | null;
 }
 
 export interface NoteRenderContext {
   selectedNoteIds: ReadonlySet<string>;
   soloVoiceId: string | null;
   paintPreview: ReadonlyMap<string, string>;
+  /** Note ids the active diff comparison reports as reassigned (Slice 4's `AssignmentDiff.changedNoteIds`). */
+  changedNoteIds: ReadonlySet<string>;
+  /** noteId -> voiceId on the diff's compared ("before") side, for the changed-note edge cue's color. */
+  previousVoiceId: ReadonlyMap<string, string>;
 }
 
 /**
  * Pure per-note render decision, extracted from the draw loop so the
- * selection/solo/paint-preview/confidence logic is unit-testable without a
- * canvas. `drawPianoRoll` just issues the canvas calls this describes.
+ * selection/solo/paint-preview/confidence/changed-note logic is
+ * unit-testable without a canvas. `drawPianoRoll` just issues the canvas
+ * calls this describes.
+ *
+ * Cue precedence, where cues would otherwise compete for the same visual
+ * channel (the note's own border): selection > changed-note edge >
+ * low-confidence dash. Paint-preview (the fill/stroke base color) and solo
+ * dimming (opacity) are independent channels, never suppressed by this
+ * ordering — a note can be paint-previewed and dimmed and show the
+ * changed-edge cue all at once.
  */
 export function resolveNoteRenderStyle(
   note: MidiNote,
-  { selectedNoteIds, soloVoiceId, paintPreview }: NoteRenderContext,
+  {
+    selectedNoteIds,
+    soloVoiceId,
+    paintPreview,
+    changedNoteIds,
+    previousVoiceId,
+  }: NoteRenderContext,
 ): NoteRenderStyle {
   const effectiveVoiceId = paintPreview.get(note.id) ?? note.voiceId;
   const isSelected = selectedNoteIds.has(note.id);
   const isDimmed = soloVoiceId !== null && effectiveVoiceId !== soloVoiceId;
   const isLowConfidence = note.assignmentConfidence < LOW_CONFIDENCE_THRESHOLD;
+  const isChanged = changedNoteIds.has(note.id);
+
+  const showChangedEdge = isChanged && !isSelected;
+  const showLowConfidenceDash = isLowConfidence && !isSelected && !showChangedEdge;
+
+  const previousVoice = previousVoiceId.get(note.id);
+  const changeEdgeColor =
+    showChangedEdge && previousVoice ? getVoiceFillColor(previousVoice) : null;
 
   return {
     fillColor: getVoiceFillColor(effectiveVoiceId),
@@ -159,6 +205,10 @@ export function resolveNoteRenderStyle(
     isSelected,
     isDimmed,
     isLowConfidence,
+    isChanged,
+    showChangedEdge,
+    showLowConfidenceDash,
+    changeEdgeColor,
   };
 }
 
@@ -172,6 +222,9 @@ export function drawPianoRoll(
   paintPreview: ReadonlyMap<string, string> = new Map(),
   pitchMarkers: readonly PitchMarker[] = [],
   playheadTick: number | null = null,
+  changedNoteIds: ReadonlySet<string> = new Set(),
+  previousVoiceId: ReadonlyMap<string, string> = new Map(),
+  onlyChangedNotes: boolean = false,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -233,9 +286,9 @@ export function drawPianoRoll(
     return;
   }
 
-  const sortedNotes = [...project.notes].sort(
-    (a, b) => a.startTick - b.startTick || a.pitch - b.pitch,
-  );
+  const sortedNotes = [...project.notes]
+    .filter((note) => !onlyChangedNotes || changedNoteIds.has(note.id))
+    .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
   for (const note of sortedNotes) {
     const x = PIANO_ROLL_LABEL_WIDTH + tickToX(note.startTick, rollViewport);
     const y = pitchToY(note.pitch, rollViewport);
@@ -243,18 +296,30 @@ export function drawPianoRoll(
     const width = Math.max(2, endX - x);
     const height = Math.max(2, rowHeight - 2);
 
-    const style = resolveNoteRenderStyle(note, { selectedNoteIds, soloVoiceId, paintPreview });
+    const style = resolveNoteRenderStyle(note, {
+      selectedNoteIds,
+      soloVoiceId,
+      paintPreview,
+      changedNoteIds,
+      previousVoiceId,
+    });
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
     context.fillRect(x, y + 1, width, height);
     context.strokeStyle = style.strokeColor;
     context.lineWidth = style.isSelected ? 3 : 1;
-    if (style.isLowConfidence && !style.isSelected) {
+    if (style.showLowConfidenceDash) {
       context.setLineDash([3, 2]);
     }
     context.strokeRect(x, y + 1, width, height);
     context.setLineDash([]);
     context.lineWidth = 1;
+
+    if (style.showChangedEdge) {
+      context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
+      context.fillRect(x, y + 1, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
+    }
+
     context.globalAlpha = 1;
   }
 
