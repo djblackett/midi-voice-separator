@@ -43,8 +43,10 @@ import {
   buildSplitVoiceByPitchRepair,
   formatSplitVoiceByChannelRepairLabel,
   formatSplitVoiceByPitchRepairLabel,
+  flaggedNoteIdsForVoice,
   formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
+  formatVoiceFlaggedReviewLabel,
   noteIdsForVoice,
   recommendSeparationAction,
   sortVoiceDiagnosticsForDisplay,
@@ -181,6 +183,20 @@ export default function App() {
     }
     return previews;
   }, [displayedProject, voiceDiagnostics, voiceOrder]);
+  const flaggedNoteIdsByVoice = useMemo(() => {
+    const noteIdsByVoice = new Map<string, string[]>();
+    if (!displayedProject) {
+      return noteIdsByVoice;
+    }
+
+    for (const diagnostic of voiceDiagnostics) {
+      noteIdsByVoice.set(
+        diagnostic.voiceId,
+        flaggedNoteIdsForVoice(displayedProject.notes, diagnostic.voiceId),
+      );
+    }
+    return noteIdsByVoice;
+  }, [displayedProject, voiceDiagnostics]);
   const suspiciousVoiceCount = voiceDiagnostics.filter(
     (diagnostic) => diagnostic.suspicious,
   ).length;
@@ -713,6 +729,11 @@ export default function App() {
     setSelectedNoteIds(new Set(noteIdsForVoice(displayedProject.notes, voiceId)));
   }
 
+  function handleInspectDiagnosticNoteIds(voiceId: string, noteIds: readonly string[]) {
+    setActiveVoiceId(voiceId);
+    setSoloVoiceId(voiceId);
+    setSelectedNoteIds(new Set(noteIds));
+  }
   function handleSelectVoiceSwatch(voiceId: string) {
     setActiveVoiceId((current) => (current === voiceId ? null : voiceId));
     if (!displayedProject) {
@@ -891,6 +912,7 @@ export default function App() {
               <ul className="voice-diagnostics-list">
                 {sortedVoiceDiagnostics.map((diagnostic) => {
                   const splitPreview = voiceSplitPreviews.get(diagnostic.voiceId);
+                  const flaggedNoteIds = flaggedNoteIdsByVoice.get(diagnostic.voiceId) ?? [];
                   return (
                     <li
                       key={diagnostic.voiceId}
@@ -913,6 +935,17 @@ export default function App() {
                         >
                           Focus in roll
                         </button>
+                        {flaggedNoteIds.length > 0 ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() =>
+                              handleInspectDiagnosticNoteIds(diagnostic.voiceId, flaggedNoteIds)
+                            }
+                          >
+                            {formatVoiceFlaggedReviewLabel(flaggedNoteIds)}
+                          </button>
+                        ) : null}
                         {splitPreview?.channelRepair ? (
                           <button
                             type="button"

@@ -60,6 +60,17 @@ export function noteIdsForVoice(notes: readonly MidiNote[], voiceId: string): st
   return notes.filter((note) => note.voiceId === voiceId).map((note) => note.id);
 }
 
+export function flaggedNoteIdsForVoice(notes: readonly MidiNote[], voiceId: string): string[] {
+  return notes
+    .filter(
+      (note) =>
+        note.voiceId === voiceId &&
+        (note.assignmentConfidence < LOW_CONFIDENCE_THRESHOLD ||
+          note.assignmentReason === "VOICE_CAP_REACHED"),
+    )
+    .map((note) => note.id);
+}
+
 function notesByVoice(notes: readonly MidiNote[]): Map<string, MidiNote[]> {
   const grouped = new Map<string, MidiNote[]>();
   for (const note of notes) {
@@ -194,6 +205,10 @@ export function formatVoiceChannelDistribution(diagnostic: VoiceDiagnostic): str
 
 function formatMovedNoteCount(count: number): string {
   return `${count} ${count === 1 ? "note" : "notes"}`;
+}
+
+export function formatVoiceFlaggedReviewLabel(noteIds: readonly string[]): string {
+  return `Review flagged (${formatMovedNoteCount(noteIds.length)})`;
 }
 
 export function formatSplitVoiceByPitchRepairLabel(repair: SplitVoiceByPitchRepair): string {

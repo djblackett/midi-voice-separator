@@ -4,10 +4,12 @@ import {
   analyzeVoiceDiagnostics,
   buildSplitVoiceByChannelRepair,
   buildSplitVoiceByPitchRepair,
+  flaggedNoteIdsForVoice,
   formatSplitVoiceByChannelRepairLabel,
   formatSplitVoiceByPitchRepairLabel,
   formatVoiceChannelDistribution,
   formatVoiceDiagnosticSummary,
+  formatVoiceFlaggedReviewLabel,
   maxSimultaneousPolyphony,
   noteIdsForVoice,
   recommendSeparationAction,
@@ -146,6 +148,16 @@ describe("diagnostic display helpers", () => {
     expect(noteIdsForVoice(notes, "voice-1")).toEqual(["a", "c"]);
   });
 
+  it("returns flagged note ids for one voice in project order", () => {
+    const notes = [
+      note("clean", "voice-1", 60, 0),
+      note("low", "voice-1", 62, 120, { assignmentConfidence: 0.2 }),
+      note("other", "voice-2", 64, 240, { assignmentConfidence: 0.1 }),
+      note("cap", "voice-1", 65, 360, { assignmentReason: "VOICE_CAP_REACHED" }),
+    ];
+
+    expect(flaggedNoteIdsForVoice(notes, "voice-1")).toEqual(["low", "cap"]);
+  });
   it("sorts suspicious voices before clean ones", () => {
     const diagnostics = analyzeVoiceDiagnostics(
       project(
@@ -203,6 +215,10 @@ describe("diagnostic display helpers", () => {
     expect(channelRepair && formatSplitVoiceByChannelRepairLabel(channelRepair)).toBe(
       "Split Channel 1 (1 note)",
     );
+  });
+  it("formats the per-voice flagged-note review label", () => {
+    expect(formatVoiceFlaggedReviewLabel(["a"])).toBe("Review flagged (1 note)");
+    expect(formatVoiceFlaggedReviewLabel(["a", "b"])).toBe("Review flagged (2 notes)");
   });
 });
 
