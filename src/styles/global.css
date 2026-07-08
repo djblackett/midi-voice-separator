@@ -696,6 +696,35 @@ button {
   color: #64748b;
 }
 
+.compare-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 0;
+}
+
+.compare-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compare-view-toggle .secondary-button.active {
+  border-color: #38bdf8;
+  background: #0c4a6e;
+  color: #f0f9ff;
+}
+
+.compare-readonly-banner {
+  margin: 12px 24px 0;
+  border: 1px solid #facc15;
+  border-radius: 6px;
+  background: #422006;
+  color: #fef3c7;
+  padding: 10px 12px;
+  font-size: 13px;
+}
 .selection-details {
   border: 1px solid #334155;
   background: #111827;
@@ -967,4 +996,12 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.piano-roll-legend-label small {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 500;
 }

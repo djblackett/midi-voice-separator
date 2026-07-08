@@ -61,6 +61,10 @@ interface PianoRollProps {
   previousVoiceId?: ReadonlyMap<string, string>;
   /** When true, only draw notes in `changedNoteIds`. */
   onlyChangedNotes?: boolean;
+  /** Read-only previews keep pan/zoom/hover but block paint and marker edits. */
+  readOnly?: boolean;
+  /** Optional per-voice text shown in the floating legend. */
+  voiceDescriptions?: ReadonlyMap<string, string>;
 }
 
 export function PianoRoll({
@@ -79,6 +83,8 @@ export function PianoRoll({
   changedNoteIds = new Set(),
   previousVoiceId = new Map(),
   onlyChangedNotes = false,
+  readOnly = false,
+  voiceDescriptions = new Map(),
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -331,7 +337,7 @@ export function PianoRoll({
     event.currentTarget.setPointerCapture(event.pointerId);
     setHoveredNote(null);
 
-    if (interactionMode === "range") {
+    if (interactionMode === "range" && !readOnly) {
       const point = pointFromEvent(event);
       const markerId =
         markerIdFromPoint(point) ??
@@ -343,7 +349,7 @@ export function PianoRoll({
       return;
     }
 
-    if (interactionMode === "paint") {
+    if (interactionMode === "paint" && !readOnly) {
       if (!activeVoiceId) {
         return;
       }
@@ -361,7 +367,7 @@ export function PianoRoll({
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (interactionMode === "range") {
+    if (interactionMode === "range" && !readOnly) {
       const markerId = draggedMarkerIdRef.current;
       if (markerId) {
         updateMarkerPitch(markerId, pointFromEvent(event));
@@ -369,7 +375,7 @@ export function PianoRoll({
       return;
     }
 
-    if (interactionMode === "paint") {
+    if (interactionMode === "paint" && !readOnly) {
       if (!isPaintingRef.current || !activeVoiceId) {
         return;
       }
@@ -400,12 +406,12 @@ export function PianoRoll({
   }
 
   function handlePointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (interactionMode === "range") {
+    if (interactionMode === "range" && !readOnly) {
       draggedMarkerIdRef.current = null;
       return;
     }
 
-    if (interactionMode === "paint") {
+    if (interactionMode === "paint" && !readOnly) {
       if (isPaintingRef.current) {
         isPaintingRef.current = false;
         const paintedIds = Array.from(paintedNoteIdsRef.current.keys());
@@ -610,7 +616,12 @@ export function PianoRoll({
                     className="piano-roll-legend-swatch"
                     style={{ backgroundColor: getVoiceFillColor(voice.id) }}
                   />
-                  <span className="piano-roll-legend-label">{voice.label}</span>
+                  <span className="piano-roll-legend-label">
+                    {voice.label}
+                    {voiceDescriptions.get(voice.id) ? (
+                      <small>{voiceDescriptions.get(voice.id)}</small>
+                    ) : null}
+                  </span>
                 </li>
               ))}
             </ul>

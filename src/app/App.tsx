@@ -79,6 +79,16 @@ import {
   type RerunSettings,
 } from "./editorSnapshots";
 import {
+  buildComparePreview,
+  createCompareState,
+  editorSnapshotFromCurrent,
+  isEditingDisabledForCompare,
+  mapSoloVoiceForPreview,
+  updateCompareViewing,
+  type CompareState,
+  type CompareViewing,
+} from "./editorCompare";
+import {
   diffAssignments,
   formatConfidenceDelta,
   formatOnlyInOneSideSummary,
@@ -149,6 +159,7 @@ export default function App() {
   const [diffTargetId, setDiffTargetId] = useState("");
   const [showChangedNotes, setShowChangedNotes] = useState(false);
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
+  const [compareState, setCompareState] = useState<CompareState | null>(null);
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -275,18 +286,68 @@ export default function App() {
     const targetSide = toDiffSide(diffTarget.state, diffTarget.rerunSettings);
     return targetSide?.assignments ?? new Map<string, string>();
   }, [diffTarget]);
+  const isDiffPreview = compareState?.viewing === "diff";
   const pianoRollChangedNoteIds = useMemo(() => {
-    if (!showChangedNotes || !assignmentDiffResult || !assignmentDiffResult.comparable) {
+    if (
+      (!showChangedNotes && !isDiffPreview) ||
+      !assignmentDiffResult ||
+      !assignmentDiffResult.comparable
+    ) {
       return new Set<string>();
     }
     return new Set(assignmentDiffResult.changedNoteIds);
-  }, [showChangedNotes, assignmentDiffResult]);
+  }, [showChangedNotes, isDiffPreview, assignmentDiffResult]);
   const canShowChangedNotes =
     assignmentDiffResult !== null &&
     assignmentDiffResult.comparable &&
     assignmentDiffResult.changedNoteIds.length > 0;
   const pianoRollOnlyChangedNotes =
     showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
+  const currentCompareState = useMemo(
+    () => ({
+      ...editorSnapshotFromCurrent({
+        project,
+        voiceOverrides,
+        voiceOrder,
+        voiceLabels,
+        rangeAssignedNoteIds,
+      }),
+      rerunSettings: currentRerunSettings,
+    }),
+    [project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds, currentRerunSettings],
+  );
+  const comparePreview = useMemo(
+    () => buildComparePreview(compareState, namedSnapshots, currentCompareState),
+    [compareState, namedSnapshots, currentCompareState],
+  );
+  const isCompareReadOnly = isEditingDisabledForCompare(compareState);
+  const pianoRollProject =
+    compareState?.viewing === "B" ? comparePreview.project : displayedProject;
+  const pianoRollSoloVoiceId =
+    compareState?.viewing === "B"
+      ? mapSoloVoiceForPreview(soloVoiceId, comparePreview.matching)
+      : soloVoiceId;
+  const pianoRollVoiceDescriptions = useMemo(() => {
+    const descriptions = new Map<string, string>();
+    if (compareState?.viewing !== "B" || !comparePreview.matching || !displayedProject) {
+      return descriptions;
+    }
+    const currentLabelById = new Map(
+      displayedProject.voices.map((voice) => [voice.id, voice.label]),
+    );
+    for (const match of comparePreview.matching.matched) {
+      descriptions.set(
+        match.afterVoiceId,
+        `Matches ${currentLabelById.get(match.beforeVoiceId) ?? match.beforeVoiceId}`,
+      );
+    }
+    for (const voice of pianoRollProject?.voices ?? []) {
+      if (!descriptions.has(voice.id)) {
+        descriptions.set(voice.id, "New in preview");
+      }
+    }
+    return descriptions;
+  }, [compareState, comparePreview.matching, displayedProject, pianoRollProject]);
   const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -327,6 +388,10 @@ export default function App() {
 
       if (event.key === "Escape") {
         setSelectedNoteIds(new Set());
+        return;
+      }
+
+      if (isCompareReadOnly) {
         return;
       }
 
@@ -394,6 +459,7 @@ export default function App() {
     voiceOverrides,
     voiceOrder,
     voiceLabels,
+    isCompareReadOnly,
   ]);
 
   useEffect(() => {
@@ -469,6 +535,7 @@ export default function App() {
     setDiffTargetId("");
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
+    setCompareState(null);
   }
 
   async function handleImport() {
@@ -696,6 +763,7 @@ export default function App() {
     setRangeAssignedNoteIds(restored.rangeAssignedNoteIds);
     setSelectedNoteIds(new Set());
     setExportResult(null);
+    setCompareState(null);
   }
 
   function handleRenameSnapshot(id: string, name: string) {
@@ -710,6 +778,7 @@ export default function App() {
       setDiffTargetId("");
       setShowChangedNotes(false);
       setOnlyChangedNotes(false);
+      setCompareState(null);
     }
   }
 
@@ -730,6 +799,38 @@ export default function App() {
     setDiffTargetId(nextTargetId);
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
+    setCompareState(null);
+  }
+
+  function handleStartCompare() {
+    if (!diffTargetId) {
+      return;
+    }
+    setCompareState(createCompareState("current", diffTargetId));
+    setInteractionMode("select");
+    setOnlyChangedNotes(false);
+  }
+
+  function handleSetCompareViewing(viewing: CompareViewing) {
+    setCompareState((current) => updateCompareViewing(current, viewing));
+    if (viewing === "B" || viewing === "diff") {
+      setInteractionMode("select");
+      setSelectedNoteIds(new Set());
+    }
+  }
+
+  function handleExitCompare() {
+    setCompareState(null);
+  }
+
+  function handleRestoreCompareTarget() {
+    const target = namedSnapshots.find(
+      (snapshot) => snapshot.id === compareState?.targetSnapshotId,
+    );
+    if (target) {
+      handleRestoreSnapshot(target);
+      setCompareState(null);
+    }
   }
 
   function handleCreateVoice() {
@@ -1049,7 +1150,7 @@ export default function App() {
             type="button"
             className="secondary-button"
             onClick={handleUndo}
-            disabled={history.past.length === 0 || isReassigning}
+            disabled={history.past.length === 0 || isReassigning || isCompareReadOnly}
           >
             Undo
           </button>
@@ -1057,16 +1158,18 @@ export default function App() {
             type="button"
             className="secondary-button"
             onClick={handleRedo}
-            disabled={history.future.length === 0 || isReassigning}
+            disabled={history.future.length === 0 || isReassigning || isCompareReadOnly}
           >
             Redo
           </button>
           <MidiImportButton
-            disabled={isImporting || isExporting || isReassigning}
+            disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
             onImport={() => void handleImport()}
           />
           <MidiExportButton
-            disabled={!displayedProject || isImporting || isExporting || isReassigning}
+            disabled={
+              !displayedProject || isImporting || isExporting || isReassigning || isCompareReadOnly
+            }
             onExport={() => void handleExport()}
           />
         </div>
@@ -1128,7 +1231,7 @@ export default function App() {
                 type="button"
                 className="secondary-button"
                 onClick={() => handleReviewStep(1)}
-                disabled={isReassigning}
+                disabled={isReassigning || isCompareReadOnly}
               >
                 Review flagged notes ({flaggedNotes.length})
               </button>
@@ -1178,7 +1281,7 @@ export default function App() {
               type="button"
               className="secondary-button"
               onClick={() => void handleReassign()}
-              disabled={isImporting || isExporting || isReassigning}
+              disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
             >
               Re-run separation
             </button>
@@ -1205,7 +1308,7 @@ export default function App() {
                     type="button"
                     className="secondary-button"
                     onClick={handleSplitAllMixedChannels}
-                    disabled={isReassigning}
+                    disabled={isReassigning || isCompareReadOnly}
                   >
                     Split all mixed-channel voices ({channelSplitVoiceIds.length})
                   </button>
@@ -1215,7 +1318,7 @@ export default function App() {
                     type="button"
                     className="secondary-button"
                     onClick={handleSplitAllWidePitchVoices}
-                    disabled={isReassigning}
+                    disabled={isReassigning || isCompareReadOnly}
                   >
                     Split all wide voices ({pitchSplitVoiceIds.length})
                   </button>
@@ -1246,6 +1349,7 @@ export default function App() {
                           type="button"
                           className="secondary-button"
                           onClick={() => handleInspectDiagnosticVoice(diagnostic.voiceId)}
+                          disabled={isCompareReadOnly}
                         >
                           Focus in roll
                         </button>
@@ -1256,6 +1360,7 @@ export default function App() {
                             onClick={() =>
                               handleInspectDiagnosticNoteIds(diagnostic.voiceId, flaggedNoteIds)
                             }
+                            disabled={isCompareReadOnly}
                           >
                             {formatVoiceFlaggedReviewLabel(flaggedNoteIds)}
                           </button>
@@ -1265,7 +1370,7 @@ export default function App() {
                             type="button"
                             className="secondary-button"
                             onClick={() => handleSplitVoiceByChannel(diagnostic.voiceId)}
-                            disabled={isReassigning}
+                            disabled={isReassigning || isCompareReadOnly}
                           >
                             {formatSplitVoiceByChannelRepairLabel(splitPreview.channelRepair)}
                           </button>
@@ -1275,7 +1380,7 @@ export default function App() {
                             type="button"
                             className="secondary-button"
                             onClick={() => handleSplitVoiceByPitch(diagnostic.voiceId)}
-                            disabled={isReassigning}
+                            disabled={isReassigning || isCompareReadOnly}
                           >
                             {formatSplitVoiceByPitchRepairLabel(splitPreview.pitchRepair)}
                           </button>
@@ -1348,12 +1453,14 @@ export default function App() {
                 <button
                   type="button"
                   className="voice-swatch"
+                  disabled={isCompareReadOnly}
                   style={{ backgroundColor: `var(--voice-${(index % 12) + 1})` }}
                   aria-label={`Select notes in ${voice.label}`}
                   onClick={() => handleSelectVoiceSwatch(voice.id)}
                 />
                 <input
                   className="voice-name-input"
+                  disabled={isCompareReadOnly}
                   value={voice.label}
                   onFocus={pushHistorySnapshot}
                   onChange={(event) => handleRenameVoice(voice.id, event.target.value)}
@@ -1366,6 +1473,7 @@ export default function App() {
                   type="button"
                   className={soloVoiceId === voice.id ? "voice-solo active" : "voice-solo"}
                   onClick={() => handleToggleSolo(voice.id)}
+                  disabled={isCompareReadOnly}
                   aria-pressed={soloVoiceId === voice.id ? "true" : "false"}
                 >
                   Solo
@@ -1374,7 +1482,7 @@ export default function App() {
                   type="button"
                   className="voice-reorder"
                   onClick={() => handleReorderVoice(voice.id, -1)}
-                  disabled={index === 0}
+                  disabled={index === 0 || isCompareReadOnly}
                   aria-label={`Move ${voice.label} up`}
                 >
                   ▲
@@ -1383,13 +1491,14 @@ export default function App() {
                   type="button"
                   className="voice-reorder"
                   onClick={() => handleReorderVoice(voice.id, 1)}
-                  disabled={index === displayedProject.voices.length - 1}
+                  disabled={index === displayedProject.voices.length - 1 || isCompareReadOnly}
                   aria-label={`Move ${voice.label} down`}
                 >
                   ▼
                 </button>
                 <select
                   className="voice-merge-select"
+                  disabled={isCompareReadOnly}
                   value=""
                   onChange={(event) => handleMergeVoice(voice.id, event.target.value)}
                   aria-label={`Merge ${voice.label} into another voice`}
@@ -1406,7 +1515,12 @@ export default function App() {
               </li>
             ))}
           </ul>
-          <button type="button" className="secondary-button" onClick={handleCreateVoice}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleCreateVoice}
+            disabled={isCompareReadOnly}
+          >
             + New voice
           </button>
         </section>
@@ -1420,7 +1534,7 @@ export default function App() {
               type="button"
               className="secondary-button"
               onClick={handleApplyPitchRanges}
-              disabled={voiceRangeRules.length === 0}
+              disabled={voiceRangeRules.length === 0 || isCompareReadOnly}
             >
               Apply ranges
             </button>
@@ -1431,6 +1545,7 @@ export default function App() {
                 {marker.label}
                 <input
                   type="number"
+                  disabled={isCompareReadOnly}
                   min={0}
                   max={127}
                   value={marker.pitch}
@@ -1511,7 +1626,7 @@ export default function App() {
                         type="button"
                         className="secondary-button"
                         onClick={() => handleRestoreSnapshot(snapshot)}
-                        disabled={isReassigning}
+                        disabled={isReassigning || isCompareReadOnly}
                       >
                         Restore
                       </button>
@@ -1639,6 +1754,54 @@ export default function App() {
                   Only changed notes
                 </label>
               </div>
+              <div className="compare-controls" aria-label="A/B compare preview controls">
+                {compareState ? (
+                  <>
+                    <div className="compare-view-toggle" role="group" aria-label="Compare view">
+                      {(["A", "B", "diff"] as const).map((viewing) => (
+                        <button
+                          key={viewing}
+                          type="button"
+                          className={
+                            compareState.viewing === viewing
+                              ? "secondary-button active"
+                              : "secondary-button"
+                          }
+                          onClick={() => handleSetCompareViewing(viewing)}
+                          aria-pressed={compareState.viewing === viewing ? "true" : "false"}
+                        >
+                          {viewing === "A"
+                            ? "A: Current"
+                            : viewing === "B"
+                              ? "B: Snapshot"
+                              : "Diff"}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={handleRestoreCompareTarget}
+                    >
+                      Restore B
+                    </button>
+                    <button type="button" className="secondary-button" onClick={handleExitCompare}>
+                      Exit compare
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleStartCompare}
+                    disabled={
+                      !diffTargetId || !assignmentDiffResult || !assignmentDiffResult.comparable
+                    }
+                  >
+                    Start A/B compare
+                  </button>
+                )}
+              </div>
             </>
           )}
         </section>
@@ -1686,13 +1849,20 @@ export default function App() {
         </section>
       ) : null}
 
+      {isCompareReadOnly ? (
+        <section className="compare-readonly-banner" aria-live="polite">
+          Read-only preview: editing is disabled while viewing the snapshot or diff. Exit compare or
+          restore B to edit.
+        </section>
+      ) : null}
+
       {displayedProject ? (
         <section className="piano-roll-toolbar">
           <button
             type="button"
             className="secondary-button"
             onClick={playback.isPlaying ? playback.pause : playback.play}
-            disabled={isImporting || isExporting || isReassigning}
+            disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
           >
             {playback.isPlaying ? "Pause" : "Play"}
           </button>
@@ -1700,7 +1870,7 @@ export default function App() {
             type="button"
             className="secondary-button"
             onClick={playback.stop}
-            disabled={isImporting || isExporting || isReassigning}
+            disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
           >
             Stop
           </button>
@@ -1725,6 +1895,7 @@ export default function App() {
             className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}
             onClick={handleTogglePaintMode}
             aria-pressed={interactionMode === "paint" ? "true" : "false"}
+            disabled={isCompareReadOnly}
           >
             {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
           </button>
@@ -1733,6 +1904,7 @@ export default function App() {
             className={interactionMode === "range" ? "secondary-button active" : "secondary-button"}
             onClick={handleToggleRangeMode}
             aria-pressed={interactionMode === "range" ? "true" : "false"}
+            disabled={isCompareReadOnly}
           >
             {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
           </button>
@@ -1755,10 +1927,10 @@ export default function App() {
 
       <section className="editor-grid">
         <PianoRoll
-          project={displayedProject}
+          project={pianoRollProject}
           selectedNoteIds={selectedNoteIds}
-          onSelectionChange={setSelectedNoteIds}
-          soloVoiceId={soloVoiceId}
+          onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
+          soloVoiceId={pianoRollSoloVoiceId}
           interactionMode={interactionMode}
           activeVoiceId={activeVoiceId}
           onPaintNotes={handlePaintNotes}
@@ -1770,6 +1942,8 @@ export default function App() {
           changedNoteIds={pianoRollChangedNoteIds}
           previousVoiceId={changedNotePreviousVoiceId}
           onlyChangedNotes={pianoRollOnlyChangedNotes}
+          readOnly={isCompareReadOnly}
+          voiceDescriptions={pianoRollVoiceDescriptions}
         />
       </section>
 
