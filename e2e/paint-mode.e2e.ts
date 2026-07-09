@@ -208,6 +208,27 @@ test.describe("paint mode", () => {
     await expect(voiceRow(page, "Voice 2")).toContainText("3 notes");
   });
 
+  test("the wand paints a whole connected phrase in one click", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByLabel("Select notes in Voice 2").click();
+    await page.getByRole("button", { name: "Paint mode: off" }).click();
+    await page.getByRole("button", { name: "Wand" }).click();
+
+    // noteA -> noteB are gap-0/4-semitone neighbors, so one click on
+    // noteA floods both into Voice 2 (noteC is already there).
+    await clickNoteOnCanvas(page, noteA);
+
+    await expect(voiceRow(page, "Voice 1")).toContainText("0 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("3 notes");
+
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("2 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
+  });
+
   test("[ and ] resize the brush while painting", async ({ page }) => {
     await installFakeTauri(page, { importedProject: twoVoiceProject });
     await page.goto("/");

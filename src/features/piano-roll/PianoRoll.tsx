@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { formatNoteTooltip, type MidiNote, type MidiProject } from "../../domain/midi/midiProject";
@@ -33,6 +34,14 @@ import {
   type Point,
 } from "./paintBrush";
 import { drawPaintOverlay } from "./paintOverlay";
+import {
+  chordToleranceTicks,
+  DEFAULT_WAND_REACH,
+  selectBottomLine,
+  selectChord,
+  selectPhrase,
+  selectTopLine,
+} from "./smartSelect";
 import {
   defaultPitchViewportWindow,
   panPitchBy,
@@ -72,6 +81,10 @@ interface PianoRollProps {
   brushRadius?: number;
   /** Fired by Alt+wheel over the canvas so the toolbar stays in sync. */
   onBrushRadiusChange?: (radius: number) => void;
+  /** Max pitch jump (semitones) the wand's phrase flood-fill will cross. */
+  wandReach?: number;
+  /** Context-menu "Assign to" — reassigns notes to an explicit voice. */
+  onAssignNotes?: (noteIds: string[], voiceId: string) => void;
   pitchMarkers?: readonly PitchMarker[];
   onPitchMarkersChange?: (next: PitchMarker[]) => void;
   currentPlaybackTick?: number | null;
@@ -101,6 +114,8 @@ export function PianoRoll({
   paintTool = "brush",
   brushRadius = DEFAULT_BRUSH_RADIUS,
   onBrushRadiusChange = () => {},
+  wandReach = DEFAULT_WAND_REACH,
+  onAssignNotes = () => {},
   pitchMarkers = [],
   onPitchMarkersChange = () => {},
   currentPlaybackTick = null,
@@ -122,6 +137,11 @@ export function PianoRoll({
   const [hoveredNote, setHoveredNote] = useState<{ note: MidiNote; point: PianoRollPoint } | null>(
     null,
   );
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    noteId: string | null;
+  } | null>(null);
   const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
   const [pitchViewportWindow, setPitchViewportWindow] = useState<PitchViewportWindow>(
     defaultPitchViewportWindow(),
@@ -270,6 +290,26 @@ export function PianoRoll({
     });
   }, [marqueePreviewIds, selectedNoteIds]);
 
+  const contextNote = useMemo(() => {
+    if (!contextMenu?.noteId || !interactionProject) {
+      return null;
+    }
+    return interactionProject.notes.find((note) => note.id === contextMenu.noteId) ?? null;
+  }, [contextMenu, interactionProject]);
+
+  // DAW convention: a right-click on a selected note acts on the whole
+  // selection; on an unselected note, just that note; on empty space, the
+  // selection (if any).
+  const assignTargetIds = useMemo(() => {
+    if (!contextMenu) {
+      return [];
+    }
+    if (contextNote && !selectedNoteIds.has(contextNote.id)) {
+      return [contextNote.id];
+    }
+    return [...selectedNoteIds];
+  }, [contextMenu, contextNote, selectedNoteIds]);
+
   function drawCurrentView(context: CanvasRenderingContext2D) {
     if (viewMode === "voice-lanes") {
       drawVoiceLanes(
@@ -349,6 +389,36 @@ export function PianoRoll({
       } else if (shouldPaintNote(note, activeVoiceId, alreadyPainted)) {
         paintedNoteIdsRef.current.set(note.id, activeVoiceId);
         alreadyPainted.add(note.id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      redrawCanvas();
+    }
+  }
+
+  /**
+   * The wand's stamp: flood-fills the connected melodic phrase around the
+   * note under the cursor into the in-progress stroke. Dragging stamps
+   * each newly touched note's phrase additively, like dragging Photoshop's
+   * wand with Shift held.
+   */
+  function stampWand(point: Point) {
+    if (!activeVoiceId || !interactionProject) {
+      return;
+    }
+    const note = hitTestPianoRollNote(point, interactionProject, viewport);
+    if (!note || paintedNoteIdsRef.current.has(note.id)) {
+      return;
+    }
+    const phrase = selectPhrase(note, interactionProject.notes, {
+      maxGapTicks: interactionProject.ppq,
+      maxPitchJumpSemitones: wandReach,
+    });
+    let changed = false;
+    for (const phraseNote of phrase) {
+      if (phraseNote.voiceId !== activeVoiceId && !paintedNoteIdsRef.current.has(phraseNote.id)) {
+        paintedNoteIdsRef.current.set(phraseNote.id, activeVoiceId);
         changed = true;
       }
     }
@@ -535,12 +605,15 @@ export function PianoRoll({
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (size.width <= 0 || size.height <= 0) {
+    // Only the primary button starts a gesture — a right-click opens the
+    // context menu (its own event) and must not paint or start a marquee.
+    if (event.button !== 0 || size.width <= 0 || size.height <= 0) {
       return;
     }
 
     event.currentTarget.setPointerCapture(event.pointerId);
     setHoveredNote(null);
+    setContextMenu(null);
 
     if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
       const point = pointFromEvent(event);
@@ -567,6 +640,8 @@ export function PianoRoll({
         stampBrush(point, point, event.altKey);
       } else if (paintTool === "lasso") {
         lassoPathRef.current = [point];
+      } else if (paintTool === "wand") {
+        stampWand(point);
       } else {
         const note = hitTestPianoRollNote(point, interactionProject, viewport);
         if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
@@ -598,6 +673,8 @@ export function PianoRoll({
       if (paintTool === "brush") {
         stampBrush(lastBrushPointRef.current ?? point, point, event.altKey);
         lastBrushPointRef.current = point;
+      } else if (paintTool === "wand") {
+        stampWand(point);
       } else if (paintTool === "lasso") {
         const path = lassoPathRef.current;
         const last = path[path.length - 1];
@@ -644,6 +721,10 @@ export function PianoRoll({
   }
 
   function handlePointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
     if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
       draggedMarkerIdRef.current = null;
       return;
@@ -717,6 +798,99 @@ export function PianoRoll({
     dragStartRef.current = null;
     setMarqueeRect(null);
   }
+
+  function pointFromMouseEvent(event: ReactMouseEvent<HTMLCanvasElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+
+  function handleCanvasContextMenu(event: ReactMouseEvent<HTMLCanvasElement>) {
+    // Always suppress the browser menu over the roll — a right-click that
+    // can't open our menu should do nothing, not pop "Save image as...".
+    event.preventDefault();
+    if (readOnly || viewMode !== "piano" || !interactionProject) {
+      return;
+    }
+    const point = pointFromMouseEvent(event);
+    const note = hitTestPianoRollNote(point, interactionProject, viewport);
+    if (!note && selectedNoteIds.size === 0) {
+      setContextMenu(null);
+      return;
+    }
+    setHoveredNote(null);
+    setContextMenu({ x: point.x, y: point.y, noteId: note?.id ?? null });
+  }
+
+  function handleCanvasDoubleClick(event: ReactMouseEvent<HTMLCanvasElement>) {
+    if (viewMode !== "piano" || interactionMode !== "select" || !interactionProject) {
+      return;
+    }
+    const note = hitTestPianoRollNote(pointFromMouseEvent(event), interactionProject, viewport);
+    if (!note) {
+      return;
+    }
+    const chord = selectChord(
+      note,
+      interactionProject.notes,
+      chordToleranceTicks(interactionProject.ppq),
+    );
+    onSelectionChange(new Set(chord.map((chordNote) => chordNote.id)));
+  }
+
+  function handleMenuSelectChord() {
+    if (!contextNote || !interactionProject) {
+      return;
+    }
+    const chord = selectChord(
+      contextNote,
+      interactionProject.notes,
+      chordToleranceTicks(interactionProject.ppq),
+    );
+    onSelectionChange(new Set(chord.map((note) => note.id)));
+    setContextMenu(null);
+  }
+
+  function handleMenuSelectPhrase() {
+    if (!contextNote || !interactionProject) {
+      return;
+    }
+    const phrase = selectPhrase(contextNote, interactionProject.notes, {
+      maxGapTicks: interactionProject.ppq,
+      maxPitchJumpSemitones: wandReach,
+    });
+    onSelectionChange(new Set(phrase.map((note) => note.id)));
+    setContextMenu(null);
+  }
+
+  function handleMenuKeepLine(edge: "top" | "bottom") {
+    if (!interactionProject) {
+      return;
+    }
+    const selectedNotes = interactionProject.notes.filter((note) => selectedNoteIds.has(note.id));
+    const line = edge === "top" ? selectTopLine(selectedNotes) : selectBottomLine(selectedNotes);
+    onSelectionChange(new Set(line.map((note) => note.id)));
+    setContextMenu(null);
+  }
+
+  function handleMenuAssign(voiceId: string) {
+    if (assignTargetIds.length > 0) {
+      onAssignNotes(assignTargetIds, voiceId);
+    }
+    setContextMenu(null);
+  }
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [contextMenu]);
 
   // React's `onWheel` JSX prop attaches a passive native listener, so
   // `preventDefault()` inside it is silently ignored and the page would
@@ -862,6 +1036,8 @@ export function PianoRoll({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onContextMenu={handleCanvasContextMenu}
+        onDoubleClick={handleCanvasDoubleClick}
         onPointerLeave={() => {
           setHoveredNote(null);
           cursorPointRef.current = null;
@@ -875,6 +1051,70 @@ export function PianoRoll({
         >
           {formatNoteTooltip(hoveredNote.note, project.voices)}
         </div>
+      ) : null}
+      {contextMenu && project ? (
+        <>
+          <div
+            className="piano-roll-context-backdrop"
+            onPointerDown={() => setContextMenu(null)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setContextMenu(null);
+            }}
+          />
+          <div
+            className="piano-roll-context-menu"
+            role="menu"
+            aria-label="Note actions"
+            style={{
+              left: Math.min(contextMenu.x, Math.max(0, size.width - 210)),
+              top: Math.min(contextMenu.y + 8, Math.max(0, size.height - 180)),
+            }}
+          >
+            {contextNote ? (
+              <>
+                <button type="button" role="menuitem" onClick={handleMenuSelectChord}>
+                  Select chord
+                </button>
+                <button type="button" role="menuitem" onClick={handleMenuSelectPhrase}>
+                  Select phrase
+                </button>
+              </>
+            ) : null}
+            {selectedNoteIds.size >= 2 ? (
+              <>
+                <button type="button" role="menuitem" onClick={() => handleMenuKeepLine("top")}>
+                  Keep top line only
+                </button>
+                <button type="button" role="menuitem" onClick={() => handleMenuKeepLine("bottom")}>
+                  Keep bottom line only
+                </button>
+              </>
+            ) : null}
+            {assignTargetIds.length > 0 && project.voices.length > 0 ? (
+              <div className="piano-roll-context-assign">
+                <span className="piano-roll-context-assign-label">
+                  Assign {assignTargetIds.length === 1 ? "note" : `${assignTargetIds.length} notes`}{" "}
+                  to
+                </span>
+                <div className="piano-roll-context-swatches">
+                  {project.voices.map((voice) => (
+                    <button
+                      key={voice.id}
+                      type="button"
+                      role="menuitem"
+                      className="piano-roll-context-swatch"
+                      title={voice.label}
+                      aria-label={`Assign to ${voice.label}`}
+                      style={{ backgroundColor: getVoiceFillColor(voice.id) }}
+                      onClick={() => handleMenuAssign(voice.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </>
       ) : null}
       {viewportWindow.zoomLevel > 1 || pitchViewportWindow.zoomLevel > 1 ? (
         <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>

@@ -141,6 +141,37 @@ function drawLassoCursor(
   });
 }
 
+function drawWandCursor(
+  context: CanvasRenderingContext2D,
+  cursor: Point,
+  voiceColor: string | null,
+): void {
+  const accent = voiceColor ?? NO_VOICE_COLOR;
+
+  // Diagonal wand stick trailing down-right from the hotspot, with a
+  // four-point sparkle at the tip.
+  dualStroke(context, accent, () => {
+    context.beginPath();
+    context.moveTo(cursor.x + 4, cursor.y + 4);
+    context.lineTo(cursor.x + 13, cursor.y + 13);
+    const arm = 5;
+    context.moveTo(cursor.x - arm, cursor.y);
+    context.lineTo(cursor.x + arm, cursor.y);
+    context.moveTo(cursor.x, cursor.y - arm);
+    context.lineTo(cursor.x, cursor.y + arm);
+    const diag = 3;
+    context.moveTo(cursor.x - diag, cursor.y - diag);
+    context.lineTo(cursor.x + diag, cursor.y + diag);
+    context.moveTo(cursor.x - diag, cursor.y + diag);
+    context.lineTo(cursor.x + diag, cursor.y - diag);
+  });
+
+  context.fillStyle = accent;
+  context.beginPath();
+  context.arc(cursor.x, cursor.y, 1.5, 0, Math.PI * 2);
+  context.fill();
+}
+
 function drawLassoPath(
   context: CanvasRenderingContext2D,
   path: readonly Point[],
@@ -239,6 +270,8 @@ export function drawPaintOverlay(
     }
   } else if (frame.tool === "pencil") {
     drawPencilCursor(context, frame.cursor, frame.voiceColor);
+  } else if (frame.tool === "wand") {
+    drawWandCursor(context, frame.cursor, frame.voiceColor);
   } else {
     drawLassoCursor(context, frame.cursor, frame.voiceColor);
   }

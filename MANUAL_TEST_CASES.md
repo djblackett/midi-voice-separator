@@ -80,8 +80,9 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 ## Paint mode
 
 - Click **Paint mode: off** to turn it on → button shows "Paint mode: on";
-  a Pencil/Brush/Lasso tool switcher, brush size slider, and active-voice
-  chip appear; the hint says to pick a voice if none is active.
+  a Pencil/Brush/Lasso/Wand tool switcher, a size/reach slider for the
+  active tool, and an active-voice chip appear; the hint says to pick a
+  voice if none is active.
 - Click a voice swatch while in paint mode → hint names the target voice
   and the voice chip shows its color and label.
 - The native cursor disappears over the roll and is replaced by a drawn
@@ -97,17 +98,40 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
   roll all resize it; a "N px" bubble flashes near the cursor while
   resizing, and the toolbar readout stays in sync.
 - **Pencil**: exactly the note under the cursor repaints — nothing nearby.
+- **Wand**: click a note → its whole connected melodic phrase (time-adjacent
+  notes within the Reach pitch jump) repaints in one click; the Reach
+  slider (1-12 semitones) controls how far the fill spreads. Dragging
+  floods each newly touched note's phrase additively.
 - **Lasso**: drag a freehand loop → the path draws with animated dashes
   and a translucent voice-tinted fill; enclosed notes preview live and are
   committed on release. Backing the loop off a note un-previews it.
 - Each stroke (any tool) is one undo step.
-- `P` / `B` / `L` jump straight to that tool (entering paint mode if
-  needed); pressing the active tool's key again exits to select mode;
+- `P` / `B` / `L` / `W` jump straight to that tool (entering paint mode
+  if needed); pressing the active tool's key again exits to select mode;
   `Escape` cancels an in-progress stroke and leaves paint mode.
 - Toggle paint mode off → returns to normal select/marquee behavior and
   the native cursor.
 - Pressing `1`-`9` while in paint mode sets the active voice instead of
   reassigning a selection.
+
+## Smart selection
+
+- Double-click a note (select mode) → its whole vertical chord (notes
+  sharing its start/end within a 32nd-note tolerance) becomes the
+  selection.
+- Right-click a note → a context menu appears with **Select chord**,
+  **Select phrase**, **Keep top line only** / **Keep bottom line only**
+  (only when 2+ notes are selected), and an **Assign … to** row of
+  colored voice swatches.
+- Right-click a _selected_ note and assign → the whole selection moves;
+  right-click an unselected note and assign → just that note moves. Both
+  are single undo steps.
+- **Keep top line only** on a selection spanning chords → only the
+  highest sounding note at each moment survives (the melodic skyline);
+  bottom line mirrors it for the bass.
+- The context menu closes on Escape, on clicking elsewhere, and after
+  any action; right-clicking empty canvas with nothing selected shows no
+  menu (and never the browser's own menu).
 
 ## Pitch-range mode
 

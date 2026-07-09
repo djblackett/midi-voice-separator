@@ -59,8 +59,15 @@ Primary stack:
   (`notesInLassoPath`). Unit-tested; mirrors `hitTest.ts`'s note-rect math.
 - `src/features/piano-roll/paintOverlay.ts`: canvas drawing for the
   paint-cursor overlay (voice-colored brush ring, pencil crosshair, lasso
-  marching-ants path, brush-size HUD). Thin canvas glue, untested — same
-  category as `drawPianoRoll.ts`'s draw calls.
+  marching-ants path, wand sparkle, brush-size HUD). Thin canvas glue,
+  untested — same category as `drawPianoRoll.ts`'s draw calls.
+- `src/features/piano-roll/smartSelect.ts`: pure musical (tick/pitch
+  space) smart selection — `selectChord` (vertically stacked notes within
+  a 32nd-note boundary tolerance), `selectTopLine`/`selectBottomLine`
+  (skyline sweep: the highest/lowest sounding note per boundary segment),
+  and `selectPhrase` (the wand's flood fill over time-adjacent,
+  pitch-near notes; reach constants/clamp). Behind the double-click chord
+  gesture, the right-click context menu, and the wand paint tool.
 - `src/features/piano-roll/hitTest.ts`: piano-roll point and rectangle hit
   testing.
 - `src/features/piano-roll/selection.ts`: pure selection-state resolution for
@@ -2001,6 +2008,52 @@ feedback:
   toolbar readout, Escape exiting paint mode; one unrelated
   `playback.e2e.ts` piano-sample flake under full-suite parallelism
   passed in isolation and in the final full run). No Rust changes.
+
+### Smart selection (chord / top-bottom line / context menu) + magic wand
+
+Follow-on to Paint mode 2.0, from the same user conversation: selection
+was purely geometric (click/marquee/lasso) even though every note
+carries the musical facts (pitch, boundaries, voice). New pure module
+`smartSelect.ts` (see Code Map) exposes them as gestures:
+
+- **Double-click a note** (select mode) selects its vertical chord —
+  `selectChord`, boundaries within `chordToleranceTicks(ppq)` (a 32nd
+  note) of the anchor's.
+- **Right-click context menu** (`PianoRoll.tsx` state + a fixed
+  full-viewport backdrop that also swallows scrolls): _Select chord_,
+  _Select phrase_, _Keep top line only_ / _Keep bottom line only_ (shown
+  when 2+ notes are selected; skyline sweep over the selection), and an
+  _Assign N notes to_ row of voice swatches. DAW targeting convention:
+  right-click on a selected note acts on the whole selection, on an
+  unselected note just that note. Assign flows through App's new
+  `handleAssignNotesToVoice` → `applyNoteReassignment` (extracted from
+  `handlePaintNotes`, same undo/range-provenance path).
+- **Magic wand** — fourth `PaintTool` (`W`, sparkle cursor, "Reach"
+  slider 1-12 semitones): one click flood-fills the connected melodic
+  run around the hit note (`selectPhrase`: time-adjacent within one beat,
+  pitch jump ≤ reach) into the active voice; dragging floods each newly
+  touched note's phrase additively. Same commit path as every other
+  stroke — one undo step.
+- Pointer-gesture hardening this required: `handlePointerDown`/`Up` now
+  ignore non-primary buttons (a right-click used to silently start a
+  marquee/paint gesture), and the canvas suppresses the browser's own
+  context menu everywhere on the roll.
+- **E2E gotcha, same family as Paint 2.0's below-the-fold one**: a
+  cached `canvas.boundingBox()` goes stale after any locator click that
+  auto-scrolls (voice swatch, Undo). `smart-select.e2e.ts` re-resolves
+  the box (scrollIntoViewIfNeeded + boundingBox) immediately before
+  every raw `page.mouse` gesture instead of caching it per test — the
+  "keep top line" spec failed exactly this way (menu opened at stale
+  coordinates) before the fix.
+- Verified: `pnpm test` (325/325, 16 new in `smartSelect.test.ts`:
+  chord tolerance/exclusion, skyline including partial-span tops and
+  unison ties, phrase bidirectional walk/gap break/jump break/overlap/
+  chained hops), `pnpm lint`, `pnpm format:check`, `pnpm build`,
+  `pnpm test:e2e` (62/62 — new `smart-select.e2e.ts` covering
+  double-click chord, menu chord-select → assign-selection with undo,
+  assign-unselected-note, keep-top-line; plus a wand phrase-fill spec in
+  `paint-mode.e2e.ts`). Screenshots of the open context menu and wand
+  cursor confirmed against the real dev-server bundle. No Rust changes.
 
 ## Architecture Invariants
 

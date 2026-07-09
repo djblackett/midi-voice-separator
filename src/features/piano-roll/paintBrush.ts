@@ -7,9 +7,11 @@ import { PIANO_ROLL_LABEL_WIDTH } from "./drawPianoRoll";
  * The paint sub-tools. "pencil" is the original precise single-note-under-
  * the-cursor behavior; "brush" paints every note within a round, resizable
  * brush swept along the stroke; "lasso" pours every note enclosed by a
- * freehand loop into the active voice on release.
+ * freehand loop into the active voice on release; "wand" flood-fills the
+ * connected melodic phrase around the clicked note (see
+ * `smartSelect.ts`'s `selectPhrase`).
  */
-export type PaintTool = "pencil" | "brush" | "lasso";
+export type PaintTool = "pencil" | "brush" | "lasso" | "wand";
 
 export interface Point {
   x: number;

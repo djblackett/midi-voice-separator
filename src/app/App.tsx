@@ -29,6 +29,12 @@ import {
 } from "../features/piano-roll/paintBrush";
 import { getVoiceFillColor } from "../features/piano-roll/drawPianoRoll";
 import {
+  clampWandReach,
+  DEFAULT_WAND_REACH,
+  MAX_WAND_REACH,
+  MIN_WAND_REACH,
+} from "../features/piano-roll/smartSelect";
+import {
   getBackendStatus,
   importMidi,
   reassignVoices,
@@ -177,6 +183,7 @@ export default function App() {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
   const [paintTool, setPaintTool] = useState<PaintTool>("brush");
   const [brushRadius, setBrushRadius] = useState(DEFAULT_BRUSH_RADIUS);
+  const [wandReach, setWandReach] = useState(DEFAULT_WAND_REACH);
   const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
@@ -520,13 +527,14 @@ export default function App() {
         return;
       }
 
-      // Paint-tool shortcuts, Photoshop-style: P(encil)/B(rush)/L(asso)
-      // switch tools (entering paint mode if needed); pressing the active
-      // tool's key again exits back to select mode.
+      // Paint-tool shortcuts, Photoshop-style: P(encil)/B(rush)/L(asso)/
+      // W(and) switch tools (entering paint mode if needed); pressing the
+      // active tool's key again exits back to select mode.
       const paintToolForKey: Record<string, PaintTool> = {
         p: "pencil",
         b: "brush",
         l: "lasso",
+        w: "wand",
       };
       const shortcutTool = paintToolForKey[event.key.toLowerCase()];
       if (displayedProject && shortcutTool && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -1048,15 +1056,12 @@ export default function App() {
     setSoloVoiceId((current) => (current === voiceId ? null : voiceId));
   }
 
-  function handlePaintNotes(noteIds: string[]) {
-    if (!activeVoiceId) {
-      return;
-    }
+  function applyNoteReassignment(noteIds: string[], voiceId: string) {
     pushHistorySnapshot();
     setVoiceOverrides((currentOverrides) => {
       const nextOverrides = { ...currentOverrides };
       for (const noteId of noteIds) {
-        nextOverrides[noteId] = activeVoiceId;
+        nextOverrides[noteId] = voiceId;
       }
       return nextOverrides;
     });
@@ -1068,6 +1073,21 @@ export default function App() {
       return next;
     });
     setExportResult(null);
+  }
+
+  function handlePaintNotes(noteIds: string[]) {
+    if (!activeVoiceId) {
+      return;
+    }
+    applyNoteReassignment(noteIds, activeVoiceId);
+  }
+
+  /** Context-menu "Assign to" — same reassignment path, explicit voice. */
+  function handleAssignNotesToVoice(noteIds: string[], voiceId: string) {
+    if (noteIds.length === 0) {
+      return;
+    }
+    applyNoteReassignment(noteIds, voiceId);
   }
 
   function handleMarkerPitchChange(markerId: string, pitch: number) {
@@ -2348,7 +2368,50 @@ export default function App() {
                   </svg>
                   <span>Lasso</span>
                 </button>
+                <button
+                  type="button"
+                  className={
+                    paintTool === "wand" ? "paint-tool-button active" : "paint-tool-button"
+                  }
+                  onClick={() => setPaintTool("wand")}
+                  aria-pressed={paintTool === "wand" ? "true" : "false"}
+                  title="Wand — click a note to paint its whole connected phrase (W)"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 13l6.5-6.5" strokeLinecap="round" />
+                    <path
+                      d="M11.5 1.8v2.4M11.5 6.4v1.4M9.2 4.1h1.4M12.4 4.1h1.9"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <span>Wand</span>
+                </button>
               </div>
+              {paintTool === "wand" ? (
+                <label
+                  className="paint-size-control"
+                  title="Max pitch jump (semitones) the wand's phrase fill will cross"
+                >
+                  Reach
+                  <input
+                    type="range"
+                    min={MIN_WAND_REACH}
+                    max={MAX_WAND_REACH}
+                    value={wandReach}
+                    onChange={(event) => setWandReach(clampWandReach(Number(event.target.value)))}
+                    aria-label="Wand reach"
+                  />
+                  <span className="paint-size-value">{wandReach} st</span>
+                </label>
+              ) : null}
               {paintTool === "brush" ? (
                 <label
                   className="paint-size-control"
@@ -2406,6 +2469,9 @@ export default function App() {
                 if (paintTool === "lasso") {
                   return `Draw a loop around notes to paint notes into ${voiceLabel}.`;
                 }
+                if (paintTool === "wand") {
+                  return `Click a note to paint its connected phrase into ${voiceLabel} — Reach sets the max pitch jump.`;
+                }
                 return `Click or drag to paint notes into ${voiceLabel}.`;
               })()}
             </span>
@@ -2429,6 +2495,8 @@ export default function App() {
           paintTool={paintTool}
           brushRadius={brushRadius}
           onBrushRadiusChange={setBrushRadius}
+          wandReach={wandReach}
+          onAssignNotes={handleAssignNotesToVoice}
           pitchMarkers={pitchMarkers}
           onPitchMarkersChange={setPitchMarkers}
           currentPlaybackTick={playback.currentTick}

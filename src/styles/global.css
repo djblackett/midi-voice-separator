@@ -989,6 +989,7 @@ kbd {
 .piano-roll-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 12px 24px 0;
 }
@@ -1161,6 +1162,81 @@ kbd {
   left: 0;
   z-index: 1;
   pointer-events: none;
+}
+
+/* Full-viewport click-away layer under the context menu; also swallows
+   scrolls so the menu can't drift away from the notes it targets. */
+.piano-roll-context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+
+.piano-roll-context-menu {
+  position: absolute;
+  z-index: 6;
+  min-width: 176px;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.97);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.6);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.piano-roll-context-menu > button {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.piano-roll-context-menu > button:hover {
+  background: #1e3a5f;
+  color: #f0f9ff;
+}
+
+.piano-roll-context-assign {
+  border-top: 1px solid #334155;
+  margin-top: 4px;
+  padding: 6px 10px 4px;
+}
+
+.piano-roll-context-assign-label {
+  display: block;
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.piano-roll-context-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.piano-roll-context-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid rgba(248, 250, 252, 0.4);
+  cursor: pointer;
+  padding: 0;
+}
+
+.piano-roll-context-swatch:hover {
+  transform: scale(1.15);
+  border-color: #f8fafc;
 }
 
 .piano-roll-minimap {
