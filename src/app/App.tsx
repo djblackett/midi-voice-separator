@@ -102,6 +102,10 @@ import {
   toDiffSide,
 } from "../domain/midi/assignmentDiff";
 import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
+import {
+  buildExportReadinessSummary,
+  formatExportReadinessStatus,
+} from "../domain/midi/exportReadiness";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
 import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
@@ -295,6 +299,17 @@ export default function App() {
     }
     return diffAssignments(targetSide, currentSide);
   }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, currentRerunSettings]);
+  const exportReadinessSummary = useMemo(
+    () =>
+      buildExportReadinessSummary({
+        project: displayedProject,
+        reviewProgress,
+        baselineDiff:
+          assignmentDiffResult && assignmentDiffResult.comparable ? assignmentDiffResult : null,
+        lockedNoteIds: new Set(Object.keys(voiceOverrides)),
+      }),
+    [displayedProject, reviewProgress, assignmentDiffResult, voiceOverrides],
+  );
   // The diff target's own materialized assignments -- the "before" side's
   // noteId -> voiceId map, reused directly as the changed-note overlay's
   // "previous voice" lookup rather than recomputing it from the diff
@@ -1345,6 +1360,25 @@ export default function App() {
         </section>
       ) : null}
 
+      {displayedProject ? (
+        <section
+          className={`export-readiness export-readiness-${exportReadinessSummary.status}`}
+          aria-label="Export readiness summary"
+        >
+          <div className="export-readiness-header">
+            <h2>Export readiness</h2>
+            <p>{formatExportReadinessStatus(exportReadinessSummary)}</p>
+          </div>
+          <ul className="export-readiness-list">
+            {exportReadinessSummary.findings.map((finding) => (
+              <li key={finding.id} className={`export-readiness-item ${finding.severity}`}>
+                <span className="export-readiness-label">{finding.label}</span>
+                <span>{finding.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {displayedProject ? (
         <section className="separation-summary" aria-live="polite">
           <span>
