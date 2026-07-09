@@ -25,6 +25,15 @@ import {
 } from "./hitTest";
 import { shouldPaintNote } from "./paint";
 import {
+  DEFAULT_BRUSH_RADIUS,
+  notesInBrushStamp,
+  notesInLassoPath,
+  stepBrushRadius,
+  type PaintTool,
+  type Point,
+} from "./paintBrush";
+import { drawPaintOverlay } from "./paintOverlay";
+import {
   defaultPitchViewportWindow,
   panPitchBy,
   panPitchToReveal,
@@ -57,6 +66,12 @@ interface PianoRollProps {
   interactionMode?: InteractionMode;
   activeVoiceId?: string | null;
   onPaintNotes?: (noteIds: string[]) => void;
+  /** Which paint sub-tool a paint-mode stroke uses. */
+  paintTool?: PaintTool;
+  /** Radius in px of the round brush tool's cursor/hit area. */
+  brushRadius?: number;
+  /** Fired by Alt+wheel over the canvas so the toolbar stays in sync. */
+  onBrushRadiusChange?: (radius: number) => void;
   pitchMarkers?: readonly PitchMarker[];
   onPitchMarkersChange?: (next: PitchMarker[]) => void;
   currentPlaybackTick?: number | null;
@@ -83,6 +98,9 @@ export function PianoRoll({
   interactionMode = "select",
   activeVoiceId = null,
   onPaintNotes = () => {},
+  paintTool = "brush",
+  brushRadius = DEFAULT_BRUSH_RADIUS,
+  onBrushRadiusChange = () => {},
   pitchMarkers = [],
   onPitchMarkersChange = () => {},
   currentPlaybackTick = null,
@@ -96,6 +114,7 @@ export function PianoRoll({
   viewMode = "piano",
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
@@ -112,6 +131,19 @@ export function PianoRoll({
   const paintedNoteIdsRef = useRef<Map<string, string>>(new Map());
   const draggedMarkerIdRef = useRef<string | null>(null);
   const lastDurationTicksRef = useRef<number | null>(null);
+  // Paint-cursor overlay state. All refs, not React state: the cursor and
+  // an in-progress stroke update every pointer move, and the overlay
+  // canvas is redrawn by its own requestAnimationFrame loop instead of
+  // re-rendering the component per pixel.
+  const cursorPointRef = useRef<Point | null>(null);
+  const lassoPathRef = useRef<Point[]>([]);
+  const lastBrushPointRef = useRef<Point | null>(null);
+  const sizeHudUntilRef = useRef(0);
+  const previousBrushRadiusRef = useRef(brushRadius);
+  const onBrushRadiusChangeRef = useRef(onBrushRadiusChange);
+  onBrushRadiusChangeRef.current = onBrushRadiusChange;
+
+  const isPaintCursorActive = viewMode === "piano" && interactionMode === "paint" && !readOnly;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -281,6 +313,148 @@ export function PianoRoll({
     }
     drawCurrentView(context);
   }
+  // Effects (stroke cleanup, Escape cancel) need to trigger a redraw
+  // without listing the per-render `redrawCanvas` closure as a dependency,
+  // which would re-run them every render.
+  const redrawCanvasRef = useRef(redrawCanvas);
+  redrawCanvasRef.current = redrawCanvas;
+
+  function cancelPaintStroke() {
+    isPaintingRef.current = false;
+    lassoPathRef.current = [];
+    lastBrushPointRef.current = null;
+    if (paintedNoteIdsRef.current.size > 0) {
+      paintedNoteIdsRef.current = new Map();
+      redrawCanvasRef.current();
+    }
+  }
+  const cancelPaintStrokeRef = useRef(cancelPaintStroke);
+  cancelPaintStrokeRef.current = cancelPaintStroke;
+
+  /**
+   * Adds (or with `erase`, removes) every note under a brush capsule swept
+   * from `from` to `to` to the in-progress stroke, live-previewing on the
+   * main canvas when membership changed.
+   */
+  function stampBrush(from: Point, to: Point, erase: boolean) {
+    if (!activeVoiceId) {
+      return;
+    }
+    const hits = notesInBrushStamp(from, to, brushRadius, interactionProject, viewport);
+    const alreadyPainted = new Set(paintedNoteIdsRef.current.keys());
+    let changed = false;
+    for (const note of hits) {
+      if (erase) {
+        changed = paintedNoteIdsRef.current.delete(note.id) || changed;
+      } else if (shouldPaintNote(note, activeVoiceId, alreadyPainted)) {
+        paintedNoteIdsRef.current.set(note.id, activeVoiceId);
+        alreadyPainted.add(note.id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      redrawCanvas();
+    }
+  }
+
+  /**
+   * Recomputes which notes the in-progress lasso encloses and previews
+   * them. The pending set is rebuilt from scratch each move (not
+   * accumulated like brush stamps) so backing out of a region un-previews
+   * its notes.
+   */
+  function updateLassoPreview() {
+    if (!activeVoiceId) {
+      return;
+    }
+    const enclosed = notesInLassoPath(lassoPathRef.current, interactionProject, viewport);
+    const next = new Map<string, string>();
+    for (const note of enclosed) {
+      if (note.voiceId !== activeVoiceId) {
+        next.set(note.id, activeVoiceId);
+      }
+    }
+    const current = paintedNoteIdsRef.current;
+    const changed = next.size !== current.size || [...next.keys()].some((id) => !current.has(id));
+    paintedNoteIdsRef.current = next;
+    if (changed) {
+      redrawCanvas();
+    }
+  }
+
+  // Leaving paint mode (or switching to a read-only preview) mid-stroke
+  // must discard the uncommitted preview, or its colors would linger on
+  // the canvas without any real assignment behind them.
+  useEffect(() => {
+    if (!isPaintCursorActive) {
+      cancelPaintStrokeRef.current();
+    }
+  }, [isPaintCursorActive]);
+
+  // Escape cancels an in-progress stroke (App-level Escape handling then
+  // also exits paint mode — a mid-stroke Escape is "get me out").
+  useEffect(() => {
+    if (!isPaintCursorActive) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && isPaintingRef.current) {
+        cancelPaintStrokeRef.current();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPaintCursorActive]);
+
+  // Flash the brush-size HUD near the cursor whenever the radius changes,
+  // whichever control changed it (slider, [ ] keys, Alt+wheel).
+  useEffect(() => {
+    if (previousBrushRadiusRef.current !== brushRadius) {
+      previousBrushRadiusRef.current = brushRadius;
+      sizeHudUntilRef.current = performance.now() + 900;
+    }
+  }, [brushRadius]);
+
+  // The overlay animation loop: draws the tool cursor, in-progress lasso
+  // (marching ants), and size HUD every frame while paint mode is active.
+  // Runs off refs so pointer moves never re-render the component.
+  useEffect(() => {
+    const overlay = overlayCanvasRef.current;
+    const overlayContext = overlay?.getContext("2d");
+    if (!overlay || !overlayContext) {
+      return;
+    }
+
+    if (!isPaintCursorActive) {
+      overlayContext.save();
+      overlayContext.setTransform(1, 0, 0, 1, 0, 0);
+      overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+      overlayContext.restore();
+      return;
+    }
+
+    let rafId = 0;
+    const voiceColor = activeVoiceId ? getVoiceFillColor(activeVoiceId) : null;
+    function drawFrame(time: number) {
+      if (overlayContext) {
+        drawPaintOverlay(overlayContext, size.width, size.height, {
+          tool: paintTool,
+          cursor: cursorPointRef.current,
+          brushRadius,
+          voiceColor,
+          lassoPath: lassoPathRef.current,
+          antsPhase: time / 20,
+          sizeHudOpacity: Math.max(
+            0,
+            Math.min(1, (sizeHudUntilRef.current - performance.now()) / 300),
+          ),
+        });
+      }
+      rafId = requestAnimationFrame(drawFrame);
+    }
+    rafId = requestAnimationFrame(drawFrame);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPaintCursorActive, paintTool, brushRadius, activeVoiceId, size]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -293,6 +467,19 @@ export function PianoRoll({
     canvas.height = Math.floor(size.height * ratio);
     canvas.style.width = `${size.width}px`;
     canvas.style.height = `${size.height}px`;
+
+    const overlay = overlayCanvasRef.current;
+    if (overlay) {
+      overlay.width = Math.floor(size.width * ratio);
+      overlay.height = Math.floor(size.height * ratio);
+      overlay.style.width = `${size.width}px`;
+      overlay.style.height = `${size.height}px`;
+      // Pin the absolutely-positioned overlay exactly over the in-flow
+      // canvas (which sits below the shell's minimap padding band).
+      overlay.style.top = `${canvas.offsetTop}px`;
+      overlay.style.left = `${canvas.offsetLeft}px`;
+      overlay.getContext("2d")?.setTransform(ratio, 0, 0, ratio, 0, 0);
+    }
 
     const context = canvas.getContext("2d");
     if (!context) {
@@ -367,16 +554,25 @@ export function PianoRoll({
       return;
     }
 
-    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
+    if (isPaintCursorActive) {
+      const point = pointFromEvent(event);
+      cursorPointRef.current = point;
       if (!activeVoiceId) {
         return;
       }
       isPaintingRef.current = true;
       paintedNoteIdsRef.current = new Map();
-      const note = hitTestPianoRollNote(pointFromEvent(event), interactionProject, viewport);
-      if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
-        paintedNoteIdsRef.current.set(note.id, activeVoiceId);
-        redrawCanvas();
+      if (paintTool === "brush") {
+        lastBrushPointRef.current = point;
+        stampBrush(point, point, event.altKey);
+      } else if (paintTool === "lasso") {
+        lassoPathRef.current = [point];
+      } else {
+        const note = hitTestPianoRollNote(point, interactionProject, viewport);
+        if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
+          paintedNoteIdsRef.current.set(note.id, activeVoiceId);
+          redrawCanvas();
+        }
       }
       return;
     }
@@ -393,14 +589,32 @@ export function PianoRoll({
       return;
     }
 
-    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
+    if (isPaintCursorActive) {
+      const point = pointFromEvent(event);
+      cursorPointRef.current = point;
       if (!isPaintingRef.current || !activeVoiceId) {
         return;
       }
-      const note = hitTestPianoRollNote(pointFromEvent(event), interactionProject, viewport);
-      if (note && shouldPaintNote(note, activeVoiceId, new Set(paintedNoteIdsRef.current.keys()))) {
-        paintedNoteIdsRef.current.set(note.id, activeVoiceId);
-        redrawCanvas();
+      if (paintTool === "brush") {
+        stampBrush(lastBrushPointRef.current ?? point, point, event.altKey);
+        lastBrushPointRef.current = point;
+      } else if (paintTool === "lasso") {
+        const path = lassoPathRef.current;
+        const last = path[path.length - 1];
+        // Skip sub-3px jitter so the polygon stays small and smooth.
+        if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= 3) {
+          path.push(point);
+          updateLassoPreview();
+        }
+      } else {
+        const note = hitTestPianoRollNote(point, interactionProject, viewport);
+        if (
+          note &&
+          shouldPaintNote(note, activeVoiceId, new Set(paintedNoteIdsRef.current.keys()))
+        ) {
+          paintedNoteIdsRef.current.set(note.id, activeVoiceId);
+          redrawCanvas();
+        }
       }
       return;
     }
@@ -435,13 +649,21 @@ export function PianoRoll({
       return;
     }
 
-    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
+    if (isPaintCursorActive) {
       if (isPaintingRef.current) {
         isPaintingRef.current = false;
+        lassoPathRef.current = [];
+        lastBrushPointRef.current = null;
         const paintedIds = Array.from(paintedNoteIdsRef.current.keys());
         paintedNoteIdsRef.current = new Map();
         if (paintedIds.length > 0) {
           onPaintNotes(paintedIds);
+        } else {
+          // A stroke can end with an empty pending set while the canvas
+          // still shows preview colors (e.g. a lasso opened around notes
+          // and then dragged back off them, or an Alt-erase of the whole
+          // stroke) — repaint to drop the preview.
+          redrawCanvas();
         }
       }
       return;
@@ -512,6 +734,13 @@ export function PianoRoll({
     function handleWheel(event: WheelEvent) {
       event.preventDefault();
 
+      // Alt+wheel resizes the paint brush (Photoshop-style) instead of
+      // panning/zooming, but only while the brush cursor is actually up.
+      if (event.altKey && isPaintCursorActive && paintTool === "brush") {
+        onBrushRadiusChangeRef.current(stepBrushRadius(brushRadius, event.deltaY < 0 ? 1 : -1));
+        return;
+      }
+
       const isModified = event.ctrlKey || event.metaKey;
 
       if (isModified && event.shiftKey) {
@@ -567,7 +796,16 @@ export function PianoRoll({
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [project, viewport, viewportWindow, pitchViewportWindow, fullPitchSpan]);
+  }, [
+    project,
+    viewport,
+    viewportWindow,
+    pitchViewportWindow,
+    fullPitchSpan,
+    isPaintCursorActive,
+    paintTool,
+    brushRadius,
+  ]);
 
   function handleResetZoom() {
     setViewportWindow(defaultViewportWindow());
@@ -606,7 +844,10 @@ export function PianoRoll({
   }
 
   return (
-    <div className="piano-roll-shell" ref={containerRef}>
+    <div
+      className={isPaintCursorActive ? "piano-roll-shell paint-cursor-active" : "piano-roll-shell"}
+      ref={containerRef}
+    >
       {minimap ? (
         <div className="piano-roll-minimap" onPointerDown={handleMinimapClick}>
           <div
@@ -621,8 +862,12 @@ export function PianoRoll({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={() => setHoveredNote(null)}
+        onPointerLeave={() => {
+          setHoveredNote(null);
+          cursorPointRef.current = null;
+        }}
       />
+      <canvas ref={overlayCanvasRef} className="piano-roll-paint-overlay" aria-hidden="true" />
       {hoveredNote && project ? (
         <div
           className="piano-roll-tooltip"

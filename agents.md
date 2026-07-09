@@ -52,6 +52,15 @@ Primary stack:
 - `src/features/piano-roll/paint.ts`: pure `shouldPaintNote` predicate used
   by `PianoRoll.tsx`'s paint-stroke logic (kept separate for the same
   unit-testability reason as `selection.ts`).
+- `src/features/piano-roll/paintBrush.ts`: pure paint-tool geometry —
+  `PaintTool = "pencil" | "brush" | "lasso"`, brush-radius
+  constants/clamp/step, capsule-swept round-brush hit testing
+  (`notesInBrushStamp`), and freehand-lasso polygon enclosure
+  (`notesInLassoPath`). Unit-tested; mirrors `hitTest.ts`'s note-rect math.
+- `src/features/piano-roll/paintOverlay.ts`: canvas drawing for the
+  paint-cursor overlay (voice-colored brush ring, pencil crosshair, lasso
+  marching-ants path, brush-size HUD). Thin canvas glue, untested — same
+  category as `drawPianoRoll.ts`'s draw calls.
 - `src/features/piano-roll/hitTest.ts`: piano-roll point and rectangle hit
   testing.
 - `src/features/piano-roll/selection.ts`: pure selection-state resolution for
@@ -1934,6 +1943,64 @@ default to exact matching from the start.
 - Verified: `pnpm test:e2e` (42/42, up from 8, ~8s total), `pnpm test`
   (252/252, unchanged), `pnpm lint`, `pnpm format:check`, `pnpm build`
   all clean. No Rust changes.
+
+### Paint mode 2.0 — pencil/brush/lasso tools with a drawn cursor overlay
+
+User request: make paint mode "more intuitive and easier to use ...
+like painting in Photoshop", with visible cursor shapes/sizes and a
+freehand shape selector. Paint mode's single gesture (hit-test the one
+note under the pointer) became three sub-tools with real cursor
+feedback:
+
+- **Tools** (`PaintTool` in the new `paintBrush.ts`, see Code Map):
+  **Pencil** is the original exact-note-under-cursor behavior. **Brush**
+  (the new default) paints every note within a resizable round brush,
+  hit-tested as a capsule swept between consecutive pointer samples so a
+  fast stroke can't skip notes between move events. **Lasso** accumulates
+  a freehand path, live-previews every enclosed note (recomputed from
+  scratch per move, so backing off a region un-previews it), and commits
+  on release. All three flush through the existing single
+  `onPaintNotes(ids)`/`pushHistorySnapshot` path — one undo step per
+  stroke, unchanged.
+- **Cursor overlay**: a second, pointer-transparent `<canvas>` in
+  `.piano-roll-shell`, driven by a `requestAnimationFrame` loop reading
+  refs (never React state — pointer moves don't re-render). Native cursor
+  hidden via `cursor: none` while paint mode is active in piano view.
+  Draws a voice-colored brush ring (dual-stroked dark halo + accent so it
+  reads over any background, gray dashed when no voice is active), pencil
+  crosshair, lasso path with animated marching ants and voice-tinted
+  fill, and a transient "N px" size HUD when the radius changes.
+- **Brush size**: toolbar slider, `[`/`]` keys, and Alt+wheel over the
+  canvas (handled before the pan/zoom branches in the non-passive wheel
+  listener) all funnel through `stepBrushRadius` (multiplicative, min-1px
+  step, clamped 6-72). Alt while brushing _removes_ notes from the
+  in-progress stroke.
+- **Toolbar/shortcuts** (`App.tsx` owns `paintTool`/`brushRadius`):
+  segmented Pencil/Brush/Lasso control with inline SVG icons, size
+  slider, and an active-voice chip. `P`/`B`/`L` switch tools (entering
+  paint mode; same key again exits), `Escape` now exits paint mode
+  (instead of clearing selection) after `PianoRoll`'s own listener
+  cancels any in-progress stroke. Leaving paint mode mid-stroke discards
+  the uncommitted preview via an `isPaintCursorActive` effect, so preview
+  colors can't linger without a real assignment behind them.
+- **E2E gotcha worth remembering**: the new toolbar row made the page
+  tall enough that the canvas's lower half sat below Playwright's 720px
+  viewport. Raw `page.mouse` events (unlike `locator.click`) never
+  auto-scroll — a `mouse.down` below the fold silently hits nothing
+  (`document.elementFromPoint` returns null; root-caused with a
+  temporary elementFromPoint probe, not guessing). The shared `canvasBox`
+  helper now calls `scrollIntoViewIfNeeded()` first. Also, the overlay
+  is a second canvas, so `.editor-grid canvas` locators need `.first()`
+  (updated in `voice-lanes.e2e.ts` too).
+- Verified: `pnpm test` (309/309, including new `paintBrush.test.ts`
+  covering clamp/step, stationary + swept capsule stamps, gutter
+  clipping, and lasso enclosure/edge cases), `pnpm lint`,
+  `pnpm format:check`, `pnpm build`, `pnpm test:e2e` (57/57 — 4 new
+  paint specs: brush drag across two notes as one undo step, lasso
+  enclosure excluding an outside note, `[`/`]` resize reflected in the
+  toolbar readout, Escape exiting paint mode; one unrelated
+  `playback.e2e.ts` piano-sample flake under full-suite parallelism
+  passed in isolation and in the final full run). No Rust changes.
 
 ## Architecture Invariants
 

@@ -67,12 +67,22 @@ function voiceRow(page: Page, label: string) {
     .filter({ has: page.getByLabel(`Select notes in ${label}`, { exact: true }) });
 }
 
-async function clickNoteOnCanvas(page: Page, targetNote: FixtureNote) {
-  const canvas = page.locator(".editor-grid canvas");
+async function canvasBox(page: Page) {
+  // .first(): the interactive roll canvas — the shell's second canvas is
+  // the pointer-transparent paint-cursor overlay. Scroll it fully into
+  // view first: raw page.mouse events (unlike locator.click) never
+  // auto-scroll, and a point below the viewport silently hits nothing.
+  const canvas = page.locator(".editor-grid canvas").first();
+  await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {
     throw new Error("Piano roll canvas has no bounding box");
   }
+  return box;
+}
+
+async function clickNoteOnCanvas(page: Page, targetNote: FixtureNote) {
+  const box = await canvasBox(page);
   const local = noteScreenCenter(targetNote, box, durationTicks, lowestPitch, highestPitch);
   await page.mouse.move(box.x + local.x, box.y + local.y);
   await page.mouse.down();
@@ -134,5 +144,96 @@ test.describe("paint mode", () => {
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(voiceRow(page, "Voice 1")).toContainText("2 notes");
     await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
+  });
+
+  test("a brush drag across two notes reassigns both, as one undoable step", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByLabel("Select notes in Voice 2").click();
+    await page.getByRole("button", { name: "Paint mode: off" }).click();
+    // Brush is the default paint tool; make that assumption explicit so a
+    // future default change fails here instead of confusing the drag below.
+    await expect(page.getByRole("button", { name: "Brush" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const box = await canvasBox(page);
+    const from = noteScreenCenter(noteA, box, durationTicks, lowestPitch, highestPitch);
+    const to = noteScreenCenter(noteB, box, durationTicks, lowestPitch, highestPitch);
+    await page.mouse.move(box.x + from.x, box.y + from.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + to.x, box.y + to.y, { steps: 8 });
+    await page.mouse.up();
+
+    await expect(voiceRow(page, "Voice 1")).toContainText("0 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("3 notes");
+
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("2 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
+  });
+
+  test("a lasso loop around two notes reassigns only the enclosed notes", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByLabel("Select notes in Voice 2").click();
+    await page.getByRole("button", { name: "Paint mode: off" }).click();
+    await page.getByRole("button", { name: "Lasso" }).click();
+
+    // A rectangle-ish freehand loop enclosing noteA and noteB but not
+    // noteC (pitch 68 renders above the loop's top edge).
+    const box = await canvasBox(page);
+    const a = noteScreenCenter(noteA, box, durationTicks, lowestPitch, highestPitch);
+    const b = noteScreenCenter(noteB, box, durationTicks, lowestPitch, highestPitch);
+    const pitchCount = highestPitch - lowestPitch + 1;
+    const rowHeight = box.height / pitchCount;
+    const top = b.y - rowHeight; // between noteB's row and noteC's row
+    const bottom = a.y + rowHeight;
+    const left = PIANO_ROLL_LABEL_WIDTH + 2;
+    const right = b.x + (b.x - a.x) / 4;
+
+    await page.mouse.move(box.x + left, box.y + top);
+    await page.mouse.down();
+    await page.mouse.move(box.x + right, box.y + top, { steps: 6 });
+    await page.mouse.move(box.x + right, box.y + bottom, { steps: 6 });
+    await page.mouse.move(box.x + left, box.y + bottom, { steps: 6 });
+    await page.mouse.up();
+
+    await expect(voiceRow(page, "Voice 1")).toContainText("0 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("3 notes");
+  });
+
+  test("[ and ] resize the brush while painting", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByRole("button", { name: "Paint mode: off" }).click();
+    await expect(page.locator(".paint-size-value")).toHaveText("36px"); // default radius 18
+
+    await page.keyboard.press("]");
+    await expect(page.locator(".paint-size-value")).toHaveText("42px");
+
+    await page.keyboard.press("[");
+    await expect(page.locator(".paint-size-value")).toHaveText("36px");
+  });
+
+  test("Escape leaves paint mode", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByRole("button", { name: "Paint mode: off" }).click();
+    await page.keyboard.press("Escape");
+
+    await expect(page.getByRole("button", { name: "Paint mode: off" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 });

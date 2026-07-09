@@ -1004,6 +1004,98 @@ kbd {
   font-size: 13px;
 }
 
+.paint-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.paint-tool-segment {
+  display: inline-flex;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1f2937;
+}
+
+.paint-tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.paint-tool-button + .paint-tool-button {
+  border-left: 1px solid #334155;
+}
+
+.paint-tool-button:hover {
+  background: #273449;
+  color: #f1f5f9;
+}
+
+.paint-tool-button.active {
+  background: #0c4a6e;
+  color: #f0f9ff;
+}
+
+.paint-tool-button svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.paint-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.paint-size-control input[type="range"] {
+  width: 110px;
+  accent-color: #38bdf8;
+}
+
+.paint-size-value {
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+}
+
+.paint-voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #475569;
+  border-radius: 999px;
+  padding: 3px 10px 3px 6px;
+  font-size: 12px;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.paint-voice-chip-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(248, 250, 252, 0.5);
+  flex-shrink: 0;
+}
+
+.paint-voice-chip.empty {
+  border-style: dashed;
+  color: #94a3b8;
+  padding: 3px 10px;
+}
+
 .playback-scope-label {
   display: inline-flex;
   align-items: center;
@@ -1055,6 +1147,20 @@ kbd {
 
 .piano-roll-shell canvas {
   display: block;
+}
+
+/* Paint mode replaces the native cursor with the canvas-drawn brush/
+   pencil/lasso cursor on the overlay, so the OS arrow must not fight it. */
+.piano-roll-shell.paint-cursor-active canvas {
+  cursor: none;
+}
+
+.piano-roll-paint-overlay {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .piano-roll-minimap {

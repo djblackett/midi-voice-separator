@@ -80,13 +80,32 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 ## Paint mode
 
 - Click **Paint mode: off** to turn it on → button shows "Paint mode: on";
-  a hint appears: "Click a voice swatch above to choose what to paint."
-- Click a voice swatch while in paint mode → hint updates to "Click or drag
-  to paint notes into <voice>."
-- Click a note → it repaints into the active voice.
-- Click-drag across several notes → all of them repaint into the active
-  voice as the drag passes over them.
-- Toggle paint mode off → returns to normal select/marquee behavior.
+  a Pencil/Brush/Lasso tool switcher, brush size slider, and active-voice
+  chip appear; the hint says to pick a voice if none is active.
+- Click a voice swatch while in paint mode → hint names the target voice
+  and the voice chip shows its color and label.
+- The native cursor disappears over the roll and is replaced by a drawn
+  cursor: a voice-colored ring (Brush), a crosshair (Pencil), or a small
+  loop-with-tail (Lasso). With no active voice the ring is gray and dashed.
+- **Brush** (default): click or drag → every note the round brush passes
+  over repaints into the active voice, with live color preview. A fast
+  swipe across a run of notes catches all of them (no gaps between pointer
+  samples).
+- Hold `Alt` while brushing → notes under the brush are removed from the
+  in-progress stroke instead of added.
+- Brush size: the toolbar slider, `[` / `]` keys, and `Alt`+scroll over the
+  roll all resize it; a "N px" bubble flashes near the cursor while
+  resizing, and the toolbar readout stays in sync.
+- **Pencil**: exactly the note under the cursor repaints — nothing nearby.
+- **Lasso**: drag a freehand loop → the path draws with animated dashes
+  and a translucent voice-tinted fill; enclosed notes preview live and are
+  committed on release. Backing the loop off a note un-previews it.
+- Each stroke (any tool) is one undo step.
+- `P` / `B` / `L` jump straight to that tool (entering paint mode if
+  needed); pressing the active tool's key again exits to select mode;
+  `Escape` cancels an in-progress stroke and leaves paint mode.
+- Toggle paint mode off → returns to normal select/marquee behavior and
+  the native cursor.
 - Pressing `1`-`9` while in paint mode sets the active voice instead of
   reassigning a selection.
 

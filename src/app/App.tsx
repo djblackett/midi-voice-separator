@@ -20,6 +20,15 @@ import {
   type PianoRollViewMode,
 } from "../features/piano-roll/PianoRoll";
 import {
+  clampBrushRadius,
+  DEFAULT_BRUSH_RADIUS,
+  MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
+  stepBrushRadius,
+  type PaintTool,
+} from "../features/piano-roll/paintBrush";
+import { getVoiceFillColor } from "../features/piano-roll/drawPianoRoll";
+import {
   getBackendStatus,
   importMidi,
   reassignVoices,
@@ -166,6 +175,8 @@ export default function App() {
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
+  const [paintTool, setPaintTool] = useState<PaintTool>("brush");
+  const [brushRadius, setBrushRadius] = useState(DEFAULT_BRUSH_RADIUS);
   const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
@@ -483,7 +494,11 @@ export default function App() {
       }
 
       if (event.key === "Escape") {
-        setSelectedNoteIds(new Set());
+        if (interactionMode === "paint") {
+          setInteractionMode("select");
+        } else {
+          setSelectedNoteIds(new Set());
+        }
         return;
       }
 
@@ -502,6 +517,36 @@ export default function App() {
         if (nextId) {
           setSelectedNoteIds(new Set([nextId]));
         }
+        return;
+      }
+
+      // Paint-tool shortcuts, Photoshop-style: P(encil)/B(rush)/L(asso)
+      // switch tools (entering paint mode if needed); pressing the active
+      // tool's key again exits back to select mode.
+      const paintToolForKey: Record<string, PaintTool> = {
+        p: "pencil",
+        b: "brush",
+        l: "lasso",
+      };
+      const shortcutTool = paintToolForKey[event.key.toLowerCase()];
+      if (displayedProject && shortcutTool && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        if (interactionMode === "paint" && paintTool === shortcutTool) {
+          setInteractionMode("select");
+        } else {
+          setPaintTool(shortcutTool);
+          setInteractionMode("paint");
+        }
+        return;
+      }
+
+      if (
+        interactionMode === "paint" &&
+        paintTool === "brush" &&
+        (event.key === "[" || event.key === "]")
+      ) {
+        event.preventDefault();
+        setBrushRadius((radius) => stepBrushRadius(radius, event.key === "]" ? 1 : -1));
         return;
       }
 
@@ -551,6 +596,7 @@ export default function App() {
     selectedNote,
     flaggedNotes,
     interactionMode,
+    paintTool,
     history,
     voiceOverrides,
     voiceOrder,
@@ -2222,6 +2268,120 @@ export default function App() {
           >
             {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
           </button>
+          {interactionMode === "paint" ? (
+            <div className="paint-toolbar">
+              <div className="paint-tool-segment" role="group" aria-label="Paint tool">
+                <button
+                  type="button"
+                  className={
+                    paintTool === "pencil" ? "paint-tool-button active" : "paint-tool-button"
+                  }
+                  onClick={() => setPaintTool("pencil")}
+                  aria-pressed={paintTool === "pencil" ? "true" : "false"}
+                  title="Pencil — paint exactly the note under the cursor (P)"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    aria-hidden="true"
+                  >
+                    <path d="M11.5 2.5l2 2L5 13l-2.7.7.7-2.7z" strokeLinejoin="round" />
+                  </svg>
+                  <span>Pencil</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    paintTool === "brush" ? "paint-tool-button active" : "paint-tool-button"
+                  }
+                  onClick={() => setPaintTool("brush")}
+                  aria-pressed={paintTool === "brush" ? "true" : "false"}
+                  title="Brush — paint every note inside the round brush (B)"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M13.5 2.5c-2.2.6-5 3.1-6.5 5.1l1.4 1.4c2-1.5 4.5-4.3 5.1-6.5z"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M6.3 8.4c-1.6.1-3 1.6-3 4.1 2.5 0 4-1.4 4.1-3z"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Brush</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    paintTool === "lasso" ? "paint-tool-button active" : "paint-tool-button"
+                  }
+                  onClick={() => setPaintTool("lasso")}
+                  aria-pressed={paintTool === "lasso" ? "true" : "false"}
+                  title="Lasso — draw a loop and paint every enclosed note (L)"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    aria-hidden="true"
+                  >
+                    <ellipse cx="8" cy="6" rx="5.5" ry="3.5" />
+                    <path
+                      d="M4.5 8.8c-1 1.2-.4 2.8 1 3.2 1.2.3 2.4-.3 2.7-1.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <span>Lasso</span>
+                </button>
+              </div>
+              {paintTool === "brush" ? (
+                <label
+                  className="paint-size-control"
+                  title="Brush size — also [ and ] keys, or Alt+scroll over the roll"
+                >
+                  Size
+                  <input
+                    type="range"
+                    min={MIN_BRUSH_RADIUS}
+                    max={MAX_BRUSH_RADIUS}
+                    value={brushRadius}
+                    onChange={(event) =>
+                      setBrushRadius(clampBrushRadius(Number(event.target.value)))
+                    }
+                    aria-label="Brush size"
+                  />
+                  <span className="paint-size-value">{brushRadius * 2}px</span>
+                </label>
+              ) : null}
+              {activeVoiceId ? (
+                <span className="paint-voice-chip" title="The voice this stroke paints into">
+                  <span
+                    className="paint-voice-chip-swatch"
+                    style={{ backgroundColor: getVoiceFillColor(activeVoiceId) }}
+                  />
+                  {displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
+                    activeVoiceId}
+                </span>
+              ) : (
+                <span className="paint-voice-chip empty">No voice — press 1-9</span>
+              )}
+            </div>
+          ) : null}
           <button
             type="button"
             className={interactionMode === "range" ? "secondary-button active" : "secondary-button"}
@@ -2233,12 +2393,21 @@ export default function App() {
           </button>
           {interactionMode === "paint" ? (
             <span className="piano-roll-toolbar-hint">
-              {activeVoiceId
-                ? `Click or drag to paint notes into ${
-                    displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
-                    activeVoiceId
-                  }.`
-                : "Click a voice swatch above to choose what to paint."}
+              {(() => {
+                if (!activeVoiceId) {
+                  return "Click a voice swatch above or press 1-9 to choose what to paint.";
+                }
+                const voiceLabel =
+                  displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
+                  activeVoiceId;
+                if (paintTool === "brush") {
+                  return `Drag the brush to paint notes into ${voiceLabel} — hold Alt to remove from the stroke.`;
+                }
+                if (paintTool === "lasso") {
+                  return `Draw a loop around notes to paint notes into ${voiceLabel}.`;
+                }
+                return `Click or drag to paint notes into ${voiceLabel}.`;
+              })()}
             </span>
           ) : interactionMode === "range" ? (
             <span className="piano-roll-toolbar-hint">
@@ -2257,6 +2426,9 @@ export default function App() {
           interactionMode={interactionMode}
           activeVoiceId={activeVoiceId}
           onPaintNotes={handlePaintNotes}
+          paintTool={paintTool}
+          brushRadius={brushRadius}
+          onBrushRadiusChange={setBrushRadius}
           pitchMarkers={pitchMarkers}
           onPitchMarkersChange={setPitchMarkers}
           currentPlaybackTick={playback.currentTick}
