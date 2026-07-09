@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { MidiNote } from "./midiProject";
-import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "./reviewQueue";
+import {
+  applyReviewDecision,
+  buildFlaggedNoteQueue,
+  buildReviewProgress,
+  findCurrentFlaggedNote,
+  findNextFlaggedNoteId,
+} from "./reviewQueue";
 
 function note(id: string, startTick: number, confidence: number): MidiNote {
   return {
@@ -66,5 +72,47 @@ describe("findNextFlaggedNoteId", () => {
   it("jumps to the nearest flagged note when the current selection isn't itself flagged", () => {
     expect(findNextFlaggedNoteId(queue, 100, 1)).toBe("b");
     expect(findNextFlaggedNoteId(queue, 100, -1)).toBe("a");
+  });
+});
+describe("buildReviewProgress", () => {
+  const queue = [note("a", 0, 0.1), note("b", 240, 0.1), note("c", 480, 0.1)];
+
+  it("derives reviewed notes from overrides and skipped ids", () => {
+    const progress = buildReviewProgress(queue, { a: "voice-1" }, new Set(["c"]));
+
+    expect(progress).toEqual({ flaggedCount: 3, reviewedCount: 2, remainingCount: 1 });
+  });
+
+  it("ignores overrides and skipped ids for notes not currently flagged", () => {
+    const progress = buildReviewProgress(queue, { missing: "voice-1" }, new Set(["other"]));
+
+    expect(progress).toEqual({ flaggedCount: 3, reviewedCount: 0, remainingCount: 3 });
+  });
+});
+
+describe("findCurrentFlaggedNote", () => {
+  const queue = [note("a", 0, 0.1), note("b", 240, 0.1)];
+
+  it("returns the selected note when exactly one flagged note is selected", () => {
+    expect(findCurrentFlaggedNote(queue, new Set(["b"]))?.id).toBe("b");
+  });
+
+  it("returns null when selection is empty, plural, or not flagged", () => {
+    expect(findCurrentFlaggedNote(queue, new Set())).toBeNull();
+    expect(findCurrentFlaggedNote(queue, new Set(["a", "b"]))).toBeNull();
+    expect(findCurrentFlaggedNote(queue, new Set(["missing"]))).toBeNull();
+  });
+});
+describe("applyReviewDecision", () => {
+  it("writes an override and removes range provenance for the reviewed note", () => {
+    const result = applyReviewDecision(
+      { existing: "voice-1" },
+      new Set(["reviewed", "other"]),
+      "reviewed",
+      "voice-2",
+    );
+
+    expect(result.voiceOverrides).toEqual({ existing: "voice-1", reviewed: "voice-2" });
+    expect(result.rangeAssignedNoteIds).toEqual(new Set(["other"]));
   });
 });

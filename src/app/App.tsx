@@ -36,7 +36,13 @@ import {
   reconcileVoiceOrderAfterReassign,
   seedVoiceLabelsFromImport,
 } from "../domain/midi/voiceManagement";
-import { buildFlaggedNoteQueue, findNextFlaggedNoteId } from "../domain/midi/reviewQueue";
+import {
+  applyReviewDecision,
+  buildFlaggedNoteQueue,
+  buildReviewProgress,
+  findCurrentFlaggedNote,
+  findNextFlaggedNoteId,
+} from "../domain/midi/reviewQueue";
 import {
   analyzeVoiceDiagnostics,
   buildSplitAllWidePitchRepair,
@@ -145,6 +151,7 @@ export default function App() {
   const [reassignError, setReassignError] = useState<AppCommandError | null>(null);
   const [exportResult, setExportResult] = useState<ExportMidiResult | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<ReadonlySet<string>>(new Set());
+  const [skippedReviewNoteIds, setSkippedReviewNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [voiceOverrides, setVoiceOverrides] = useState<VoiceOverrides>({});
   const [voiceOrder, setVoiceOrder] = useState<string[]>([]);
   const [voiceLabels, setVoiceLabels] = useState<Record<string, string>>({});
@@ -184,6 +191,14 @@ export default function App() {
   const flaggedNotes = useMemo(
     () => buildFlaggedNoteQueue(displayedProject?.notes ?? []),
     [displayedProject],
+  );
+  const currentFlaggedNote = useMemo(
+    () => findCurrentFlaggedNote(flaggedNotes, selectedNoteIds),
+    [flaggedNotes, selectedNoteIds],
+  );
+  const reviewProgress = useMemo(
+    () => buildReviewProgress(flaggedNotes, voiceOverrides, skippedReviewNoteIds),
+    [flaggedNotes, voiceOverrides, skippedReviewNoteIds],
   );
   const voiceRangeRules = useMemo(
     () => buildDefaultVoiceRangeRules(displayedProject?.voices.map((voice) => voice.id) ?? []),
@@ -560,6 +575,7 @@ export default function App() {
 
     setProject(importedProject);
     setSelectedNoteIds(new Set());
+    setSkippedReviewNoteIds(new Set());
     setVoiceOverrides({});
     setVoiceOrder(importVoiceOrder);
     setVoiceLabels(importVoiceLabels);
@@ -701,6 +717,7 @@ export default function App() {
         reassignedProject.notes.map((note) => note.voiceId),
       );
       setProject(reassignedProject);
+      setSkippedReviewNoteIds(new Set());
       setVoiceOrder(nextVoiceOrder);
       setNamedSnapshots((current) =>
         appendSnapshot(
@@ -760,6 +777,7 @@ export default function App() {
     }
     setHistory(result.history);
     setProject(result.snapshot.project);
+    setSkippedReviewNoteIds(new Set());
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
@@ -780,6 +798,7 @@ export default function App() {
     }
     setHistory(result.history);
     setProject(result.snapshot.project);
+    setSkippedReviewNoteIds(new Set());
     setVoiceOverrides(result.snapshot.voiceOverrides);
     setVoiceOrder(result.snapshot.voiceOrder);
     setVoiceLabels(result.snapshot.voiceLabels);
@@ -818,6 +837,7 @@ export default function App() {
     pushHistorySnapshot();
     const restored = restoreEditorState(snapshot);
     setProject(restored.project);
+    setSkippedReviewNoteIds(new Set());
     setVoiceOverrides(restored.voiceOverrides);
     setVoiceOrder(restored.voiceOrder);
     setVoiceLabels(restored.voiceLabels);
@@ -1163,6 +1183,55 @@ export default function App() {
     setInteractionMode((mode) => (mode === "range" ? "select" : "range"));
   }
 
+  function handleAcceptCurrentReviewNote() {
+    if (!currentFlaggedNote) {
+      return;
+    }
+    pushHistorySnapshot();
+    const decision = applyReviewDecision(
+      voiceOverrides,
+      rangeAssignedNoteIds,
+      currentFlaggedNote.id,
+      currentFlaggedNote.voiceId,
+    );
+    setVoiceOverrides(decision.voiceOverrides);
+    setRangeAssignedNoteIds(decision.rangeAssignedNoteIds);
+    setSkippedReviewNoteIds((current) => {
+      const next = new Set(current);
+      next.delete(currentFlaggedNote.id);
+      return next;
+    });
+    setExportResult(null);
+  }
+
+  function handleAssignCurrentReviewNote(voiceId: string) {
+    if (!currentFlaggedNote || voiceId === "") {
+      return;
+    }
+    pushHistorySnapshot();
+    const decision = applyReviewDecision(
+      voiceOverrides,
+      rangeAssignedNoteIds,
+      currentFlaggedNote.id,
+      voiceId,
+    );
+    setVoiceOverrides(decision.voiceOverrides);
+    setRangeAssignedNoteIds(decision.rangeAssignedNoteIds);
+    setSkippedReviewNoteIds((current) => {
+      const next = new Set(current);
+      next.delete(currentFlaggedNote.id);
+      return next;
+    });
+    setSelectedNoteIds(new Set([currentFlaggedNote.id]));
+    setExportResult(null);
+  }
+
+  function handleSkipCurrentReviewNote() {
+    if (!currentFlaggedNote) {
+      return;
+    }
+    setSkippedReviewNoteIds((current) => new Set(current).add(currentFlaggedNote.id));
+  }
   function handleReviewStep(direction: 1 | -1) {
     const currentStartTick = selectedNote ? selectedNote.startTick : null;
     const nextId = findNextFlaggedNoteId(flaggedNotes, currentStartTick, direction);
@@ -1910,6 +1979,99 @@ export default function App() {
         </section>
       ) : null}
 
+      {displayedProject && flaggedNotes.length > 0 ? (
+        <section className="review-queue-panel" aria-label="Guided flagged-note review">
+          <div className="review-queue-header">
+            <div>
+              <h2>Flagged note review</h2>
+              <p>
+                {reviewProgress.reviewedCount} of {reviewProgress.flaggedCount} reviewed. Re-run
+                updated the flagged list after assignments last changed.
+              </p>
+            </div>
+            <div className="review-queue-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleReviewStep(-1)}
+                disabled={isCompareReadOnly}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleReviewStep(1)}
+                disabled={isCompareReadOnly}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+          {currentFlaggedNote ? (
+            <div className="review-current-note">
+              <dl>
+                <div>
+                  <dt>Pitch</dt>
+                  <dd>{currentFlaggedNote.pitch}</dd>
+                </div>
+                <div>
+                  <dt>Voice</dt>
+                  <dd>{currentFlaggedNote.voiceId}</dd>
+                </div>
+                <div>
+                  <dt>Confidence</dt>
+                  <dd>{Math.round(currentFlaggedNote.assignmentConfidence * 100)}%</dd>
+                </div>
+                <div>
+                  <dt>Ticks</dt>
+                  <dd>
+                    {currentFlaggedNote.startTick}-{currentFlaggedNote.endTick}
+                  </dd>
+                </div>
+              </dl>
+              <div className="review-current-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleAcceptCurrentReviewNote}
+                  disabled={isCompareReadOnly}
+                >
+                  Accept & lock
+                </button>
+                <label>
+                  Assign to
+                  <select
+                    className="review-assign-select"
+                    value=""
+                    onChange={(event) => handleAssignCurrentReviewNote(event.target.value)}
+                    disabled={isCompareReadOnly}
+                  >
+                    <option value="">Choose voice...</option>
+                    {displayedProject.voices.map((voice) => (
+                      <option key={voice.id} value={voice.id}>
+                        {voice.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleSkipCurrentReviewNote}
+                  disabled={isCompareReadOnly}
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="review-queue-empty">
+              Select a flagged note or use Next to start reviewing.
+            </p>
+          )}
+        </section>
+      ) : null}
       {isCompareReadOnly ? (
         <section className="compare-readonly-banner" aria-live="polite">
           Read-only preview: editing is disabled while viewing the snapshot or diff. Exit compare or

@@ -716,6 +716,83 @@ button {
   color: #f0f9ff;
 }
 
+.review-queue-panel {
+  margin: 12px 24px 0;
+  border: 1px solid #334155;
+  background: #111827;
+  padding: 14px;
+}
+
+.review-queue-header,
+.review-current-note,
+.review-current-actions,
+.review-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.review-queue-header {
+  justify-content: space-between;
+}
+
+.review-queue-panel h2,
+.review-queue-panel p {
+  margin: 0;
+}
+
+.review-queue-panel h2 {
+  font-size: 14px;
+}
+
+.review-queue-panel p,
+.review-queue-empty {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.review-current-note {
+  margin-top: 12px;
+  justify-content: space-between;
+}
+
+.review-current-note dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(80px, 1fr));
+  gap: 12px;
+  margin: 0;
+  flex: 1;
+}
+
+.review-current-note dt {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.review-current-note dd {
+  margin: 3px 0 0;
+  color: #e5e7eb;
+  font-weight: 700;
+}
+
+.review-current-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.review-assign-select {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+}
 .compare-readonly-banner {
   margin: 12px 24px 0;
   border: 1px solid #facc15;
