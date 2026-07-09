@@ -2267,6 +2267,7 @@ export default function App() {
           onlyChangedNotes={pianoRollOnlyChangedNotes}
           readOnly={isCompareReadOnly}
           voiceDescriptions={pianoRollVoiceDescriptions}
+          viewMode={pianoRollViewMode}
         />
       </section>
 
