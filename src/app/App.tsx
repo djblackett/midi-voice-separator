@@ -130,6 +130,11 @@ import {
   buildExportReadinessSummary,
   formatExportReadinessStatus,
 } from "../domain/midi/exportReadiness";
+import {
+  buildSmartFixSuggestions,
+  formatSmartFixActionDetail,
+  type SmartFixSuggestion,
+} from "../domain/midi/smartFixSuggestions";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
 import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
@@ -344,6 +349,17 @@ export default function App() {
         lockedNoteIds: new Set(Object.keys(voiceOverrides)),
       }),
     [displayedProject, reviewProgress, assignmentDiffResult, voiceOverrides],
+  );
+  const smartFixSuggestions = useMemo(
+    () =>
+      displayedProject
+        ? buildSmartFixSuggestions({
+            notes: displayedProject.notes,
+            voices: displayedProject.voices,
+            lockedNoteIds: new Set(Object.keys(voiceOverrides)),
+          })
+        : [],
+    [displayedProject, voiceOverrides],
   );
   // The diff target's own materialized assignments -- the "before" side's
   // noteId -> voiceId map, reused directly as the changed-note overlay's
@@ -1368,6 +1384,26 @@ export default function App() {
     }
   }
 
+  function handleSmartFix(suggestion: SmartFixSuggestion) {
+    if (isCompareReadOnly) {
+      return;
+    }
+
+    switch (suggestion.action.type) {
+      case "select":
+        setSelectedNoteIds(new Set(suggestion.action.noteIds));
+        break;
+      case "assign":
+        applyNoteReassignment(suggestion.action.noteIds, suggestion.action.targetVoiceId);
+        setSelectedNoteIds(new Set(suggestion.action.noteIds));
+        setActiveVoiceId(suggestion.action.targetVoiceId);
+        break;
+      case "merge":
+        handleMergeVoice(suggestion.action.sourceVoiceId, suggestion.action.targetVoiceId);
+        setActiveVoiceId(suggestion.action.targetVoiceId);
+        break;
+    }
+  }
   function handleInspectDiagnosticVoice(voiceId: string) {
     if (!displayedProject) {
       return;
@@ -1684,6 +1720,37 @@ export default function App() {
         </section>
       ) : null}
 
+      {displayedProject ? (
+        <section className="smart-fixes" aria-label="Smart fix suggestions">
+          <div className="smart-fixes-header">
+            <h2>Smart fixes</h2>
+            <span>{smartFixSuggestions.length} suggestion(s)</span>
+          </div>
+          {smartFixSuggestions.length > 0 ? (
+            <ul className="smart-fixes-list">
+              {smartFixSuggestions.map((suggestion) => (
+                <li key={suggestion.id}>
+                  <div>
+                    <strong>{suggestion.title}</strong>
+                    <span>{suggestion.reason}</span>
+                    <span>{formatSmartFixActionDetail(suggestion, displayedProject.voices)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => handleSmartFix(suggestion)}
+                    disabled={isReassigning || isCompareReadOnly}
+                  >
+                    {suggestion.actionLabel}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="smart-fixes-empty">No obvious correction suggestions for this file.</p>
+          )}
+        </section>
+      ) : null}
       {displayedProject ? (
         <section className="file-details" aria-label="Imported file details">
           <div>

@@ -61,7 +61,9 @@ function noteScreenCenter(
 async function pixelAt(page: Page, x: number, y: number): Promise<[number, number, number]> {
   return page.evaluate(
     ([localX, localY]) => {
-      const canvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label=\"Piano roll note visualization\"]");
+      const canvas = document.querySelector<HTMLCanvasElement>(
+        'canvas[aria-label="Piano roll note visualization"]',
+      );
       const context = canvas?.getContext("2d");
       if (!canvas || !context) {
         throw new Error("No piano roll canvas context");

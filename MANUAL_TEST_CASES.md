@@ -38,6 +38,11 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
   it.
 - Click empty space (no marquee movement) → selection clears.
 - Press `Esc` → selection clears.
+- Drag across the time ruler above the piano roll → every note sounding in
+  that tick range becomes selected, including notes that straddle the range
+  boundaries.
+- Click the time ruler → playback seeks to that tick without changing the
+  selection.
 
 ## Bulk reassignment (number keys)
 
@@ -175,6 +180,28 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 - With only one voice (so fewer than 3 range rules exist), confirm the rule
   list still reflects however many rules apply, or "Create at least one
   voice before applying ranges" shows if there are none.
+
+## Smart fixes
+
+- When the file has a cluster of nearby low-confidence notes, the **Smart
+  fixes** panel suggests reviewing that cluster; click **Select notes** → the
+  cluster becomes the current selection for inspection or reassignment.
+- When a one-note non-percussion voice can merge into a nearby voice without
+  creating an overlap, click **Merge voice** → the source voice disappears and
+  the moved note is locked into the target voice.
+- When adjacent phrase notes are split across voices, click **Assign note** →
+  the suggested note moves into the target voice, becomes locked for re-runs,
+  and the suggestion disappears if the phrase is no longer split.
+- Suggestions never merge into/out of Percussion, and they do not propose
+  edits for already-locked notes.
+
+## Overlap conflicts
+
+- If two non-percussion notes overlap in the same voice, the export readiness
+  panel reports a same-voice overlap warning.
+- Click **Next overlap (N)** → both conflicting notes become selected and the
+  piano roll pans to the conflict. Repeated clicks step through conflicts.
+- Percussion overlaps are ignored; simultaneous drum hits are expected.
 
 ## Re-run separation
 

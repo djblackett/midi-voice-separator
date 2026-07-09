@@ -97,6 +97,13 @@ Primary stack:
   low-confidence notes) and `findNextFlaggedNoteId` (pure, wraps-around
   stepping logic for review mode — kept separate from `App.tsx` so it's
   unit-testable without React).
+- `src/domain/midi/voiceConflicts.ts`: same-voice overlap detection,
+  conflict note-id collection for the canvas cue, and wrap-around conflict
+  stepping for the **Next overlap** action. Percussion is intentionally
+  excluded.
+- `src/domain/midi/smartFixSuggestions.ts`: pure advisory correction
+  suggestions for low-confidence clusters, tiny voices, and phrase splits.
+  App actions still flow through the normal undoable assignment/merge paths.
 - `src-tauri/src/midi/voice_assignment.rs`: also exports
   `assign_heuristic_voices_with_locks` (locked-note-aware re-run, used by
   the `reassign_voices` Tauri command) and the private `allocate_new_voice_id`
@@ -2098,6 +2105,15 @@ conversation:
   **Stated limitation, same as playback's**: e2e proves audition
   schedules without erroring; whether it _sounds_ right needs a human
   ear in `pnpm tauri dev`. No Rust changes.
+
+### Overlap conflict review, ruler range selection, and Smart Fix Suggestions
+
+Follow-on correction UX work after the paint/wand/audition/heatmap pass:
+
+- **Overlap conflict review + ruler selection.** New `src/domain/midi/voiceConflicts.ts` detects same-voice overlaps for non-percussion voices, exposes conflict note IDs for the piano-roll underline cue, and mirrors flagged-note stepping with `findNextConflict`. Export readiness now reports same-voice overlaps because monophonic chiptune voices cannot represent them faithfully. The time ruler now supports drag-to-select-by-tick-range and click-to-seek. Verified in the prior commit with `voiceConflicts.test.ts`, `exportReadiness.test.ts`, `drawPianoRoll.test.ts`, and `e2e/conflicts-and-ruler.e2e.ts`.
+- **Slice 11 smart fix suggestions.** New `src/domain/midi/smartFixSuggestions.ts` builds conservative correction suggestions: select nearby low-confidence clusters, merge tiny non-percussion voices into the nearest non-overlapping voice, and reconnect adjacent phrase notes split across voices. Suggested edit actions intentionally compose existing App paths (`applyNoteReassignment` and `handleMergeVoice`) so they push undo history, write lock overrides, clear range provenance for touched notes, and update the active/selected voice state like manual corrections. Suggestions exclude Percussion and avoid touching locked notes.
+- **UI and tests.** `App.tsx` adds a compact **Smart fixes** section below voice diagnostics. Unit coverage lives in `smartFixSuggestions.test.ts`; end-to-end coverage in `e2e/smart-fixes.e2e.ts` drives the real UI and confirms an assign suggestion locks a split phrase note into the target voice. `MANUAL_TEST_CASES.md` now covers time-ruler selection/seek, overlap review, and smart fixes.
+- **Still manual by nature:** suggestion quality should be validated on real MIDI files before treating the heuristics as authoritative; the panel is deliberately advisory and leaves selection/assignment visible to the user.
 
 ## Architecture Invariants
 

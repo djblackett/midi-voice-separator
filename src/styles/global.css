@@ -211,6 +211,7 @@ button {
 .export-readiness,
 .voice-legend,
 .voice-diagnostics,
+.smart-fixes,
 .range-rules,
 .editor-snapshots,
 .diff-summary,
@@ -319,6 +320,7 @@ button {
 
 .voice-legend,
 .voice-diagnostics,
+.smart-fixes,
 .range-rules,
 .editor-snapshots,
 .diff-summary {
@@ -327,6 +329,7 @@ button {
 }
 
 .voice-legend h2,
+.smart-fixes h2,
 .range-rules h2,
 .editor-snapshots h2,
 .diff-summary h2 {
@@ -348,6 +351,62 @@ button {
   font-size: 13px;
 }
 
+.smart-fixes-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.smart-fixes-header span,
+.smart-fixes-empty {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.smart-fixes-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.smart-fixes-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #1f2937;
+  padding-top: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.smart-fixes-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.smart-fixes-list li > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.smart-fixes-list strong {
+  color: #e5e7eb;
+}
+
+.smart-fixes-list span {
+  color: #94a3b8;
+}
+
+.smart-fixes-list .secondary-button {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
 .voice-diagnostics-toolbar {
   display: flex;
   flex-wrap: wrap;

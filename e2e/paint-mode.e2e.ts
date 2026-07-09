@@ -258,4 +258,3 @@ test.describe("paint mode", () => {
     );
   });
 });
-
