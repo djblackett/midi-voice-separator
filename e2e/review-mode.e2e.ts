@@ -92,6 +92,19 @@ test.describe("review mode", () => {
     expect(await selectedPitch(page)).toBe("66"); // wraps to the last flagged note, d
   });
 
+  test("guided Previous and Next buttons step through the flagged note queue", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: project });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByRole("button", { name: "Review flagged notes (2)" }).click();
+    await reviewPanel(page).getByRole("button", { name: "Next" }).click();
+    expect(await selectedPitch(page)).toBe("66");
+
+    await reviewPanel(page).getByRole("button", { name: "Previous" }).click();
+    expect(await selectedPitch(page)).toBe("62");
+  });
+
   test("guided skip counts the selected flagged note as reviewed for this session", async ({
     page,
   }) => {
@@ -105,6 +118,23 @@ test.describe("review mode", () => {
     await reviewPanel(page).getByRole("button", { name: "Skip" }).click();
 
     await expect(reviewPanel(page)).toContainText("1 of 2 reviewed");
+  });
+
+  test("skipped review progress resets when a re-run replaces the project", async ({ page }) => {
+    await installFakeTauri(page, {
+      importedProject: project,
+      reassign: ({ project: currentProject }) => ({ ...currentProject }),
+    });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByRole("button", { name: "Review flagged notes (2)" }).click();
+    await reviewPanel(page).getByRole("button", { name: "Skip" }).click();
+    await expect(reviewPanel(page)).toContainText("1 of 2 reviewed");
+
+    await page.getByRole("button", { name: "Re-run separation" }).click();
+
+    await expect(reviewPanel(page)).toContainText("0 of 2 reviewed");
   });
 
   test("Accept & lock sends the accepted flagged note as a locked re-run constraint", async ({

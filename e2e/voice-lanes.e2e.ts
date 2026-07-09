@@ -24,6 +24,15 @@ const leadNote: LaneFixtureNote = {
   highestPitch: 76,
 };
 
+const percussionNote: LaneFixtureNote = {
+  pitch: 36,
+  startTick: 120,
+  endTick: 360,
+  voiceIndex: 2,
+  lowestPitch: 36,
+  highestPitch: 36,
+};
+
 const laneProject = buildFixtureProject(
   [
     note("bass", "voice-1", 48, 0, { endTick: 240, durationTicks: 240 }),
@@ -32,8 +41,17 @@ const laneProject = buildFixtureProject(
       durationTicks: leadNote.endTick - leadNote.startTick,
     }),
     note("lead-high", "voice-2", 76, 760, { endTick: 900, durationTicks: 140 }),
+    note("kick", "percussion", percussionNote.pitch, percussionNote.startTick, {
+      endTick: percussionNote.endTick,
+      durationTicks: percussionNote.endTick - percussionNote.startTick,
+      assignmentReason: "PERCUSSION",
+    }),
   ],
-  [voice("voice-1", "Bass", 1, 48, 48), voice("voice-2", "Lead", 2, 72, 76)],
+  [
+    voice("voice-1", "Bass", 1, 48, 48),
+    voice("voice-2", "Lead", 2, 72, 76),
+    voice("percussion", "Percussion", 1, 36, 36),
+  ],
   { durationTicks: 960 },
 );
 
@@ -63,16 +81,22 @@ function laneNoteCenter(
   return { x: (x + endX) / 2, y: y + noteHeight / 2 };
 }
 
-async function clickLeadNoteInLaneView(page: Page) {
+async function clickNoteInLaneView(page: Page, target: LaneFixtureNote) {
   const canvas = page.locator(".editor-grid canvas");
   const box = await canvas.boundingBox();
   if (!box) {
     throw new Error("Piano roll canvas has no bounding box");
   }
-  const local = laneNoteCenter(leadNote, box, laneProject.durationTicks, laneProject.voices.length);
+  const local = laneNoteCenter(target, box, laneProject.durationTicks, laneProject.voices.length);
   await page.mouse.move(box.x + local.x, box.y + local.y);
   await page.mouse.down();
   await page.mouse.up();
+}
+
+async function switchToVoiceLanes(page: Page) {
+  const lanesButton = page.getByRole("button", { name: "Voice lanes" });
+  await lanesButton.click();
+  await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
 }
 
 test.describe("voice lane view", () => {
@@ -101,13 +125,25 @@ test.describe("voice lane view", () => {
     await page.goto("/");
     await importFixture(page);
 
-    const lanesButton = page.getByRole("button", { name: "Voice lanes" });
-    await lanesButton.click();
-    await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
-    await clickLeadNoteInLaneView(page);
+    await switchToVoiceLanes(page);
+    await clickNoteInLaneView(page, leadNote);
 
     const details = page.locator(".selection-details dl");
     await expect(details).toContainText("72");
     await expect(details).toContainText("voice-2");
+  });
+
+  test("the percussion lane is rendered and selectable", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: laneProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await switchToVoiceLanes(page);
+    await expect(page.locator(".piano-roll-legend")).toContainText("Percussion");
+    await clickNoteInLaneView(page, percussionNote);
+
+    const details = page.locator(".selection-details dl");
+    await expect(details).toContainText("36");
+    await expect(details).toContainText("percussion");
   });
 });

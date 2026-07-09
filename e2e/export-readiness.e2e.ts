@@ -16,6 +16,17 @@ const readinessProject = buildFixtureProject(
   { separationSummary: { meanConfidence: 0.7, lowConfidenceNoteCount: 1, voiceCount: 4 } },
 );
 
+const cleanProject = buildFixtureProject(
+  [
+    note("bass-a", "bass", 48, 0),
+    note("bass-b", "bass", 50, 240),
+    note("lead-a", "lead", 72, 0),
+    note("lead-b", "lead", 74, 240),
+  ],
+  [voice("bass", "Bass", 2, 48, 50), voice("lead", "Lead", 2, 72, 74)],
+  { separationSummary: { meanConfidence: 0.95, lowConfidenceNoteCount: 0, voiceCount: 2 } },
+);
+
 const rerunProject = buildFixtureProject(
   [note("a", "voice-1", 60, 0), note("b", "voice-2", 72, 240)],
   [voice("voice-1", "Bass", 1, 60, 60), voice("voice-2", "Lead", 1, 72, 72)],
@@ -53,6 +64,21 @@ test.describe("export readiness", () => {
     await expect(readiness(page)).toContainText("1 note will export to the percussion voice");
     await expect(readiness(page)).toContainText("reimport the MIDI manually");
 
+    await expect(page.getByRole("button", { name: "Export MIDI" })).toBeEnabled();
+  });
+
+  test("shows a no-blocking status when only the manual round-trip reminder remains", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, { importedProject: cleanProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await expect(readiness(page)).toContainText("no blocking checks");
+    await expect(readiness(page)).toContainText("Round trip");
+    await expect(readiness(page)).toContainText("reimport the MIDI manually");
+    await expect(readiness(page)).not.toContainText("advisory checks");
+    await expect(readiness(page)).not.toContainText("Flagged review");
     await expect(page.getByRole("button", { name: "Export MIDI" })).toBeEnabled();
   });
 
