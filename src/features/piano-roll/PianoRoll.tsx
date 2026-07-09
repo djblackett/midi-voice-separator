@@ -85,6 +85,10 @@ interface PianoRollProps {
   wandReach?: number;
   /** Context-menu "Assign to" — reassigns notes to an explicit voice. */
   onAssignNotes?: (noteIds: string[], voiceId: string) => void;
+  /** DAW-style audition: fired with the notes a click/paint gesture touched. */
+  onAuditionNotes?: (notes: MidiNote[]) => void;
+  /** When true, note colors show assignment confidence instead of voice. */
+  confidenceHeatmap?: boolean;
   pitchMarkers?: readonly PitchMarker[];
   onPitchMarkersChange?: (next: PitchMarker[]) => void;
   currentPlaybackTick?: number | null;
@@ -116,6 +120,8 @@ export function PianoRoll({
   onBrushRadiusChange = () => {},
   wandReach = DEFAULT_WAND_REACH,
   onAssignNotes = () => {},
+  onAuditionNotes = () => {},
+  confidenceHeatmap = false,
   pitchMarkers = [],
   onPitchMarkersChange = () => {},
   currentPlaybackTick = null,
@@ -164,6 +170,19 @@ export function PianoRoll({
   onBrushRadiusChangeRef.current = onBrushRadiusChange;
 
   const isPaintCursorActive = viewMode === "piano" && interactionMode === "paint" && !readOnly;
+
+  // A brush sweep can stamp several notes per pointer sample; auditioning
+  // every one would machine-gun. One blip per ~70ms keeps a swept run
+  // audible as a run without the noise.
+  const lastAuditionAtRef = useRef(0);
+  function auditionThrottled(notes: MidiNote[]) {
+    const now = performance.now();
+    if (now - lastAuditionAtRef.current < 70) {
+      return;
+    }
+    lastAuditionAtRef.current = now;
+    onAuditionNotes(notes);
+  }
 
   useEffect(() => {
     const container = containerRef.current;
@@ -323,6 +342,7 @@ export function PianoRoll({
         changedNoteIds,
         previousVoiceId,
         onlyChangedNotes,
+        confidenceHeatmap,
       );
       return;
     }
@@ -340,6 +360,7 @@ export function PianoRoll({
       changedNoteIds,
       previousVoiceId,
       onlyChangedNotes,
+      confidenceHeatmap,
     );
   }
   function redrawCanvas() {
@@ -382,6 +403,7 @@ export function PianoRoll({
     }
     const hits = notesInBrushStamp(from, to, brushRadius, interactionProject, viewport);
     const alreadyPainted = new Set(paintedNoteIdsRef.current.keys());
+    const newlyPainted: MidiNote[] = [];
     let changed = false;
     for (const note of hits) {
       if (erase) {
@@ -389,11 +411,15 @@ export function PianoRoll({
       } else if (shouldPaintNote(note, activeVoiceId, alreadyPainted)) {
         paintedNoteIdsRef.current.set(note.id, activeVoiceId);
         alreadyPainted.add(note.id);
+        newlyPainted.push(note);
         changed = true;
       }
     }
     if (changed) {
       redrawCanvas();
+    }
+    if (newlyPainted.length > 0) {
+      auditionThrottled([newlyPainted[0]]);
     }
   }
 
@@ -424,6 +450,9 @@ export function PianoRoll({
     }
     if (changed) {
       redrawCanvas();
+      // The anchor, not the whole phrase — one blip tells you the fill
+      // landed; a full run would replay the melody on every click.
+      auditionThrottled([note]);
     }
   }
 
@@ -570,6 +599,7 @@ export function PianoRoll({
     changedNoteIds,
     previousVoiceId,
     onlyChangedNotes,
+    confidenceHeatmap,
     viewMode,
   ]);
 
@@ -647,6 +677,7 @@ export function PianoRoll({
         if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
           paintedNoteIdsRef.current.set(note.id, activeVoiceId);
           redrawCanvas();
+          auditionThrottled([note]);
         }
       }
       return;
@@ -691,6 +722,7 @@ export function PianoRoll({
         ) {
           paintedNoteIdsRef.current.set(note.id, activeVoiceId);
           redrawCanvas();
+          auditionThrottled([note]);
         }
       }
       return;
@@ -759,6 +791,9 @@ export function PianoRoll({
 
     if (viewMode === "voice-lanes") {
       const note = hitTestVoiceLaneNote(point, interactionProject, viewport);
+      if (note) {
+        auditionThrottled([note]);
+      }
       onSelectionChange(
         resolveSelection(selectedNoteIds, {
           type: "click",
@@ -786,6 +821,9 @@ export function PianoRoll({
       );
     } else {
       const note = hitTestPianoRollNote(point, interactionProject, viewport);
+      if (note) {
+        auditionThrottled([note]);
+      }
       onSelectionChange(
         resolveSelection(selectedNoteIds, {
           type: "click",
@@ -834,6 +872,10 @@ export function PianoRoll({
       interactionProject.notes,
       chordToleranceTicks(interactionProject.ppq),
     );
+    // Deliberately unthrottled: the preceding click's single-note blip
+    // would otherwise suppress hearing the chord itself — the whole point
+    // of double-clicking it.
+    onAuditionNotes(chord);
     onSelectionChange(new Set(chord.map((chordNote) => chordNote.id)));
   }
 

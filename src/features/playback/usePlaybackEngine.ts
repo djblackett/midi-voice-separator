@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { MidiProject } from "../../domain/midi/midiProject";
+import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import {
   buildTempoMap,
   secondsToTick,
@@ -8,6 +8,7 @@ import {
 } from "../../domain/midi/tempoMap";
 import { PlaybackEngine, type Instrument } from "./playbackEngine";
 import {
+  buildAuditionNotes,
   buildScheduledNotes,
   filterNotesForPlaybackScope,
   type PlaybackScope,
@@ -22,6 +23,8 @@ export interface PlaybackControls {
   pause: () => void;
   stop: () => void;
   seek: (tick: number) => void;
+  /** Plays short preview blips for `notes` (paint/click audition). */
+  audition: (notes: readonly MidiNote[]) => void;
   blockedReason: string | null;
 }
 
@@ -155,6 +158,16 @@ export function usePlaybackEngine(
     }
   }
 
+  function audition(notes: readonly MidiNote[]) {
+    // Blips over running transport playback are just noise — skip. Piano
+    // falls back to chiptune synthesis inside the engine if its samples
+    // aren't loaded yet, so audition never awaits a sample fetch.
+    if (isPlaying || notes.length === 0) {
+      return;
+    }
+    getEngine().play(buildAuditionNotes(notes), instrument);
+  }
+
   useEffect(() => {
     setBlockedReason(null);
   }, [playbackScope, soloVoiceId]);
@@ -188,5 +201,5 @@ export function usePlaybackEngine(
     };
   }, []);
 
-  return { isPlaying, currentTick, play, pause, stop, seek, blockedReason };
+  return { isPlaying, currentTick, play, pause, stop, seek, audition, blockedReason };
 }

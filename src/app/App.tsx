@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { MidiProject } from "../domain/midi/midiProject";
+import type { MidiNote, MidiProject } from "../domain/midi/midiProject";
 import {
   formatMidiChannel,
   formatMidiWarningLocation,
@@ -184,6 +184,8 @@ export default function App() {
   const [paintTool, setPaintTool] = useState<PaintTool>("brush");
   const [brushRadius, setBrushRadius] = useState(DEFAULT_BRUSH_RADIUS);
   const [wandReach, setWandReach] = useState(DEFAULT_WAND_REACH);
+  const [isAuditionEnabled, setIsAuditionEnabled] = useState(true);
+  const [isConfidenceHeatOn, setIsConfidenceHeatOn] = useState(false);
   const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
@@ -555,6 +557,18 @@ export default function App() {
       ) {
         event.preventDefault();
         setBrushRadius((radius) => stepBrushRadius(radius, event.key === "]" ? 1 : -1));
+        return;
+      }
+
+      if (
+        displayedProject &&
+        event.key.toLowerCase() === "h" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        setIsConfidenceHeatOn((current) => !current);
         return;
       }
 
@@ -1088,6 +1102,13 @@ export default function App() {
       return;
     }
     applyNoteReassignment(noteIds, voiceId);
+  }
+
+  function handleAuditionNotes(notes: MidiNote[]) {
+    if (!isAuditionEnabled) {
+      return;
+    }
+    playback.audition(notes);
   }
 
   function handleMarkerPitchChange(markerId: string, pitch: number) {
@@ -2239,6 +2260,15 @@ export default function App() {
               <option value="piano">Piano</option>
             </select>
           </label>
+          <button
+            type="button"
+            className={isAuditionEnabled ? "secondary-button active" : "secondary-button"}
+            onClick={() => setIsAuditionEnabled((current) => !current)}
+            aria-pressed={isAuditionEnabled ? "true" : "false"}
+            title="Play a short blip for notes as you click or paint them"
+          >
+            {isAuditionEnabled ? "Audition: on" : "Audition: off"}
+          </button>
           <span className="playback-time">
             {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
             {formatPlaybackTime(playbackDurationSeconds)}
@@ -2454,6 +2484,22 @@ export default function App() {
           >
             {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
           </button>
+          <button
+            type="button"
+            className={isConfidenceHeatOn ? "secondary-button active" : "secondary-button"}
+            onClick={() => setIsConfidenceHeatOn((current) => !current)}
+            aria-pressed={isConfidenceHeatOn ? "true" : "false"}
+            title="Color notes by assignment confidence instead of voice (H)"
+          >
+            {isConfidenceHeatOn ? "Confidence heat: on" : "Confidence heat: off"}
+          </button>
+          {isConfidenceHeatOn ? (
+            <span className="confidence-heat-legend">
+              <span aria-hidden="true">uncertain</span>
+              <span className="confidence-heat-gradient" aria-hidden="true" />
+              <span aria-hidden="true">certain</span>
+            </span>
+          ) : null}
           {interactionMode === "paint" ? (
             <span className="piano-roll-toolbar-hint">
               {(() => {
@@ -2497,6 +2543,8 @@ export default function App() {
           onBrushRadiusChange={setBrushRadius}
           wandReach={wandReach}
           onAssignNotes={handleAssignNotesToVoice}
+          onAuditionNotes={handleAuditionNotes}
+          confidenceHeatmap={isConfidenceHeatOn}
           pitchMarkers={pitchMarkers}
           onPitchMarkersChange={setPitchMarkers}
           currentPlaybackTick={playback.currentTick}

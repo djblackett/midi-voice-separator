@@ -10,6 +10,11 @@ const WAVEFORMS: Waveform[] = ["square", "triangle", "sawtooth"];
 /** A small fixed per-note gain keeps overlapping notes from clipping. */
 const NOTE_GAIN = 0.12;
 
+/** Audition blips are short and quieter than real playback. */
+export const AUDITION_SECONDS = 0.18;
+const AUDITION_GAIN = 0.08;
+const MAX_AUDITION_NOTES = 6;
+
 export interface ScheduledNote {
   id: string;
   startSeconds: number;
@@ -36,6 +41,24 @@ export interface PlaybackScopeFilterResult {
 
 export function waveformForVoice(voiceId: string): Waveform {
   return WAVEFORMS[voiceColorIndex(voiceId) % WAVEFORMS.length];
+}
+
+/**
+ * Short preview blips for painting/clicking notes (DAW-style audition):
+ * every note starts immediately, plays briefly and quietly, and keeps its
+ * voice's waveform so a note sounds the way its voice sounds in real
+ * playback. Capped so double-clicking a dense chord can't blast.
+ */
+export function buildAuditionNotes(notes: readonly MidiNote[]): ScheduledNote[] {
+  return notes.slice(0, MAX_AUDITION_NOTES).map((note) => ({
+    id: `audition-${note.id}`,
+    startSeconds: 0,
+    endSeconds: AUDITION_SECONDS,
+    pitch: note.pitch,
+    frequency: midiPitchToFrequency(note.pitch),
+    gain: AUDITION_GAIN,
+    waveform: waveformForVoice(note.voiceId),
+  }));
 }
 
 function noteIsInScope(

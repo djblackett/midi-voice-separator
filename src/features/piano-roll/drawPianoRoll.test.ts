@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MidiNote } from "../../domain/midi/midiProject";
 import {
+  confidenceHeatColor,
   getVoiceFillColor,
   getVoiceStrokeColor,
   resolveNoteRenderStyle,
@@ -263,5 +264,49 @@ describe("resolveNoteRenderStyle", () => {
         expect(style.showLowConfidenceDash).toBe(testCase.expectShowLowConfidenceDash);
       });
     }
+  });
+});
+
+describe("confidence heat colors", () => {
+  it("sweeps hue from red (0) to green (1)", () => {
+    expect(confidenceHeatColor(0)).toBe("hsl(0, 85%, 55%)");
+    expect(confidenceHeatColor(0.5)).toBe("hsl(70, 85%, 55%)");
+    expect(confidenceHeatColor(1)).toBe("hsl(140, 85%, 55%)");
+  });
+
+  it("clamps out-of-range confidence", () => {
+    expect(confidenceHeatColor(-1)).toBe(confidenceHeatColor(0));
+    expect(confidenceHeatColor(2)).toBe(confidenceHeatColor(1));
+  });
+});
+
+describe("resolveNoteRenderStyle with confidenceHeatmap", () => {
+  it("fills by confidence heat instead of voice color", () => {
+    const style = resolveNoteRenderStyle(
+      note({ voiceId: "voice-2", assignmentConfidence: 0.2 }),
+      context({ confidenceHeatmap: true }),
+    );
+
+    expect(style.fillColor).toBe(confidenceHeatColor(0.2));
+    expect(style.fillColor).not.toBe(getVoiceFillColor("voice-2"));
+  });
+
+  it("lets an in-progress paint preview win over the heatmap", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a", voiceId: "voice-1", assignmentConfidence: 0.2 }),
+      context({ confidenceHeatmap: true, paintPreview: new Map([["a", "voice-3"]]) }),
+    );
+
+    expect(style.fillColor).toBe(getVoiceFillColor("voice-3"));
+  });
+
+  it("keeps the white selection stroke in heat view", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a", assignmentConfidence: 0.2 }),
+      context({ confidenceHeatmap: true, selectedNoteIds: new Set(["a"]) }),
+    );
+
+    expect(style.strokeColor).toBe("#f8fafc");
+    expect(style.fillColor).toBe(confidenceHeatColor(0.2));
   });
 });

@@ -1097,6 +1097,23 @@ kbd {
   padding: 3px 10px;
 }
 
+.confidence-heat-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* Mirrors confidenceHeatColor's hue sweep (0 = red, 140 = green). */
+.confidence-heat-gradient {
+  width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(248, 250, 252, 0.25);
+  background: linear-gradient(90deg, hsl(0, 85%, 55%), hsl(70, 85%, 55%), hsl(140, 85%, 55%));
+}
+
 .playback-scope-label {
   display: inline-flex;
   align-items: center;

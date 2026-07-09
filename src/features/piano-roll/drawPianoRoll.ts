@@ -66,6 +66,22 @@ export function getVoiceStrokeColor(voiceId: string): string {
   return VOICE_STROKES[voiceColorIndex(voiceId)];
 }
 
+/**
+ * The confidence-heatmap ("X-ray") color scale: red (confidence 0, worth
+ * a look) through amber to green (confidence 1, certain/locked). Hue-only
+ * interpolation keeps every step equally saturated so nothing on the dark
+ * background reads as "dimmed" rather than "uncertain".
+ */
+export function confidenceHeatColor(confidence: number): string {
+  const clamped = Math.max(0, Math.min(1, confidence));
+  return `hsl(${Math.round(clamped * 140)}, 85%, 55%)`;
+}
+
+export function confidenceHeatStrokeColor(confidence: number): string {
+  const clamped = Math.max(0, Math.min(1, confidence));
+  return `hsl(${Math.round(clamped * 140)}, 85%, 72%)`;
+}
+
 export interface TickWindow {
   startTick: number;
   endTick: number;
@@ -167,6 +183,8 @@ export interface NoteRenderContext {
   changedNoteIds: ReadonlySet<string>;
   /** noteId -> voiceId on the diff's compared ("before") side, for the changed-note edge cue's color. */
   previousVoiceId: ReadonlyMap<string, string>;
+  /** When true, fill/stroke show `assignmentConfidence` heat instead of voice color. */
+  confidenceHeatmap?: boolean;
 }
 
 /**
@@ -190,6 +208,7 @@ export function resolveNoteRenderStyle(
     paintPreview,
     changedNoteIds,
     previousVoiceId,
+    confidenceHeatmap = false,
   }: NoteRenderContext,
 ): NoteRenderStyle {
   const effectiveVoiceId = paintPreview.get(note.id) ?? note.voiceId;
@@ -205,9 +224,20 @@ export function resolveNoteRenderStyle(
   const changeEdgeColor =
     showChangedEdge && previousVoice ? getVoiceFillColor(previousVoice) : null;
 
+  // In heat view a note's color answers "how sure was the assignment?"
+  // instead of "which voice?". An in-progress paint stroke still previews
+  // in the target voice's color — live stroke feedback beats the heatmap.
+  const useHeat = confidenceHeatmap && !paintPreview.has(note.id);
+
   return {
-    fillColor: getVoiceFillColor(effectiveVoiceId),
-    strokeColor: isSelected ? "#f8fafc" : getVoiceStrokeColor(effectiveVoiceId),
+    fillColor: useHeat
+      ? confidenceHeatColor(note.assignmentConfidence)
+      : getVoiceFillColor(effectiveVoiceId),
+    strokeColor: isSelected
+      ? "#f8fafc"
+      : useHeat
+        ? confidenceHeatStrokeColor(note.assignmentConfidence)
+        : getVoiceStrokeColor(effectiveVoiceId),
     isSelected,
     isDimmed,
     isLowConfidence,
@@ -231,6 +261,7 @@ export function drawPianoRoll(
   changedNoteIds: ReadonlySet<string> = new Set(),
   previousVoiceId: ReadonlyMap<string, string> = new Map(),
   onlyChangedNotes: boolean = false,
+  confidenceHeatmap: boolean = false,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -308,6 +339,7 @@ export function drawPianoRoll(
       paintPreview,
       changedNoteIds,
       previousVoiceId,
+      confidenceHeatmap,
     });
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
@@ -359,6 +391,7 @@ export function drawVoiceLanes(
   changedNoteIds: ReadonlySet<string> = new Set(),
   previousVoiceId: ReadonlyMap<string, string> = new Map(),
   onlyChangedNotes: boolean = false,
+  confidenceHeatmap: boolean = false,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -424,6 +457,7 @@ export function drawVoiceLanes(
       paintPreview,
       changedNoteIds,
       previousVoiceId,
+      confidenceHeatmap,
     });
 
     context.globalAlpha = style.isDimmed ? 0.25 : 1;

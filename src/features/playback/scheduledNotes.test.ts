@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { MidiNote } from "../../domain/midi/midiProject";
 import { buildTempoMap } from "../../domain/midi/tempoMap";
 import {
+  AUDITION_SECONDS,
+  buildAuditionNotes,
   buildScheduledNotes,
   filterNotesForPlaybackScope,
   waveformForVoice,
@@ -183,5 +185,37 @@ describe("buildScheduledNotes", () => {
     });
 
     expect(result.emptyReason).toBe("No notes in playback scope.");
+  });
+});
+
+describe("buildAuditionNotes", () => {
+  it("builds short, quiet, immediate blips keeping each note's voice waveform", () => {
+    const blips = buildAuditionNotes([
+      note({ id: "a", voiceId: "voice-1", pitch: 60 }),
+      note({ id: "b", voiceId: "voice-2", pitch: 64 }),
+    ]);
+
+    expect(blips).toHaveLength(2);
+    expect(blips[0].id).toBe("audition-a");
+    expect(blips[0].startSeconds).toBe(0);
+    expect(blips[0].endSeconds).toBe(AUDITION_SECONDS);
+    expect(blips[0].frequency).toBeCloseTo(261.63, 1);
+    expect(blips[0].waveform).toBe("square");
+    expect(blips[1].waveform).toBe("triangle");
+  });
+
+  it("plays quieter than real playback", () => {
+    const [blip] = buildAuditionNotes([note()]);
+    const [scheduled] = buildScheduledNotes([note()], tempoMap, 0, null);
+
+    expect(blip.gain).toBeLessThan(scheduled.gain);
+  });
+
+  it("caps a dense chord instead of blasting every note", () => {
+    const chord = Array.from({ length: 10 }, (_, index) =>
+      note({ id: `n${index}`, pitch: 60 + index }),
+    );
+
+    expect(buildAuditionNotes(chord)).toHaveLength(6);
   });
 });

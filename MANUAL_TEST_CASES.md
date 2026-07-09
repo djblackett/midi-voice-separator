@@ -114,6 +114,29 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 - Pressing `1`-`9` while in paint mode sets the active voice instead of
   reassigning a selection.
 
+## Audition
+
+- With **Audition: on** (the default), clicking a note plays a short quiet
+  blip at its pitch, using the same waveform its voice uses in playback
+  (or the piano sample when the Piano sound is selected and loaded).
+- Painting (pencil/brush/wand) blips notes as they join the stroke —
+  a fast brush sweep sounds like a run, not a machine gun (throttled).
+- Double-clicking a chord plays the chord's notes together (capped).
+- Audition is silent while transport playback is running.
+- Toggle **Audition: off** → gestures are silent again.
+
+## Confidence heatmap
+
+- Click **Confidence heat: off** (or press `H`) → notes recolor by
+  assignment confidence — red (uncertain) through amber to green
+  (certain/locked) — and an "uncertain → certain" gradient legend appears
+  in the toolbar.
+- Low-confidence dashed outlines and selection strokes still render on
+  top of the heat colors.
+- Painting while heat view is on previews the stroke in the target
+  voice's color (live stroke feedback wins over heat).
+- Toggle off (button or `H`) → voice colors return.
+
 ## Smart selection
 
 - Double-click a note (select mode) → its whole vertical chord (notes

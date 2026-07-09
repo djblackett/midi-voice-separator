@@ -2055,6 +2055,50 @@ carries the musical facts (pitch, boundaries, voice). New pure module
   `paint-mode.e2e.ts`). Screenshots of the open context menu and wand
   cursor confirmed against the real dev-server bundle. No Rust changes.
 
+### Audition-on-gesture + confidence heatmap view
+
+The last two items from the paint/smart-select idea list, same user
+conversation:
+
+- **Audition** (DAW-style, default on, "Audition: on/off" toggle next to
+  the Sound select): clicking or painting a note plays a short quiet
+  blip at its pitch. New pure `buildAuditionNotes` in
+  `scheduledNotes.ts` maps notes to immediate short `ScheduledNote`
+  blips (quieter than playback, capped at 6, keeping each voice's
+  waveform so a note sounds like its voice); new `audition(notes)` on
+  `usePlaybackEngine` feeds them to the existing engine — so audition
+  got piano-sample support and the suspended-AudioContext resume for
+  free, and skips entirely while transport playback runs. `PianoRoll`
+  fires `onAuditionNotes` from pencil/brush/wand stamps and click
+  selects through a ~70ms throttle (a brush sweep sounds like a run,
+  not a machine gun); the double-click chord gesture bypasses the
+  throttle deliberately, since the preceding click's blip would
+  otherwise suppress the chord — the whole point of that gesture.
+- **Confidence heatmap** ("Confidence heat: on/off" button or `H`):
+  recolors notes by `assignmentConfidence` — new pure
+  `confidenceHeatColor` in `drawPianoRoll.ts` (hue sweep, red 0 →
+  green 1; saturation/lightness fixed so nothing reads as "dimmed"
+  instead of "uncertain"). `NoteRenderContext` gained an optional
+  `confidenceHeatmap` flag (optional so every existing
+  `resolveNoteRenderStyle` call site/test stayed valid);
+  `drawPianoRoll`/`drawVoiceLanes` take a trailing param. Precedence:
+  an in-progress paint-preview keeps the target voice's color even in
+  heat view (live stroke feedback wins); selection stroke and the
+  dashed low-confidence outline render unchanged on top. A gradient
+  legend ("uncertain → certain") shows in the toolbar while active.
+- Verified: `pnpm test` (333/333 — new `buildAuditionNotes` cases in
+  `scheduledNotes.test.ts`, `confidenceHeatColor` + heat-mode
+  `resolveNoteRenderStyle` cases in `drawPianoRoll.test.ts`),
+  `pnpm lint`, `pnpm format:check`, `pnpm build`, `pnpm test:e2e`
+  (65/65 — new `heatmap-and-audition.e2e.ts`, whose heatmap spec
+  samples a real canvas pixel via `getImageData` to prove the note
+  actually recolors blue→red, not just that a button toggled; the
+  audition spec asserts a real click-blip produces zero page errors).
+  Heatmap screenshot confirmed against the real dev-server bundle.
+  **Stated limitation, same as playback's**: e2e proves audition
+  schedules without erroring; whether it _sounds_ right needs a human
+  ear in `pnpm tauri dev`. No Rust changes.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to
