@@ -1167,6 +1167,16 @@ kbd {
   display: block;
 }
 
+.piano-roll-time-ruler {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.conflict-button {
+  border-color: #ef4444;
+  color: #fecaca;
+}
+
 /* Paint mode replaces the native cursor with the canvas-drawn brush/
    pencil/lasso cursor on the overlay, so the OS arrow must not fight it. */
 .piano-roll-shell.paint-cursor-active canvas {

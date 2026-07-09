@@ -34,7 +34,7 @@ async function importFixture(page: Page) {
 }
 
 async function canvasBox(page: Page) {
-  const canvas = page.locator(".editor-grid canvas").first();
+  const canvas = page.getByLabel("Piano roll note visualization");
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {
@@ -61,7 +61,7 @@ function noteScreenCenter(
 async function pixelAt(page: Page, x: number, y: number): Promise<[number, number, number]> {
   return page.evaluate(
     ([localX, localY]) => {
-      const canvas = document.querySelector<HTMLCanvasElement>(".editor-grid canvas");
+      const canvas = document.querySelector<HTMLCanvasElement>("canvas[aria-label=\"Piano roll note visualization\"]");
       const context = canvas?.getContext("2d");
       if (!canvas || !context) {
         throw new Error("No piano roll canvas context");

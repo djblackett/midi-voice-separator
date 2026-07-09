@@ -84,7 +84,7 @@ function laneNoteCenter(
 async function clickNoteInLaneView(page: Page, target: LaneFixtureNote) {
   // .first(): the interactive roll canvas — the shell's second canvas is
   // the pointer-transparent paint-cursor overlay.
-  const canvas = page.locator(".editor-grid canvas").first();
+  const canvas = page.getByLabel("Piano roll note visualization");
   const box = await canvas.boundingBox();
   if (!box) {
     throw new Error("Piano roll canvas has no bounding box");

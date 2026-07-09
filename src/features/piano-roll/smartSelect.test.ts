@@ -4,6 +4,7 @@ import {
   chordToleranceTicks,
   clampWandReach,
   MAX_WAND_REACH,
+  notesInTickRange,
   MIN_WAND_REACH,
   selectBottomLine,
   selectChord,
@@ -151,5 +152,26 @@ describe("selectPhrase", () => {
       makeNote("c", 68, 960, 1440),
     ];
     expect(ids(selectPhrase(notes[0], notes, options))).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("notesInTickRange", () => {
+  const notes = [
+    makeNote("before", 60, 0, 480),
+    makeNote("inside", 62, 500, 900),
+    makeNote("straddling", 64, 800, 1600),
+    makeNote("after", 65, 1600, 2000),
+  ];
+
+  it("selects notes sounding anywhere inside the range, regardless of pitch", () => {
+    expect(ids(notesInTickRange(notes, 490, 1000))).toEqual(["inside", "straddling"]);
+  });
+
+  it("accepts a backwards drag (endTick before startTick)", () => {
+    expect(ids(notesInTickRange(notes, 1000, 490))).toEqual(["inside", "straddling"]);
+  });
+
+  it("excludes notes that only touch the range boundary", () => {
+    expect(ids(notesInTickRange(notes, 480, 500))).toEqual([]);
   });
 });

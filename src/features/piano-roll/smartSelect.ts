@@ -94,6 +94,21 @@ export function selectBottomLine(notes: readonly MidiNote[]): MidiNote[] {
   return sweepLine(notes, "lowest");
 }
 
+/**
+ * Every note sounding at any point inside the tick range, regardless of
+ * pitch — the time-ruler drag selection. Boundary-touching notes (ending
+ * exactly at the range start, or starting exactly at its end) are out.
+ */
+export function notesInTickRange(
+  notes: readonly MidiNote[],
+  startTick: number,
+  endTick: number,
+): MidiNote[] {
+  const left = Math.min(startTick, endTick);
+  const right = Math.max(startTick, endTick);
+  return notes.filter((note) => note.startTick < right && note.endTick > left);
+}
+
 export interface PhraseOptions {
   /** Largest silence between two notes that still connects them, in ticks. */
   maxGapTicks: number;

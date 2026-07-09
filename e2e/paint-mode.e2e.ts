@@ -72,7 +72,7 @@ async function canvasBox(page: Page) {
   // the pointer-transparent paint-cursor overlay. Scroll it fully into
   // view first: raw page.mouse events (unlike locator.click) never
   // auto-scroll, and a point below the viewport silently hits nothing.
-  const canvas = page.locator(".editor-grid canvas").first();
+  const canvas = page.getByLabel("Piano roll note visualization");
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {
@@ -258,3 +258,4 @@ test.describe("paint mode", () => {
     );
   });
 });
+

@@ -109,6 +109,53 @@ describe("buildExportReadinessSummary", () => {
     );
   });
 
+  it("reports same-voice overlapping notes", () => {
+    const overlappingNotes = [
+      {
+        id: "a",
+        voiceId: "voice-1",
+        sourceTrackIndex: 0,
+        channel: 0,
+        pitch: 60,
+        velocity: 80,
+        startTick: 0,
+        endTick: 600,
+        durationTicks: 600,
+        assignmentConfidence: 1,
+        assignmentReason: "IMPORTED" as const,
+      },
+      {
+        id: "b",
+        voiceId: "voice-1",
+        sourceTrackIndex: 0,
+        channel: 0,
+        pitch: 64,
+        velocity: 80,
+        startTick: 480,
+        endTick: 960,
+        durationTicks: 480,
+        assignmentConfidence: 1,
+        assignmentReason: "IMPORTED" as const,
+      },
+    ];
+    const summary = buildExportReadinessSummary({
+      project: { notes: overlappingNotes, voices: [voice()] },
+      reviewProgress: { flaggedCount: 0, reviewedCount: 0, remainingCount: 0 },
+      baselineDiff: null,
+      lockedNoteIds: new Set(),
+    });
+
+    expect(summary.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "overlapping-notes",
+          severity: "warning",
+          detail: "1 same-voice overlap — monophonic chiptune voices can't play two notes at once.",
+        }),
+      ]),
+    );
+  });
+
   it("includes percussion and manual reimport reminders as informational findings", () => {
     const summary = buildExportReadinessSummary({
       project: project([voice({ id: "percussion", label: "Percussion", noteCount: 3 })]),

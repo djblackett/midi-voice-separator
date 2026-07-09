@@ -77,7 +77,7 @@ async function importFixture(page: Page) {
 // auto-scroll the page and shift the canvas, and raw page.mouse events
 // use absolute viewport coordinates.
 async function canvasBox(page: Page) {
-  const canvas = page.locator(".editor-grid canvas").first();
+  const canvas = page.getByLabel("Piano roll note visualization");
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {

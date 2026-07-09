@@ -180,6 +180,20 @@ describe("resolveNoteRenderStyle", () => {
     expect(style.fillColor).toBe(getVoiceFillColor("voice-2"));
   });
 
+  it("shows the conflict underline as an independent cue", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a", assignmentConfidence: 0.2 }),
+      context({
+        changedNoteIds: new Set(["a"]),
+        conflictNoteIds: new Set(["a"]),
+        selectedNoteIds: new Set(["a"]),
+      }),
+    );
+
+    expect(style.showConflictUnderline).toBe(true);
+    expect(style.showChangedEdge).toBe(false);
+    expect(style.showLowConfidenceDash).toBe(false);
+  });
   describe("cue precedence (selection > changed edge > low-confidence dash)", () => {
     // Full truth table over the three border-competing cues. Solo dimming
     // and paint-preview color are independent channels and are not part of

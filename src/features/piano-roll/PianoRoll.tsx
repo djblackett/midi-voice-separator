@@ -13,10 +13,13 @@ import {
   buildViewport,
   computeFullPitchSpan,
   drawPianoRoll,
+  drawTimeRuler,
   drawVoiceLanes,
   getVoiceFillColor,
   PIANO_ROLL_LABEL_WIDTH,
+  TIME_RULER_HEIGHT,
   type MarqueeRect,
+  type TickWindow,
 } from "./drawPianoRoll";
 import {
   hitTestPianoRollNote,
@@ -37,6 +40,7 @@ import { drawPaintOverlay } from "./paintOverlay";
 import {
   chordToleranceTicks,
   DEFAULT_WAND_REACH,
+  notesInTickRange,
   selectBottomLine,
   selectChord,
   selectPhrase,
@@ -104,6 +108,8 @@ interface PianoRollProps {
   readOnly?: boolean;
   /** Optional per-voice text shown in the floating legend. */
   voiceDescriptions?: ReadonlyMap<string, string>;
+  /** Note ids involved in a same-voice overlap conflict. */
+  conflictNoteIds?: ReadonlySet<string>;
   viewMode?: PianoRollViewMode;
 }
 
@@ -132,14 +138,17 @@ export function PianoRoll({
   onlyChangedNotes = false,
   readOnly = false,
   voiceDescriptions = new Map(),
+  conflictNoteIds = new Set(),
   viewMode = "piano",
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rulerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
+  const [timeRangeDraft, setTimeRangeDraft] = useState<TickWindow | null>(null);
   const [hoveredNote, setHoveredNote] = useState<{ note: MidiNote; point: PianoRollPoint } | null>(
     null,
   );
@@ -156,6 +165,12 @@ export function PianoRoll({
   const isPaintingRef = useRef(false);
   const paintedNoteIdsRef = useRef<Map<string, string>>(new Map());
   const draggedMarkerIdRef = useRef<string | null>(null);
+  const timeRangeDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startTick: number;
+    moved: boolean;
+  } | null>(null);
   const lastDurationTicksRef = useRef<number | null>(null);
   // Paint-cursor overlay state. All refs, not React state: the cursor and
   // an in-progress stroke update every pointer move, and the overlay
@@ -170,6 +185,10 @@ export function PianoRoll({
   onBrushRadiusChangeRef.current = onBrushRadiusChange;
 
   const isPaintCursorActive = viewMode === "piano" && interactionMode === "paint" && !readOnly;
+  const canvasSize = useMemo(
+    () => ({ width: size.width, height: Math.max(1, size.height - TIME_RULER_HEIGHT) }),
+    [size],
+  );
 
   // A brush sweep can stamp several notes per pointer sample; auditioning
   // every one would machine-gun. One blip per ~70ms keeps a swept run
@@ -243,32 +262,31 @@ export function PianoRoll({
   }, [project, fullPitchSpan, pitchViewportWindow]);
 
   const viewport = useMemo(
-    () => buildViewport(project, size.width, size.height, tickRange, pitchRange),
-    [project, size, tickRange, pitchRange],
+    () => buildViewport(project, canvasSize.width, canvasSize.height, tickRange, pitchRange),
+    [project, canvasSize, tickRange, pitchRange],
   );
 
-  // Bring a keyboard-selected note (e.g. review-mode Tab-stepping) into
+  // Bring a selected note/group (review stepping, conflict jumps) into
   // view, panning only — the user's chosen zoom level is left alone.
   useEffect(() => {
-    if (!project || selectedNoteIds.size !== 1) {
+    if (!project || selectedNoteIds.size === 0) {
       return;
     }
-    const [noteId] = selectedNoteIds;
-    const note = project.notes.find((candidate) => candidate.id === noteId);
-    if (!note) {
+    const notes = project.notes.filter((candidate) => selectedNoteIds.has(candidate.id));
+    if (notes.length === 0) {
       return;
     }
     setViewportWindow((current) =>
       panToReveal(current, project.durationTicks, {
-        startTick: note.startTick,
-        endTick: note.endTick,
+        startTick: Math.min(...notes.map((note) => note.startTick)),
+        endTick: Math.max(...notes.map((note) => note.endTick)),
       }),
     );
     if (viewMode === "piano") {
       setPitchViewportWindow((current) =>
         panPitchToReveal(current, fullPitchSpan, {
-          lowestPitch: note.pitch,
-          highestPitch: note.pitch,
+          lowestPitch: Math.min(...notes.map((note) => note.pitch)),
+          highestPitch: Math.max(...notes.map((note) => note.pitch)),
         }),
       );
     }
@@ -361,6 +379,8 @@ export function PianoRoll({
       previousVoiceId,
       onlyChangedNotes,
       confidenceHeatmap,
+      conflictNoteIds,
+      timeRangeDraft,
     );
   }
   function redrawCanvas() {
@@ -536,7 +556,7 @@ export function PianoRoll({
     const voiceColor = activeVoiceId ? getVoiceFillColor(activeVoiceId) : null;
     function drawFrame(time: number) {
       if (overlayContext) {
-        drawPaintOverlay(overlayContext, size.width, size.height, {
+        drawPaintOverlay(overlayContext, canvasSize.width, canvasSize.height, {
           tool: paintTool,
           cursor: cursorPointRef.current,
           brushRadius,
@@ -553,26 +573,45 @@ export function PianoRoll({
     }
     rafId = requestAnimationFrame(drawFrame);
     return () => cancelAnimationFrame(rafId);
-  }, [isPaintCursorActive, paintTool, brushRadius, activeVoiceId, size]);
+  }, [isPaintCursorActive, paintTool, brushRadius, activeVoiceId, canvasSize]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || size.width <= 0 || size.height <= 0) {
+    if (!canvas || canvasSize.width <= 0 || canvasSize.height <= 0) {
       return;
     }
 
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(size.width * ratio);
-    canvas.height = Math.floor(size.height * ratio);
-    canvas.style.width = `${size.width}px`;
-    canvas.style.height = `${size.height}px`;
+    canvas.width = Math.floor(canvasSize.width * ratio);
+    canvas.height = Math.floor(canvasSize.height * ratio);
+    canvas.style.width = `${canvasSize.width}px`;
+    canvas.style.height = `${canvasSize.height}px`;
+
+    const ruler = rulerCanvasRef.current;
+    if (ruler) {
+      ruler.width = Math.floor(canvasSize.width * ratio);
+      ruler.height = Math.floor(TIME_RULER_HEIGHT * ratio);
+      ruler.style.width = `${canvasSize.width}px`;
+      ruler.style.height = `${TIME_RULER_HEIGHT}px`;
+      const rulerContext = ruler.getContext("2d");
+      if (rulerContext) {
+        rulerContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+        drawTimeRuler(
+          rulerContext,
+          viewport,
+          project?.ppq ?? 480,
+          currentPlaybackTick,
+          timeRangeDraft,
+        );
+      }
+    }
 
     const overlay = overlayCanvasRef.current;
     if (overlay) {
-      overlay.width = Math.floor(size.width * ratio);
-      overlay.height = Math.floor(size.height * ratio);
-      overlay.style.width = `${size.width}px`;
-      overlay.style.height = `${size.height}px`;
+      overlay.width = Math.floor(canvasSize.width * ratio);
+      overlay.height = Math.floor(canvasSize.height * ratio);
+      overlay.style.width = `${canvasSize.width}px`;
+      overlay.style.height = `${canvasSize.height}px`;
       // Pin the absolutely-positioned overlay exactly over the in-flow
       // canvas (which sits below the shell's minimap padding band).
       overlay.style.top = `${canvas.offsetTop}px`;
@@ -592,6 +631,7 @@ export function PianoRoll({
     viewport,
     effectiveSelection,
     marqueeRect,
+    canvasSize,
     size,
     soloVoiceId,
     pitchMarkers,
@@ -600,6 +640,8 @@ export function PianoRoll({
     previousVoiceId,
     onlyChangedNotes,
     confidenceHeatmap,
+    conflictNoteIds,
+    timeRangeDraft,
     viewMode,
   ]);
 
@@ -608,6 +650,77 @@ export function PianoRoll({
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   }
 
+  function tickFromRulerEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const rollViewport = {
+      ...viewport,
+      width: Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH),
+    };
+    const rawTick = xToTick(event.clientX - bounds.left - PIANO_ROLL_LABEL_WIDTH, rollViewport);
+    return Math.max(viewport.startTick, Math.min(viewport.endTick, rawTick));
+  }
+
+  function handleRulerPointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0 || !project) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const tick = tickFromRulerEvent(event);
+    timeRangeDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startTick: tick,
+      moved: false,
+    };
+    if (!readOnly) {
+      setTimeRangeDraft({ startTick: tick, endTick: tick });
+    }
+  }
+
+  function handleRulerPointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const drag = timeRangeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    const moved = Math.abs(event.clientX - drag.startClientX) >= MARQUEE_THRESHOLD_PX;
+    drag.moved = drag.moved || moved;
+    if (!readOnly && drag.moved) {
+      const endTick = tickFromRulerEvent(event);
+      setTimeRangeDraft({ startTick: drag.startTick, endTick });
+      if (interactionProject) {
+        const notes = notesInTickRange(interactionProject.notes, drag.startTick, endTick);
+        onSelectionChange(new Set(notes.map((note) => note.id)));
+      }
+    }
+  }
+
+  function finishRulerGesture(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const drag = timeRangeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    const endTick = tickFromRulerEvent(event);
+    drag.moved = drag.moved || Math.abs(event.clientX - drag.startClientX) >= MARQUEE_THRESHOLD_PX;
+    timeRangeDragRef.current = null;
+    setTimeRangeDraft(null);
+
+    if (!drag.moved) {
+      onSeek(endTick);
+      return;
+    }
+    if (readOnly || !interactionProject) {
+      return;
+    }
+    const notes = notesInTickRange(interactionProject.notes, drag.startTick, endTick);
+    onSelectionChange(new Set(notes.map((note) => note.id)));
+  }
+
+  function handleRulerPointerCancel(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (timeRangeDragRef.current?.pointerId === event.pointerId) {
+      timeRangeDragRef.current = null;
+      setTimeRangeDraft(null);
+    }
+  }
   function markerIdFromPoint(point: { x: number; y: number }): string | null {
     if (point.x > PIANO_ROLL_LABEL_WIDTH || pitchMarkers.length === 0) {
       return null;
@@ -1072,6 +1185,15 @@ export function PianoRoll({
           />
         </div>
       ) : null}
+      <canvas
+        ref={rulerCanvasRef}
+        className="piano-roll-time-ruler"
+        aria-label="Time ruler range selection"
+        onPointerDown={handleRulerPointerDown}
+        onPointerMove={handleRulerPointerMove}
+        onPointerUp={finishRulerGesture}
+        onPointerCancel={handleRulerPointerCancel}
+      />{" "}
       <canvas
         ref={canvasRef}
         aria-label="Piano roll note visualization"

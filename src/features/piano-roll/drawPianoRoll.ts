@@ -31,6 +31,10 @@ const VOICE_COLORS = [
 /** Fallback for the changed-note edge cue when the previous voice isn't known (e.g. the note didn't exist on the compared side). */
 const DEFAULT_CHANGE_EDGE_COLOR = "#facc15";
 const CHANGE_EDGE_WIDTH_PX = 3;
+/** The same-voice-overlap underline (spellcheck-style, along the note's bottom edge). */
+const CONFLICT_UNDERLINE_COLOR = "#ef4444";
+const CONFLICT_UNDERLINE_HEIGHT_PX = 2;
+export const TIME_RULER_HEIGHT = 20;
 const VOICE_STROKES = [
   "#7dd3fc",
   "#c4b5fd",
@@ -173,6 +177,12 @@ export interface NoteRenderStyle {
   showLowConfidenceDash: boolean;
   /** The previous voice's fill color, for the changed-note edge cue. `null` when the note has no known previous voice (e.g. it didn't exist on the compared side) even though `showChangedEdge` is true. */
   changeEdgeColor: string | null;
+  /**
+   * Whether the same-voice-overlap underline renders. An independent
+   * channel (the note's bottom edge), never suppressed by the border
+   * cues — a conflict is severe enough to always show.
+   */
+  showConflictUnderline: boolean;
 }
 
 export interface NoteRenderContext {
@@ -185,6 +195,8 @@ export interface NoteRenderContext {
   previousVoiceId: ReadonlyMap<string, string>;
   /** When true, fill/stroke show `assignmentConfidence` heat instead of voice color. */
   confidenceHeatmap?: boolean;
+  /** Note ids involved in a same-voice overlap (`voiceConflicts.ts`). */
+  conflictNoteIds?: ReadonlySet<string>;
 }
 
 /**
@@ -209,6 +221,7 @@ export function resolveNoteRenderStyle(
     changedNoteIds,
     previousVoiceId,
     confidenceHeatmap = false,
+    conflictNoteIds = new Set(),
   }: NoteRenderContext,
 ): NoteRenderStyle {
   const effectiveVoiceId = paintPreview.get(note.id) ?? note.voiceId;
@@ -245,6 +258,7 @@ export function resolveNoteRenderStyle(
     showChangedEdge,
     showLowConfidenceDash,
     changeEdgeColor,
+    showConflictUnderline: conflictNoteIds.has(note.id),
   };
 }
 
@@ -262,6 +276,8 @@ export function drawPianoRoll(
   previousVoiceId: ReadonlyMap<string, string> = new Map(),
   onlyChangedNotes: boolean = false,
   confidenceHeatmap: boolean = false,
+  conflictNoteIds: ReadonlySet<string> = new Set(),
+  timeRangeSelection: TickWindow | null = null,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -316,6 +332,13 @@ export function drawPianoRoll(
   context.lineTo(PIANO_ROLL_LABEL_WIDTH, viewport.height);
   context.stroke();
 
+  if (timeRangeSelection) {
+    const left = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.startTick, rollViewport);
+    const right = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.endTick, rollViewport);
+    context.fillStyle = "rgba(56, 189, 248, 0.18)";
+    context.fillRect(Math.min(left, right), 0, Math.abs(right - left), viewport.height);
+  }
+
   if (!project || project.notes.length === 0) {
     context.fillStyle = "#94a3b8";
     context.font = "14px system-ui";
@@ -340,6 +363,7 @@ export function drawPianoRoll(
       changedNoteIds,
       previousVoiceId,
       confidenceHeatmap,
+      conflictNoteIds,
     });
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
@@ -356,6 +380,16 @@ export function drawPianoRoll(
     if (style.showChangedEdge) {
       context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
       context.fillRect(x, y + 1, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
+    }
+
+    if (style.showConflictUnderline) {
+      context.fillStyle = CONFLICT_UNDERLINE_COLOR;
+      context.fillRect(
+        x,
+        y + 1 + Math.max(0, height - CONFLICT_UNDERLINE_HEIGHT_PX),
+        width,
+        CONFLICT_UNDERLINE_HEIGHT_PX,
+      );
     }
 
     context.globalAlpha = 1;
@@ -380,6 +414,73 @@ export function drawPianoRoll(
   }
 }
 
+export function drawTimeRuler(
+  context: CanvasRenderingContext2D,
+  viewport: PianoRollViewport,
+  ppq: number,
+  playheadTick: number | null = null,
+  timeRangeSelection: TickWindow | null = null,
+): void {
+  context.clearRect(0, 0, viewport.width, TIME_RULER_HEIGHT);
+  context.fillStyle = "#0f172a";
+  context.fillRect(0, 0, viewport.width, TIME_RULER_HEIGHT);
+
+  const rollViewport = {
+    ...viewport,
+    width: Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH),
+  };
+
+  context.fillStyle = "#111827";
+  context.fillRect(PIANO_ROLL_LABEL_WIDTH, 0, rollViewport.width, TIME_RULER_HEIGHT);
+
+  if (timeRangeSelection) {
+    const left = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.startTick, rollViewport);
+    const right = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.endTick, rollViewport);
+    context.fillStyle = "rgba(56, 189, 248, 0.28)";
+    context.fillRect(Math.min(left, right), 0, Math.abs(right - left), TIME_RULER_HEIGHT);
+  }
+
+  const beatTicks = Math.max(1, ppq);
+  const firstBeatTick = Math.floor(rollViewport.startTick / beatTicks) * beatTicks;
+  context.font = "11px system-ui";
+  context.textBaseline = "top";
+  for (let tick = firstBeatTick; tick <= rollViewport.endTick; tick += beatTicks) {
+    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(tick, rollViewport);
+    const isBar = tick % (beatTicks * 4) === 0;
+    context.strokeStyle = isBar ? "#64748b" : "#334155";
+    context.beginPath();
+    context.moveTo(x, isBar ? 2 : 8);
+    context.lineTo(x, TIME_RULER_HEIGHT);
+    context.stroke();
+    if (isBar) {
+      context.fillStyle = "#cbd5e1";
+      context.fillText(String(Math.floor(tick / (beatTicks * 4)) + 1), x + 4, 3);
+    }
+  }
+
+  context.strokeStyle = "#475569";
+  context.beginPath();
+  context.moveTo(PIANO_ROLL_LABEL_WIDTH, 0);
+  context.lineTo(PIANO_ROLL_LABEL_WIDTH, TIME_RULER_HEIGHT);
+  context.moveTo(0, TIME_RULER_HEIGHT - 0.5);
+  context.lineTo(viewport.width, TIME_RULER_HEIGHT - 0.5);
+  context.stroke();
+
+  if (
+    playheadTick !== null &&
+    playheadTick >= rollViewport.startTick &&
+    playheadTick <= rollViewport.endTick
+  ) {
+    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(playheadTick, rollViewport);
+    context.strokeStyle = "#f8fafc";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, TIME_RULER_HEIGHT);
+    context.stroke();
+    context.lineWidth = 1;
+  }
+}
 export function drawVoiceLanes(
   context: CanvasRenderingContext2D,
   project: MidiProject | null,

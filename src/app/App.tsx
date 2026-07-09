@@ -79,6 +79,11 @@ import {
   sortVoiceDiagnosticsForDisplay,
 } from "../domain/midi/voiceDiagnostics";
 import {
+  conflictNoteIds,
+  findNextConflict,
+  findVoiceConflicts,
+} from "../domain/midi/voiceConflicts";
+import {
   applyRangePatchPreservingHandCorrections,
   buildDefaultPitchMarkers,
   buildDefaultVoiceRangeRules,
@@ -237,6 +242,11 @@ export default function App() {
     () => (displayedProject ? analyzeVoiceDiagnostics(displayedProject) : []),
     [displayedProject],
   );
+  const voiceConflicts = useMemo(
+    () => (displayedProject ? findVoiceConflicts(displayedProject.notes) : []),
+    [displayedProject],
+  );
+  const pianoRollConflictNoteIds = useMemo(() => conflictNoteIds(voiceConflicts), [voiceConflicts]);
   const sortedVoiceDiagnostics = useMemo(
     () => sortVoiceDiagnosticsForDisplay(voiceDiagnostics),
     [voiceDiagnostics],
@@ -1349,6 +1359,15 @@ export default function App() {
     }
   }
 
+  function handleConflictStep(direction: 1 | -1) {
+    const currentStartTick =
+      selectedNotes.length > 0 ? Math.min(...selectedNotes.map((note) => note.startTick)) : null;
+    const nextConflict = findNextConflict(voiceConflicts, currentStartTick, direction);
+    if (nextConflict) {
+      setSelectedNoteIds(new Set(nextConflict.noteIds));
+    }
+  }
+
   function handleInspectDiagnosticVoice(voiceId: string) {
     if (!displayedProject) {
       return;
@@ -1492,6 +1511,16 @@ export default function App() {
                 disabled={isReassigning || isCompareReadOnly}
               >
                 Review flagged notes ({flaggedNotes.length})
+              </button>
+            ) : null}
+            {voiceConflicts.length > 0 ? (
+              <button
+                type="button"
+                className="secondary-button conflict-button"
+                onClick={() => handleConflictStep(1)}
+                disabled={isReassigning || isCompareReadOnly}
+              >
+                Next overlap ({voiceConflicts.length})
               </button>
             ) : null}
             <label className="max-voice-count-label">
@@ -2555,6 +2584,7 @@ export default function App() {
           onlyChangedNotes={pianoRollOnlyChangedNotes}
           readOnly={isCompareReadOnly}
           voiceDescriptions={pianoRollVoiceDescriptions}
+          conflictNoteIds={pianoRollConflictNoteIds}
           viewMode={pianoRollViewMode}
         />
       </section>

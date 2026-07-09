@@ -1,6 +1,7 @@
 import type { AssignmentDiff } from "./assignmentDiff";
 import type { MidiProject, MidiVoice } from "./midiProject";
 import type { ReviewProgress } from "./reviewQueue";
+import { findVoiceConflicts } from "./voiceConflicts";
 import { PERCUSSION_VOICE_ID } from "./voiceManagement";
 
 export type ExportReadinessSeverity = "ok" | "info" | "warning";
@@ -94,6 +95,16 @@ export function buildExportReadinessSummary({
       severity: "warning",
       label: "Tiny voices",
       detail: `${tinyVoices.length} voice${tinyVoices.length === 1 ? " has" : "s have"} only one note: ${voiceLabelList(tinyVoices)}.`,
+    });
+  }
+
+  const overlapConflicts = findVoiceConflicts(project.notes);
+  if (overlapConflicts.length > 0) {
+    findings.push({
+      id: "overlapping-notes",
+      severity: "warning",
+      label: "Overlapping notes",
+      detail: `${overlapConflicts.length} same-voice overlap${overlapConflicts.length === 1 ? "" : "s"} — monophonic chiptune voices can't play two notes at once.`,
     });
   }
 
