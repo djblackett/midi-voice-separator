@@ -1045,6 +1045,32 @@ kbd {
   font-size: 13px;
 }
 
+.editor-workspace-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 720px;
+  background: #0b1120;
+}
+
+.editor-workspace-fullscreen .piano-roll-toolbar {
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1f2937;
+  background: #0f172a;
+}
+
+.editor-workspace-fullscreen .editor-grid {
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.editor-workspace-fullscreen .piano-roll-shell {
+  min-height: 0;
+}
 .piano-roll-toolbar {
   display: flex;
   align-items: center;

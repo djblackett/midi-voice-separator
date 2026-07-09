@@ -2115,6 +2115,13 @@ Follow-on correction UX work after the paint/wand/audition/heatmap pass:
 - **UI and tests.** `App.tsx` adds a compact **Smart fixes** section below voice diagnostics. Unit coverage lives in `smartFixSuggestions.test.ts`; end-to-end coverage in `e2e/smart-fixes.e2e.ts` drives the real UI and confirms an assign suggestion locks a split phrase note into the target voice. `MANUAL_TEST_CASES.md` now covers time-ruler selection/seek, overlap review, and smart fixes.
 - **Still manual by nature:** suggestion quality should be validated on real MIDI files before treating the heuristics as authoritative; the panel is deliberately advisory and leaves selection/assignment visible to the user.
 
+### Fullscreen MIDI editor workspace
+
+Added a workspace fullscreen mode for the piano-roll editor. `App.tsx` now wraps the piano-roll toolbar and editor grid in a `MIDI editor workspace` section with a **Fullscreen workspace / Exit fullscreen** toggle. The mode is CSS-fixed to the viewport and keeps the playback controls, view toggles, paint mode controls, brush/reach options, heatmap toggle, and toolbar hints visible above the expanded piano roll. `e2e/fullscreen-workspace.e2e.ts` verifies the canvas grows and paint controls remain visible. `MANUAL_TEST_CASES.md` has the corresponding manual checklist.
+
+- **Not yet committed.** This section and its code (`App.tsx`, `global.css`, `e2e/fullscreen-workspace.e2e.ts`, `MANUAL_TEST_CASES.md`) exist only in the working tree as of this note.
+- Verified: `pnpm test` (357/357), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean; `pnpm test:e2e` (70/70, including `fullscreen-workspace.e2e.ts`). No Rust changes.
+
 ## Architecture Invariants
 
 - Ticks are the canonical timing coordinate. Do not convert core MIDI state to

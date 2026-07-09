@@ -82,6 +82,15 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 - Stepping past the last/first flagged note wraps or stops sensibly (check
   it doesn't throw or get stuck).
 
+## Fullscreen workspace
+
+- Click **Fullscreen workspace** in the piano-roll toolbar -> the editor fills
+  the viewport, and the piano roll gets the remaining height below the toolbar.
+- In fullscreen, turn on **Paint mode** -> Pencil/Brush/Lasso/Wand controls,
+  brush/reach options, active voice chip, playback controls, and view toggles
+  remain visible above the roll.
+- Click **Exit fullscreen** -> the editor returns to the normal page layout.
+
 ## Paint mode
 
 - Click **Paint mode: off** to turn it on → button shows "Paint mode: on";

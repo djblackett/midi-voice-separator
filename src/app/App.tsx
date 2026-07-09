@@ -212,6 +212,7 @@ export default function App() {
   const [showChangedNotes, setShowChangedNotes] = useState(false);
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<CompareState | null>(null);
+  const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const displayedProject = useMemo(() => {
     if (!project) {
       return null;
@@ -2303,357 +2304,376 @@ export default function App() {
         </section>
       ) : null}
 
-      {displayedProject ? (
-        <section className="piano-roll-toolbar">
-          <button
-            type="button"
-            className={
-              pianoRollViewMode === "piano" ? "secondary-button active" : "secondary-button"
-            }
-            onClick={() => setPianoRollViewMode("piano")}
-            aria-pressed={pianoRollViewMode === "piano" ? "true" : "false"}
-          >
-            Piano roll
-          </button>
-          <button
-            type="button"
-            className={
-              pianoRollViewMode === "voice-lanes" ? "secondary-button active" : "secondary-button"
-            }
-            onClick={() => {
-              setPianoRollViewMode("voice-lanes");
-              setInteractionMode("select");
-            }}
-            aria-pressed={pianoRollViewMode === "voice-lanes" ? "true" : "false"}
-          >
-            Voice lanes
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={playback.isPlaying ? playback.pause : playback.play}
-            disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
-          >
-            {playback.isPlaying ? "Pause" : "Play"}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={playback.stop}
-            disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
-          >
-            Stop
-          </button>
-          <label className="instrument-label">
-            Sound
-            <select
-              className="instrument-select"
-              value={instrument}
-              onChange={(event) => setInstrument(event.target.value as Instrument)}
-              aria-label="Playback instrument"
+      <section
+        className={
+          isEditorFullscreen ? "editor-workspace editor-workspace-fullscreen" : "editor-workspace"
+        }
+        aria-label="MIDI editor workspace"
+      >
+        {displayedProject ? (
+          <section className="piano-roll-toolbar">
+            <button
+              type="button"
+              className={
+                pianoRollViewMode === "piano" ? "secondary-button active" : "secondary-button"
+              }
+              onClick={() => setPianoRollViewMode("piano")}
+              aria-pressed={pianoRollViewMode === "piano" ? "true" : "false"}
             >
-              <option value="chiptune">Chiptune</option>
-              <option value="piano">Piano</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            className={isAuditionEnabled ? "secondary-button active" : "secondary-button"}
-            onClick={() => setIsAuditionEnabled((current) => !current)}
-            aria-pressed={isAuditionEnabled ? "true" : "false"}
-            title="Play a short blip for notes as you click or paint them"
-          >
-            {isAuditionEnabled ? "Audition: on" : "Audition: off"}
-          </button>
-          <span className="playback-time">
-            {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
-            {formatPlaybackTime(playbackDurationSeconds)}
-          </span>
-          <label
-            className="playback-scope-label"
-            title={
-              !canUseChangedPlaybackScope
-                ? "Changed notes scope requires a comparable diff with changed notes."
-                : !canUseFlaggedPlaybackScope
-                  ? "Select a flagged note to enable that scope."
-                  : undefined
-            }
-          >
-            Scope
-            <select
-              className="playback-scope-select"
-              value={playbackScopeMode}
-              onChange={(event) => setPlaybackScopeMode(event.target.value as PlaybackScopeMode)}
-              aria-label="Playback scope"
+              Piano roll
+            </button>
+            <button
+              type="button"
+              className={
+                pianoRollViewMode === "voice-lanes" ? "secondary-button active" : "secondary-button"
+              }
+              onClick={() => {
+                setPianoRollViewMode("voice-lanes");
+                setInteractionMode("select");
+              }}
+              aria-pressed={pianoRollViewMode === "voice-lanes" ? "true" : "false"}
+            >
+              Voice lanes
+            </button>
+            <button
+              type="button"
+              className={isEditorFullscreen ? "secondary-button active" : "secondary-button"}
+              onClick={() => setIsEditorFullscreen((current) => !current)}
+              aria-pressed={isEditorFullscreen ? "true" : "false"}
+            >
+              {isEditorFullscreen ? "Exit fullscreen" : "Fullscreen workspace"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={playback.isPlaying ? playback.pause : playback.play}
+              disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
+            >
+              {playback.isPlaying ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={playback.stop}
+              disabled={isImporting || isExporting || isReassigning || isCompareReadOnly}
+            >
+              Stop
+            </button>
+            <label className="instrument-label">
+              Sound
+              <select
+                className="instrument-select"
+                value={instrument}
+                onChange={(event) => setInstrument(event.target.value as Instrument)}
+                aria-label="Playback instrument"
+              >
+                <option value="chiptune">Chiptune</option>
+                <option value="piano">Piano</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className={isAuditionEnabled ? "secondary-button active" : "secondary-button"}
+              onClick={() => setIsAuditionEnabled((current) => !current)}
+              aria-pressed={isAuditionEnabled ? "true" : "false"}
+              title="Play a short blip for notes as you click or paint them"
+            >
+              {isAuditionEnabled ? "Audition: on" : "Audition: off"}
+            </button>
+            <span className="playback-time">
+              {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
+              {formatPlaybackTime(playbackDurationSeconds)}
+            </span>
+            <label
+              className="playback-scope-label"
+              title={
+                !canUseChangedPlaybackScope
+                  ? "Changed notes scope requires a comparable diff with changed notes."
+                  : !canUseFlaggedPlaybackScope
+                    ? "Select a flagged note to enable that scope."
+                    : undefined
+              }
+            >
+              Scope
+              <select
+                className="playback-scope-select"
+                value={playbackScopeMode}
+                onChange={(event) => setPlaybackScopeMode(event.target.value as PlaybackScopeMode)}
+                aria-label="Playback scope"
+                disabled={isCompareReadOnly}
+              >
+                <option value="all">All notes</option>
+                <option value="selected">Selected notes</option>
+                <option value="voice" disabled={!canUseVoicePlaybackScope}>
+                  Current voice
+                </option>
+                <option value="changed" disabled={!canUseChangedPlaybackScope}>
+                  Changed notes
+                </option>
+                <option value="flagged" disabled={!canUseFlaggedPlaybackScope}>
+                  Around flagged note
+                </option>
+              </select>
+            </label>
+            {playback.blockedReason ? (
+              <span className="playback-scope-message" role="status">
+                {playback.blockedReason}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className={
+                interactionMode === "paint" ? "secondary-button active" : "secondary-button"
+              }
+              onClick={handleTogglePaintMode}
+              aria-pressed={interactionMode === "paint" ? "true" : "false"}
               disabled={isCompareReadOnly}
             >
-              <option value="all">All notes</option>
-              <option value="selected">Selected notes</option>
-              <option value="voice" disabled={!canUseVoicePlaybackScope}>
-                Current voice
-              </option>
-              <option value="changed" disabled={!canUseChangedPlaybackScope}>
-                Changed notes
-              </option>
-              <option value="flagged" disabled={!canUseFlaggedPlaybackScope}>
-                Around flagged note
-              </option>
-            </select>
-          </label>
-          {playback.blockedReason ? (
-            <span className="playback-scope-message" role="status">
-              {playback.blockedReason}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}
-            onClick={handleTogglePaintMode}
-            aria-pressed={interactionMode === "paint" ? "true" : "false"}
-            disabled={isCompareReadOnly}
-          >
-            {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
-          </button>
-          {interactionMode === "paint" ? (
-            <div className="paint-toolbar">
-              <div className="paint-tool-segment" role="group" aria-label="Paint tool">
-                <button
-                  type="button"
-                  className={
-                    paintTool === "pencil" ? "paint-tool-button active" : "paint-tool-button"
-                  }
-                  onClick={() => setPaintTool("pencil")}
-                  aria-pressed={paintTool === "pencil" ? "true" : "false"}
-                  title="Pencil — paint exactly the note under the cursor (P)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    aria-hidden="true"
-                  >
-                    <path d="M11.5 2.5l2 2L5 13l-2.7.7.7-2.7z" strokeLinejoin="round" />
-                  </svg>
-                  <span>Pencil</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    paintTool === "brush" ? "paint-tool-button active" : "paint-tool-button"
-                  }
-                  onClick={() => setPaintTool("brush")}
-                  aria-pressed={paintTool === "brush" ? "true" : "false"}
-                  title="Brush — paint every note inside the round brush (B)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M13.5 2.5c-2.2.6-5 3.1-6.5 5.1l1.4 1.4c2-1.5 4.5-4.3 5.1-6.5z"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M6.3 8.4c-1.6.1-3 1.6-3 4.1 2.5 0 4-1.4 4.1-3z"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Brush</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    paintTool === "lasso" ? "paint-tool-button active" : "paint-tool-button"
-                  }
-                  onClick={() => setPaintTool("lasso")}
-                  aria-pressed={paintTool === "lasso" ? "true" : "false"}
-                  title="Lasso — draw a loop and paint every enclosed note (L)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    aria-hidden="true"
-                  >
-                    <ellipse cx="8" cy="6" rx="5.5" ry="3.5" />
-                    <path
-                      d="M4.5 8.8c-1 1.2-.4 2.8 1 3.2 1.2.3 2.4-.3 2.7-1.4"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  <span>Lasso</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    paintTool === "wand" ? "paint-tool-button active" : "paint-tool-button"
-                  }
-                  onClick={() => setPaintTool("wand")}
-                  aria-pressed={paintTool === "wand" ? "true" : "false"}
-                  title="Wand — click a note to paint its whole connected phrase (W)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 13l6.5-6.5" strokeLinecap="round" />
-                    <path
-                      d="M11.5 1.8v2.4M11.5 6.4v1.4M9.2 4.1h1.4M12.4 4.1h1.9"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  <span>Wand</span>
-                </button>
-              </div>
-              {paintTool === "wand" ? (
-                <label
-                  className="paint-size-control"
-                  title="Max pitch jump (semitones) the wand's phrase fill will cross"
-                >
-                  Reach
-                  <input
-                    type="range"
-                    min={MIN_WAND_REACH}
-                    max={MAX_WAND_REACH}
-                    value={wandReach}
-                    onChange={(event) => setWandReach(clampWandReach(Number(event.target.value)))}
-                    aria-label="Wand reach"
-                  />
-                  <span className="paint-size-value">{wandReach} st</span>
-                </label>
-              ) : null}
-              {paintTool === "brush" ? (
-                <label
-                  className="paint-size-control"
-                  title="Brush size — also [ and ] keys, or Alt+scroll over the roll"
-                >
-                  Size
-                  <input
-                    type="range"
-                    min={MIN_BRUSH_RADIUS}
-                    max={MAX_BRUSH_RADIUS}
-                    value={brushRadius}
-                    onChange={(event) =>
-                      setBrushRadius(clampBrushRadius(Number(event.target.value)))
+              {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
+            </button>
+            {interactionMode === "paint" ? (
+              <div className="paint-toolbar">
+                <div className="paint-tool-segment" role="group" aria-label="Paint tool">
+                  <button
+                    type="button"
+                    className={
+                      paintTool === "pencil" ? "paint-tool-button active" : "paint-tool-button"
                     }
-                    aria-label="Brush size"
-                  />
-                  <span className="paint-size-value">{brushRadius * 2}px</span>
-                </label>
-              ) : null}
-              {activeVoiceId ? (
-                <span className="paint-voice-chip" title="The voice this stroke paints into">
-                  <span
-                    className="paint-voice-chip-swatch"
-                    style={{ backgroundColor: getVoiceFillColor(activeVoiceId) }}
-                  />
-                  {displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
-                    activeVoiceId}
-                </span>
-              ) : (
-                <span className="paint-voice-chip empty">No voice — press 1-9</span>
-              )}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            className={interactionMode === "range" ? "secondary-button active" : "secondary-button"}
-            onClick={handleToggleRangeMode}
-            aria-pressed={interactionMode === "range" ? "true" : "false"}
-            disabled={isCompareReadOnly}
-          >
-            {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
-          </button>
-          <button
-            type="button"
-            className={isConfidenceHeatOn ? "secondary-button active" : "secondary-button"}
-            onClick={() => setIsConfidenceHeatOn((current) => !current)}
-            aria-pressed={isConfidenceHeatOn ? "true" : "false"}
-            title="Color notes by assignment confidence instead of voice (H)"
-          >
-            {isConfidenceHeatOn ? "Confidence heat: on" : "Confidence heat: off"}
-          </button>
-          {isConfidenceHeatOn ? (
-            <span className="confidence-heat-legend">
-              <span aria-hidden="true">uncertain</span>
-              <span className="confidence-heat-gradient" aria-hidden="true" />
-              <span aria-hidden="true">certain</span>
-            </span>
-          ) : null}
-          {interactionMode === "paint" ? (
-            <span className="piano-roll-toolbar-hint">
-              {(() => {
-                if (!activeVoiceId) {
-                  return "Click a voice swatch above or press 1-9 to choose what to paint.";
-                }
-                const voiceLabel =
-                  displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
-                  activeVoiceId;
-                if (paintTool === "brush") {
-                  return `Drag the brush to paint notes into ${voiceLabel} — hold Alt to remove from the stroke.`;
-                }
-                if (paintTool === "lasso") {
-                  return `Draw a loop around notes to paint notes into ${voiceLabel}.`;
-                }
-                if (paintTool === "wand") {
-                  return `Click a note to paint its connected phrase into ${voiceLabel} — Reach sets the max pitch jump.`;
-                }
-                return `Click or drag to paint notes into ${voiceLabel}.`;
-              })()}
-            </span>
-          ) : interactionMode === "range" ? (
-            <span className="piano-roll-toolbar-hint">
-              Drag marker handles in the left piano-roll gutter, then apply the pitch ranges.
-            </span>
-          ) : null}
-        </section>
-      ) : null}
+                    onClick={() => setPaintTool("pencil")}
+                    aria-pressed={paintTool === "pencil" ? "true" : "false"}
+                    title="Pencil — paint exactly the note under the cursor (P)"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      aria-hidden="true"
+                    >
+                      <path d="M11.5 2.5l2 2L5 13l-2.7.7.7-2.7z" strokeLinejoin="round" />
+                    </svg>
+                    <span>Pencil</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      paintTool === "brush" ? "paint-tool-button active" : "paint-tool-button"
+                    }
+                    onClick={() => setPaintTool("brush")}
+                    aria-pressed={paintTool === "brush" ? "true" : "false"}
+                    title="Brush — paint every note inside the round brush (B)"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M13.5 2.5c-2.2.6-5 3.1-6.5 5.1l1.4 1.4c2-1.5 4.5-4.3 5.1-6.5z"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M6.3 8.4c-1.6.1-3 1.6-3 4.1 2.5 0 4-1.4 4.1-3z"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Brush</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      paintTool === "lasso" ? "paint-tool-button active" : "paint-tool-button"
+                    }
+                    onClick={() => setPaintTool("lasso")}
+                    aria-pressed={paintTool === "lasso" ? "true" : "false"}
+                    title="Lasso — draw a loop and paint every enclosed note (L)"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      aria-hidden="true"
+                    >
+                      <ellipse cx="8" cy="6" rx="5.5" ry="3.5" />
+                      <path
+                        d="M4.5 8.8c-1 1.2-.4 2.8 1 3.2 1.2.3 2.4-.3 2.7-1.4"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    <span>Lasso</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      paintTool === "wand" ? "paint-tool-button active" : "paint-tool-button"
+                    }
+                    onClick={() => setPaintTool("wand")}
+                    aria-pressed={paintTool === "wand" ? "true" : "false"}
+                    title="Wand — click a note to paint its whole connected phrase (W)"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 13l6.5-6.5" strokeLinecap="round" />
+                      <path
+                        d="M11.5 1.8v2.4M11.5 6.4v1.4M9.2 4.1h1.4M12.4 4.1h1.9"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    <span>Wand</span>
+                  </button>
+                </div>
+                {paintTool === "wand" ? (
+                  <label
+                    className="paint-size-control"
+                    title="Max pitch jump (semitones) the wand's phrase fill will cross"
+                  >
+                    Reach
+                    <input
+                      type="range"
+                      min={MIN_WAND_REACH}
+                      max={MAX_WAND_REACH}
+                      value={wandReach}
+                      onChange={(event) => setWandReach(clampWandReach(Number(event.target.value)))}
+                      aria-label="Wand reach"
+                    />
+                    <span className="paint-size-value">{wandReach} st</span>
+                  </label>
+                ) : null}
+                {paintTool === "brush" ? (
+                  <label
+                    className="paint-size-control"
+                    title="Brush size — also [ and ] keys, or Alt+scroll over the roll"
+                  >
+                    Size
+                    <input
+                      type="range"
+                      min={MIN_BRUSH_RADIUS}
+                      max={MAX_BRUSH_RADIUS}
+                      value={brushRadius}
+                      onChange={(event) =>
+                        setBrushRadius(clampBrushRadius(Number(event.target.value)))
+                      }
+                      aria-label="Brush size"
+                    />
+                    <span className="paint-size-value">{brushRadius * 2}px</span>
+                  </label>
+                ) : null}
+                {activeVoiceId ? (
+                  <span className="paint-voice-chip" title="The voice this stroke paints into">
+                    <span
+                      className="paint-voice-chip-swatch"
+                      style={{ backgroundColor: getVoiceFillColor(activeVoiceId) }}
+                    />
+                    {displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
+                      activeVoiceId}
+                  </span>
+                ) : (
+                  <span className="paint-voice-chip empty">No voice — press 1-9</span>
+                )}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className={
+                interactionMode === "range" ? "secondary-button active" : "secondary-button"
+              }
+              onClick={handleToggleRangeMode}
+              aria-pressed={interactionMode === "range" ? "true" : "false"}
+              disabled={isCompareReadOnly}
+            >
+              {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
+            </button>
+            <button
+              type="button"
+              className={isConfidenceHeatOn ? "secondary-button active" : "secondary-button"}
+              onClick={() => setIsConfidenceHeatOn((current) => !current)}
+              aria-pressed={isConfidenceHeatOn ? "true" : "false"}
+              title="Color notes by assignment confidence instead of voice (H)"
+            >
+              {isConfidenceHeatOn ? "Confidence heat: on" : "Confidence heat: off"}
+            </button>
+            {isConfidenceHeatOn ? (
+              <span className="confidence-heat-legend">
+                <span aria-hidden="true">uncertain</span>
+                <span className="confidence-heat-gradient" aria-hidden="true" />
+                <span aria-hidden="true">certain</span>
+              </span>
+            ) : null}
+            {interactionMode === "paint" ? (
+              <span className="piano-roll-toolbar-hint">
+                {(() => {
+                  if (!activeVoiceId) {
+                    return "Click a voice swatch above or press 1-9 to choose what to paint.";
+                  }
+                  const voiceLabel =
+                    displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
+                    activeVoiceId;
+                  if (paintTool === "brush") {
+                    return `Drag the brush to paint notes into ${voiceLabel} — hold Alt to remove from the stroke.`;
+                  }
+                  if (paintTool === "lasso") {
+                    return `Draw a loop around notes to paint notes into ${voiceLabel}.`;
+                  }
+                  if (paintTool === "wand") {
+                    return `Click a note to paint its connected phrase into ${voiceLabel} — Reach sets the max pitch jump.`;
+                  }
+                  return `Click or drag to paint notes into ${voiceLabel}.`;
+                })()}
+              </span>
+            ) : interactionMode === "range" ? (
+              <span className="piano-roll-toolbar-hint">
+                Drag marker handles in the left piano-roll gutter, then apply the pitch ranges.
+              </span>
+            ) : null}
+          </section>
+        ) : null}
 
-      <section className="editor-grid">
-        <PianoRoll
-          project={pianoRollProject}
-          selectedNoteIds={selectedNoteIds}
-          onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
-          soloVoiceId={pianoRollSoloVoiceId}
-          interactionMode={interactionMode}
-          activeVoiceId={activeVoiceId}
-          onPaintNotes={handlePaintNotes}
-          paintTool={paintTool}
-          brushRadius={brushRadius}
-          onBrushRadiusChange={setBrushRadius}
-          wandReach={wandReach}
-          onAssignNotes={handleAssignNotesToVoice}
-          onAuditionNotes={handleAuditionNotes}
-          confidenceHeatmap={isConfidenceHeatOn}
-          pitchMarkers={pitchMarkers}
-          onPitchMarkersChange={setPitchMarkers}
-          currentPlaybackTick={playback.currentTick}
-          isPlaying={playback.isPlaying}
-          onSeek={playback.seek}
-          changedNoteIds={pianoRollChangedNoteIds}
-          previousVoiceId={changedNotePreviousVoiceId}
-          onlyChangedNotes={pianoRollOnlyChangedNotes}
-          readOnly={isCompareReadOnly}
-          voiceDescriptions={pianoRollVoiceDescriptions}
-          conflictNoteIds={pianoRollConflictNoteIds}
-          viewMode={pianoRollViewMode}
-        />
+        <section className="editor-grid">
+          <PianoRoll
+            project={pianoRollProject}
+            selectedNoteIds={selectedNoteIds}
+            onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
+            soloVoiceId={pianoRollSoloVoiceId}
+            interactionMode={interactionMode}
+            activeVoiceId={activeVoiceId}
+            onPaintNotes={handlePaintNotes}
+            paintTool={paintTool}
+            brushRadius={brushRadius}
+            onBrushRadiusChange={setBrushRadius}
+            wandReach={wandReach}
+            onAssignNotes={handleAssignNotesToVoice}
+            onAuditionNotes={handleAuditionNotes}
+            confidenceHeatmap={isConfidenceHeatOn}
+            pitchMarkers={pitchMarkers}
+            onPitchMarkersChange={setPitchMarkers}
+            currentPlaybackTick={playback.currentTick}
+            isPlaying={playback.isPlaying}
+            onSeek={playback.seek}
+            changedNoteIds={pianoRollChangedNoteIds}
+            previousVoiceId={changedNotePreviousVoiceId}
+            onlyChangedNotes={pianoRollOnlyChangedNotes}
+            readOnly={isCompareReadOnly}
+            voiceDescriptions={pianoRollVoiceDescriptions}
+            conflictNoteIds={pianoRollConflictNoteIds}
+            viewMode={pianoRollViewMode}
+          />
+        </section>
       </section>
 
       <footer className="metrics-bar">{formatProjectSummary(displayedProject)}</footer>
