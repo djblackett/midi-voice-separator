@@ -2,6 +2,12 @@ import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 import { PIANO_ROLL_LABEL_WIDTH } from "./drawPianoRoll";
+import {
+  buildVoiceLaneLayout,
+  findVoiceLane,
+  voiceLaneNoteRect,
+  VOICE_LANE_LABEL_WIDTH,
+} from "./voiceLanes";
 
 export interface PianoRollPoint {
   x: number;
@@ -97,6 +103,45 @@ export function hitTestPianoRollNote(
           point.x <= noteX + noteWidth &&
           point.y >= noteY + 1 &&
           point.y <= noteY + 1 + noteHeight
+        );
+      }) ?? null
+  );
+}
+
+export function hitTestVoiceLaneNote(
+  point: PianoRollPoint,
+  project: MidiProject | null,
+  viewport: PianoRollViewport,
+): MidiNote | null {
+  if (!project || project.notes.length === 0 || point.x < VOICE_LANE_LABEL_WIDTH) {
+    return null;
+  }
+
+  const lanes = buildVoiceLaneLayout(project.voices, viewport.height);
+  return (
+    [...project.notes]
+      .sort((left, right) => {
+        const leftArea = Math.max(1, left.durationTicks);
+        const rightArea = Math.max(1, right.durationTicks);
+
+        return (
+          leftArea - rightArea ||
+          right.startTick - left.startTick ||
+          right.pitch - left.pitch ||
+          left.id.localeCompare(right.id)
+        );
+      })
+      .find((note) => {
+        const lane = findVoiceLane(lanes, note.voiceId);
+        if (!lane) {
+          return false;
+        }
+        const rect = voiceLaneNoteRect(note, lane, viewport);
+        return (
+          point.x >= rect.x &&
+          point.x <= rect.x + rect.width &&
+          point.y >= rect.y &&
+          point.y <= rect.y + rect.height
         );
       }) ?? null
   );

@@ -12,11 +12,17 @@ import {
   buildViewport,
   computeFullPitchSpan,
   drawPianoRoll,
+  drawVoiceLanes,
   getVoiceFillColor,
   PIANO_ROLL_LABEL_WIDTH,
   type MarqueeRect,
 } from "./drawPianoRoll";
-import { hitTestPianoRollNote, hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
+import {
+  hitTestPianoRollNote,
+  hitTestPianoRollNotesInRect,
+  hitTestVoiceLaneNote,
+  type PianoRollPoint,
+} from "./hitTest";
 import { shouldPaintNote } from "./paint";
 import {
   defaultPitchViewportWindow,
@@ -41,6 +47,7 @@ const ZOOM_FACTOR_PER_WHEEL_NOTCH = 1.2;
 const MARKER_HIT_RADIUS_PX = 14;
 
 export type InteractionMode = "select" | "paint" | "range";
+export type PianoRollViewMode = "piano" | "voice-lanes";
 
 interface PianoRollProps {
   project: MidiProject | null;
@@ -65,6 +72,7 @@ interface PianoRollProps {
   readOnly?: boolean;
   /** Optional per-voice text shown in the floating legend. */
   voiceDescriptions?: ReadonlyMap<string, string>;
+  viewMode?: PianoRollViewMode;
 }
 
 export function PianoRoll({
@@ -85,6 +93,7 @@ export function PianoRoll({
   onlyChangedNotes = false,
   readOnly = false,
   voiceDescriptions = new Map(),
+  viewMode = "piano",
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -184,13 +193,15 @@ export function PianoRoll({
         endTick: note.endTick,
       }),
     );
-    setPitchViewportWindow((current) =>
-      panPitchToReveal(current, fullPitchSpan, {
-        lowestPitch: note.pitch,
-        highestPitch: note.pitch,
-      }),
-    );
-  }, [selectedNoteIds, project, fullPitchSpan]);
+    if (viewMode === "piano") {
+      setPitchViewportWindow((current) =>
+        panPitchToReveal(current, fullPitchSpan, {
+          lowestPitch: note.pitch,
+          highestPitch: note.pitch,
+        }),
+      );
+    }
+  }, [selectedNoteIds, project, fullPitchSpan, viewMode]);
 
   // Page-follow the playhead during playback, panning only — never
   // changes zoom, and only while actually playing (a paused/stopped
@@ -227,15 +238,23 @@ export function PianoRoll({
     });
   }, [marqueePreviewIds, selectedNoteIds]);
 
-  function redrawCanvas() {
-    const canvas = canvasRef.current;
-    if (!canvas) {
+  function drawCurrentView(context: CanvasRenderingContext2D) {
+    if (viewMode === "voice-lanes") {
+      drawVoiceLanes(
+        context,
+        project,
+        viewport,
+        effectiveSelection,
+        soloVoiceId,
+        paintedNoteIdsRef.current,
+        currentPlaybackTick,
+        changedNoteIds,
+        previousVoiceId,
+        onlyChangedNotes,
+      );
       return;
     }
-    const context = canvas.getContext("2d");
-    if (!context) {
-      return;
-    }
+
     drawPianoRoll(
       context,
       project,
@@ -250,6 +269,17 @@ export function PianoRoll({
       previousVoiceId,
       onlyChangedNotes,
     );
+  }
+  function redrawCanvas() {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+    drawCurrentView(context);
   }
 
   useEffect(() => {
@@ -270,20 +300,7 @@ export function PianoRoll({
     }
 
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    drawPianoRoll(
-      context,
-      project,
-      viewport,
-      effectiveSelection,
-      marqueeRect,
-      soloVoiceId,
-      paintedNoteIdsRef.current,
-      pitchMarkers,
-      currentPlaybackTick,
-      changedNoteIds,
-      previousVoiceId,
-      onlyChangedNotes,
-    );
+    drawCurrentView(context);
   }, [
     project,
     viewport,
@@ -296,6 +313,7 @@ export function PianoRoll({
     changedNoteIds,
     previousVoiceId,
     onlyChangedNotes,
+    viewMode,
   ]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -337,7 +355,7 @@ export function PianoRoll({
     event.currentTarget.setPointerCapture(event.pointerId);
     setHoveredNote(null);
 
-    if (interactionMode === "range" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
       const point = pointFromEvent(event);
       const markerId =
         markerIdFromPoint(point) ??
@@ -349,7 +367,7 @@ export function PianoRoll({
       return;
     }
 
-    if (interactionMode === "paint" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
       if (!activeVoiceId) {
         return;
       }
@@ -367,7 +385,7 @@ export function PianoRoll({
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (interactionMode === "range" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
       const markerId = draggedMarkerIdRef.current;
       if (markerId) {
         updateMarkerPitch(markerId, pointFromEvent(event));
@@ -375,7 +393,7 @@ export function PianoRoll({
       return;
     }
 
-    if (interactionMode === "paint" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
       if (!isPaintingRef.current || !activeVoiceId) {
         return;
       }
@@ -390,12 +408,18 @@ export function PianoRoll({
     const dragStart = dragStartRef.current;
     if (!dragStart) {
       const point = pointFromEvent(event);
-      const note = hitTestPianoRollNote(point, interactionProject, viewport);
+      const note =
+        viewMode === "voice-lanes"
+          ? hitTestVoiceLaneNote(point, interactionProject, viewport)
+          : hitTestPianoRollNote(point, interactionProject, viewport);
       setHoveredNote(note ? { note, point } : null);
       return;
     }
 
     const point = pointFromEvent(event);
+    if (viewMode === "voice-lanes") {
+      return;
+    }
     const movedPastThreshold =
       Math.abs(point.x - dragStart.point.x) >= MARQUEE_THRESHOLD_PX ||
       Math.abs(point.y - dragStart.point.y) >= MARQUEE_THRESHOLD_PX;
@@ -406,12 +430,12 @@ export function PianoRoll({
   }
 
   function handlePointerUp(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (interactionMode === "range" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
       draggedMarkerIdRef.current = null;
       return;
     }
 
-    if (interactionMode === "paint" && !readOnly) {
+    if (viewMode === "piano" && interactionMode === "paint" && !readOnly) {
       if (isPaintingRef.current) {
         isPaintingRef.current = false;
         const paintedIds = Array.from(paintedNoteIdsRef.current.keys());
@@ -429,6 +453,20 @@ export function PianoRoll({
     }
 
     const point = pointFromEvent(event);
+
+    if (viewMode === "voice-lanes") {
+      const note = hitTestVoiceLaneNote(point, interactionProject, viewport);
+      onSelectionChange(
+        resolveSelection(selectedNoteIds, {
+          type: "click",
+          noteId: note?.id ?? null,
+          additive: dragStart.additive,
+        }),
+      );
+      dragStartRef.current = null;
+      setMarqueeRect(null);
+      return;
+    }
 
     if (marqueeRect) {
       const noteIds = hitTestPianoRollNotesInRect(

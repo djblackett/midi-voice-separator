@@ -14,7 +14,11 @@ import { selectAndImportMidi } from "../features/midi-import/importMidi";
 import { listenForMidiFileDrop } from "../features/midi-import/dropImport";
 import { MidiExportButton } from "../features/midi-export/MidiExportButton";
 import { selectAndExportMidi } from "../features/midi-export/exportMidi";
-import { PianoRoll, type InteractionMode } from "../features/piano-roll/PianoRoll";
+import {
+  PianoRoll,
+  type InteractionMode,
+  type PianoRollViewMode,
+} from "../features/piano-roll/PianoRoll";
 import {
   getBackendStatus,
   importMidi,
@@ -162,6 +166,7 @@ export default function App() {
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
+  const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
@@ -1191,10 +1196,12 @@ export default function App() {
     setExportResult(null);
   }
   function handleTogglePaintMode() {
+    setPianoRollViewMode("piano");
     setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
   }
 
   function handleToggleRangeMode() {
+    setPianoRollViewMode("piano");
     setInteractionMode((mode) => (mode === "range" ? "select" : "range"));
   }
 
@@ -2115,6 +2122,29 @@ export default function App() {
 
       {displayedProject ? (
         <section className="piano-roll-toolbar">
+          <button
+            type="button"
+            className={
+              pianoRollViewMode === "piano" ? "secondary-button active" : "secondary-button"
+            }
+            onClick={() => setPianoRollViewMode("piano")}
+            aria-pressed={pianoRollViewMode === "piano" ? "true" : "false"}
+          >
+            Piano roll
+          </button>
+          <button
+            type="button"
+            className={
+              pianoRollViewMode === "voice-lanes" ? "secondary-button active" : "secondary-button"
+            }
+            onClick={() => {
+              setPianoRollViewMode("voice-lanes");
+              setInteractionMode("select");
+            }}
+            aria-pressed={pianoRollViewMode === "voice-lanes" ? "true" : "false"}
+          >
+            Voice lanes
+          </button>
           <button
             type="button"
             className="secondary-button"
