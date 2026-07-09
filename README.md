@@ -58,7 +58,68 @@ tracks.
   playhead that page-follows during playback, and a minimap that doubles as a seek control.
   Respects the existing voice Solo toggle (only the soloed voice is audible).
 - Export of corrected voice assignments to a new Standard MIDI File (one track per voice).
-- Frontend (Vitest) and Rust (`cargo test`) test suites.
+- Fullscreen editor workspace: a toolbar toggle expands the piano roll to fill the viewport
+  while keeping playback, view, paint, and heatmap controls visible above it.
+- Named editor snapshots: save the current voice assignments/labels/order under a name, plus
+  automatic snapshots on import and before/after each "Re-run separation." Restore is itself
+  an undoable action and explicitly states it also restores which notes are locked for
+  future re-runs; a snapshot's recorded re-run settings (strategy, search mode, max voices)
+  can be applied on request without restoring state.
+- Assignment diff: compare the current voice assignments against any snapshot. The engine
+  matches voices by note overlap (not by id, since a full re-run allocates fresh voice ids)
+  before counting reassignments, added/removed voices, and label changes, so a re-run that
+  merely renames voice ids doesn't read as noise. Confidence-improved/worsened counts show
+  only when both sides used the same separation strategy and search mode, since confidence
+  isn't comparable across them. Changed notes get a colored edge cue directly in the piano
+  roll, with a toggle to show only changed notes.
+- Read-only A/B compare preview: view a past snapshot's assignments rendered in the piano
+  roll without leaving the current session. All editing is disabled while previewing, with a
+  visible banner explaining why; exiting returns to normal editing.
+- Scoped playback: play all notes, just the selection, just the active voice, just the
+  notes changed relative to the comparison target, or a window around the current flagged
+  note — composed with the existing Solo toggle by intersection.
+- Guided flagged-note review panel: steps through low-confidence notes one at a time with
+  assign-to-voice, "Accept & lock" (pins the note to its current voice as a locked
+  correction), and skip, auto-panning the roll to each note and showing review progress.
+- Export readiness summary: an advisory (never blocking) checklist shown before export —
+  unresolved flagged reviews, generic voice labels, empty/tiny voices, same-voice
+  overlapping notes (impossible for a monophonic chiptune voice to play), changed notes not
+  yet locked against the comparison baseline, and a percussion-voice note plus a reminder to
+  manually verify a reimport.
+- Voice lane view: a read-only alternate layout with one horizontal band per voice (instead
+  of one shared pitch axis), for quickly auditing what each voice is doing without notes
+  from other voices visually interleaved. Click a note to select it; editing happens back in
+  the normal piano-roll view.
+- Smart fix suggestions: conservative, advisory correction suggestions — nearby
+  low-confidence clusters, suspicious tiny voices worth merging, and melodic phrases split
+  across two voices — each with a plain-language reason and a one-click action that goes
+  through the normal undoable correction path. Never touches percussion or locked notes.
+- Paint mode with four tools, each with a drawn cursor overlay (the OS cursor is hidden over
+  the roll): **Pencil** repaints exactly the note under the cursor; **Brush** repaints every
+  note inside a resizable round brush swept along the drag (`[`/`]` or Alt+scroll to resize,
+  Alt+drag to erase from the stroke); **Lasso** repaints every note enclosed by a freehand
+  loop; **Wand** floods the whole melodically connected phrase from one click (a "Reach"
+  slider sets the max pitch jump it will cross). Every stroke live-previews before commit and
+  undoes as one step.
+- Smart selection: double-click a note to select its whole vertically stacked chord; a
+  right-click context menu offers "Select chord," "Select phrase" (the wand's flood-fill as
+  a selection instead of a paint), "Keep top/bottom line only" (collapses a multi-chord
+  selection to its melodic skyline or bass line), and "Assign to" voice swatches that act on
+  the whole selection or just the clicked note depending on what's selected.
+- Audition: clicking or painting a note plays a short, quiet blip at its pitch (throttled
+  during a fast brush stroke, silent while transport playback is running), toggleable
+  independently of Play/Pause/Stop.
+- Confidence heatmap: an alternate note-coloring mode (`H` or a toolbar toggle) that recolors
+  every note red-to-green by `assignmentConfidence` instead of by voice, so weak regions of
+  an assignment are visible at a glance instead of only one flagged note at a time.
+- Overlap conflict review: same-voice overlapping notes (which a monophonic chiptune voice
+  can't actually represent) get a red underline cue on the canvas and a "Next overlap"
+  stepper that mirrors flagged-note review, wrapping around the file.
+- Time ruler: drag across the ruler above the piano roll to select every note sounding in
+  that time range regardless of pitch; click it to seek/pan.
+- Frontend (Vitest) and Rust (`cargo test`) test suites, plus a permanent Playwright
+  end-to-end suite (`pnpm test:e2e`) driving the real dev-server bundle against a faked Tauri
+  IPC boundary.
 
 ## Non-capabilities
 
@@ -67,6 +128,16 @@ Playback has no looping or per-voice volume beyond the existing Solo toggle, and
 general soundfont support (the piano sound is a single bundled sample set, not a
 user-selectable soundfont). The current voice assignment is a heuristic, not a
 finished musical separation algorithm.
+
+The A/B compare preview is read-only by design — there is no editable side-B, split-screen
+view, or A/B playback yet. Diffing and snapshots are in-session only: note ids are not
+stable across an export/reimport round trip, so there is no cross-import diff and no
+automated export→reimport verification (a real limitation, not an oversight — it would need
+a content-based note-matching design and likely new Rust support). The diff panel's
+confidence-delta metric is not available across different separation strategies or search
+modes, since confidence measures local decisiveness under one scoring setup, not comparable
+quality across two. Voice lanes are read-only (click-to-select only); the editing tools live
+in the standard piano-roll view.
 
 ## Windows prerequisites
 
@@ -186,32 +257,23 @@ per voice.
 
 ## Next milestone
 
-The correction-UX plan (multi-select, voice management, confidence scoring, review mode,
-paint mode, locked re-run, undo/redo), both items it originally deferred (the
-max-voice-count cap, undoable re-run), piano-roll pan/zoom, MIDI playback, a performance
-validation pass, and pitch-range provenance tracking are all complete — the Rust heuristic
-handles thousands of overlapping notes in well under a millisecond, every frontend interaction
-stayed fast against a synthetic 600-note/6-voice/86-flagged-note project (no real dense
-chiptune `.mid` fixture exists yet to validate against directly), and reapplying pitch ranges
-no longer clobbers hand corrections made since the last apply. The minimap/marquee top-pixel
-interaction gap found during performance validation is also fixed: the minimap now occupies
-its own reserved band above the canvas instead of overlaying its top 6 pixels, so a
-marquee-select drag starting there reaches the canvas instead of the minimap. "Re-run
-separation" also gained a separation-strategy selector (Balanced, Channel priority, Register
-priority, Strict channel), in response to real-world testing showing the single fixed
-heuristic weighting could let a voice drift across several octaves on a dense,
-mostly-single-channel chiptune file — rather than chase one "best" weighting further, the
-fix exposes a few distinct presets to try per file. "Re-run separation" also gained an
-assignment-mode selector (Greedy, Global), after a brute-force oracle confirmed greedy's
-note-at-a-time commitment provably diverges from the true minimum-cost partition in a
-meaningful fraction of cases. Two real, CC0-licensed dense chiptune fixtures
-(`fixtures/boss-battle-6-combined.mid` and `boss-battle-6-separate-tracks.mid`, the same track
-with and without its original per-instrument tracks/channels) now back this permanently:
-`Global` beats `Greedy` on total cost across every strategy on both, confirming the benefit
-holds on real music and not just constructed adversarial cases, and between them they validate
-both ends of the design space (no channel signal at all vs. a reliable one). `Global` initially
-committed fixed, non-overlapping chunks of its lookahead window, which meant a note's foresight
-depended on where it fell relative to a chunk boundary; it now slides one note at a time so
-every note gets the same foresight regardless of position, at roughly 5-6x the search cost
-(still under 155 ms on a synthetic 8,000-note/16-voice worst case). There is no open candidate
-left from this roadmap; the next milestone would start a fresh plan.
+The original correction-UX plan (multi-select, voice management, confidence scoring, review
+mode, paint mode, locked re-run, undo/redo, pan/zoom, playback, separation-strategy and
+search-mode selection, pitch-range provenance) is complete and was validated on two real
+CC0-licensed dense chiptune fixtures alongside synthetic stress tests, confirmed fast at
+every scale tried.
+
+A second plan (snapshots, assignment diff, read-only A/B compare, scoped playback, guided
+review, export readiness, voice lanes, smart fix suggestions) is also complete — see
+"Current capabilities" above. A follow-on pass then added paint mode's pencil/brush/lasso/wand
+tools with a drawn cursor overlay, smart selection (chord/phrase/top-line/bottom-line, a
+right-click context menu), click/paint audition, a confidence heatmap view, overlap-conflict
+review, time-ruler range selection, and a fullscreen editor workspace.
+
+What remains is what earlier plans explicitly deferred rather than left unfinished — see
+"Non-capabilities" above for the reasoning behind each: an editable A/B compare side with
+split-screen and A/B playback; cross-import diffing and automated export→reimport
+verification (blocked by note ids not surviving a round trip — its own plan, needing
+content-based matching); a cost-based cross-strategy quality metric for the diff panel
+(would need a new Rust command); and voice-lane editing parity. Any of these, or a fresh
+idea, would start a new plan.
