@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { MidiNote } from "../../domain/midi/midiProject";
 import { buildTempoMap } from "../../domain/midi/tempoMap";
-import { buildScheduledNotes, waveformForVoice } from "./scheduledNotes";
+import {
+  buildScheduledNotes,
+  filterNotesForPlaybackScope,
+  waveformForVoice,
+} from "./scheduledNotes";
 
 function note(overrides: Partial<MidiNote> = {}): MidiNote {
   return {
@@ -103,5 +107,81 @@ describe("buildScheduledNotes", () => {
     const scheduled = buildScheduledNotes([note({ voiceId: "voice-2" })], tempoMap, 0, null);
 
     expect(scheduled[0].waveform).toBe("triangle");
+  });
+  it("scopes playback to selected notes", () => {
+    const notes = [note({ id: "a" }), note({ id: "b", startTick: 480, endTick: 960 })];
+
+    const scheduled = buildScheduledNotes(notes, tempoMap, 0, null, {
+      type: "selected",
+      noteIds: new Set(["b"]),
+    });
+
+    expect(scheduled.map((scheduledNote) => scheduledNote.id)).toEqual(["b"]);
+  });
+
+  it("scopes playback to the current voice before applying solo", () => {
+    const notes = [
+      note({ id: "a", voiceId: "voice-1" }),
+      note({ id: "b", voiceId: "voice-2" }),
+      note({ id: "c", voiceId: "voice-2" }),
+    ];
+
+    const scheduled = buildScheduledNotes(notes, tempoMap, 0, null, {
+      type: "voice",
+      voiceId: "voice-2",
+    });
+
+    expect(scheduled.map((scheduledNote) => scheduledNote.id)).toEqual(["b", "c"]);
+  });
+
+  it("scopes playback to changed notes", () => {
+    const notes = [note({ id: "a" }), note({ id: "b" })];
+
+    const scheduled = buildScheduledNotes(notes, tempoMap, 0, null, {
+      type: "changed",
+      noteIds: new Set(["a"]),
+    });
+
+    expect(scheduled.map((scheduledNote) => scheduledNote.id)).toEqual(["a"]);
+  });
+
+  it("scopes playback around the current flagged note window", () => {
+    const notes = [
+      note({ id: "before", startTick: 0, endTick: 120 }),
+      note({ id: "anchor", startTick: 480, endTick: 600 }),
+      note({ id: "near", startTick: 700, endTick: 820 }),
+      note({ id: "after", startTick: 1200, endTick: 1320 }),
+    ];
+
+    const scheduled = buildScheduledNotes(notes, tempoMap, 0, null, {
+      type: "around-note",
+      noteId: "anchor",
+      beforeTicks: 120,
+      afterTicks: 240,
+    });
+
+    expect(scheduled.map((scheduledNote) => scheduledNote.id)).toEqual(["anchor", "near"]);
+  });
+
+  it("reports when solo removes every note from the selected scope", () => {
+    const notes = [note({ id: "a", voiceId: "voice-1" })];
+
+    const result = filterNotesForPlaybackScope(notes, 0, "voice-2", {
+      type: "selected",
+      noteIds: new Set(["a"]),
+    });
+
+    expect(result.notes).toHaveLength(0);
+    expect(result.scopeMatchedCount).toBe(1);
+    expect(result.emptyReason).toBe("No notes in scope for soloed voice.");
+  });
+
+  it("reports when the selected scope itself has no active notes", () => {
+    const result = filterNotesForPlaybackScope([note({ id: "a" })], 0, null, {
+      type: "selected",
+      noteIds: new Set(["missing"]),
+    });
+
+    expect(result.emptyReason).toBe("No notes in playback scope.");
   });
 });

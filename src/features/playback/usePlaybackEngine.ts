@@ -7,7 +7,11 @@ import {
   type TempoMap,
 } from "../../domain/midi/tempoMap";
 import { PlaybackEngine, type Instrument } from "./playbackEngine";
-import { buildScheduledNotes } from "./scheduledNotes";
+import {
+  buildScheduledNotes,
+  filterNotesForPlaybackScope,
+  type PlaybackScope,
+} from "./scheduledNotes";
 
 const PLAYHEAD_UPDATE_INTERVAL_MS = 50; // ~20fps, enough to look smooth without flooding re-renders
 
@@ -18,12 +22,14 @@ export interface PlaybackControls {
   pause: () => void;
   stop: () => void;
   seek: (tick: number) => void;
+  blockedReason: string | null;
 }
 
 export function usePlaybackEngine(
   project: MidiProject | null,
   soloVoiceId: string | null,
   instrument: Instrument = "chiptune",
+  playbackScope: PlaybackScope = { type: "all" },
 ): PlaybackControls {
   const engineRef = useRef<PlaybackEngine | null>(null);
   const tempoMapRef = useRef<TempoMap | null>(null);
@@ -33,6 +39,7 @@ export function usePlaybackEngine(
   const playRequestIdRef = useRef(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTick, setCurrentTick] = useState(0);
+  const [blockedReason, setBlockedReason] = useState<string | null>(null);
 
   function getEngine(): PlaybackEngine {
     if (!engineRef.current) {
@@ -73,7 +80,25 @@ export function usePlaybackEngine(
       return;
     }
 
-    const scheduledNotes = buildScheduledNotes(project.notes, tempoMap, tick, soloVoiceId);
+    const scopeResult = filterNotesForPlaybackScope(
+      project.notes,
+      tick,
+      soloVoiceId,
+      playbackScope,
+    );
+    if (scopeResult.emptyReason) {
+      setBlockedReason(scopeResult.emptyReason);
+      setIsPlaying(false);
+      return;
+    }
+    const scheduledNotes = buildScheduledNotes(
+      project.notes,
+      tempoMap,
+      tick,
+      soloVoiceId,
+      playbackScope,
+    );
+    setBlockedReason(null);
     engine.play(scheduledNotes, instrument);
 
     playStartedAtTickRef.current = tick;
@@ -109,6 +134,7 @@ export function usePlaybackEngine(
     getEngine().stop();
     stopTickPolling();
     setIsPlaying(false);
+    setBlockedReason(null);
   }
 
   function stop() {
@@ -116,6 +142,7 @@ export function usePlaybackEngine(
     getEngine().stop();
     stopTickPolling();
     setIsPlaying(false);
+    setBlockedReason(null);
     setCurrentTick(0);
   }
 
@@ -128,12 +155,16 @@ export function usePlaybackEngine(
     }
   }
 
+  useEffect(() => {
+    setBlockedReason(null);
+  }, [playbackScope, soloVoiceId]);
   // Reset to a stopped state whenever a new project is loaded.
   useEffect(() => {
     playRequestIdRef.current++;
     getEngine().stop();
     stopTickPolling();
     setIsPlaying(false);
+    setBlockedReason(null);
     setCurrentTick(0);
   }, [project?.fileName, project?.durationTicks]);
 
@@ -157,5 +188,5 @@ export function usePlaybackEngine(
     };
   }, []);
 
-  return { isPlaying, currentTick, play, pause, stop, seek };
+  return { isPlaying, currentTick, play, pause, stop, seek, blockedReason };
 }

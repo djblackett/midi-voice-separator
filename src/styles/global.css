@@ -861,6 +861,28 @@ kbd {
   font-size: 13px;
 }
 
+.playback-scope-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.playback-scope-select {
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #e5e7eb;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+.playback-scope-message {
+  color: #fde68a;
+  font-size: 13px;
+}
 .playback-time {
   color: #cbd5e1;
   font-size: 13px;

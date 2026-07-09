@@ -99,6 +99,7 @@ import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
 import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
+import type { PlaybackScope } from "../features/playback/scheduledNotes";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -123,6 +124,10 @@ function toAppCommandError(commandError: unknown): AppCommandError {
     ? { code: commandError.code, message: commandError.message }
     : { code: "UNKNOWN_ERROR", message: getErrorMessage(commandError) };
 }
+
+type PlaybackScopeMode = "all" | "selected" | "voice" | "changed" | "flagged";
+
+const FLAGGED_PLAYBACK_WINDOW_TICKS = 960;
 
 function parseMaxVoiceCount(input: string): number | undefined {
   const parsed = Number.parseInt(input, 10);
@@ -154,6 +159,7 @@ export default function App() {
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
   const [isDragOver, setIsDragOver] = useState(false);
   const [instrument, setInstrument] = useState<Instrument>("chiptune");
+  const [playbackScopeMode, setPlaybackScopeMode] = useState<PlaybackScopeMode>("all");
   const [namedSnapshots, setNamedSnapshots] = useState<NamedSnapshot[]>([]);
   const [snapshotNameDraft, setSnapshotNameDraft] = useState("");
   const [diffTargetId, setDiffTargetId] = useState("");
@@ -327,6 +333,47 @@ export default function App() {
     compareState?.viewing === "B"
       ? mapSoloVoiceForPreview(soloVoiceId, comparePreview.matching)
       : soloVoiceId;
+  const flaggedNoteIdSet = useMemo(
+    () => new Set(flaggedNotes.map((note) => note.id)),
+    [flaggedNotes],
+  );
+  const currentFlaggedNoteId =
+    selectedNote && flaggedNoteIdSet.has(selectedNote.id) ? selectedNote.id : null;
+  const playbackChangedNoteIds = useMemo(() => {
+    if (!assignmentDiffResult || !assignmentDiffResult.comparable) {
+      return new Set<string>();
+    }
+    return new Set(assignmentDiffResult.changedNoteIds);
+  }, [assignmentDiffResult]);
+  const canUseChangedPlaybackScope = playbackChangedNoteIds.size > 0;
+  const canUseVoicePlaybackScope = activeVoiceId !== null;
+  const canUseFlaggedPlaybackScope = currentFlaggedNoteId !== null;
+  const playbackScope = useMemo<PlaybackScope>(() => {
+    switch (playbackScopeMode) {
+      case "selected":
+        return { type: "selected", noteIds: selectedNoteIds };
+      case "voice":
+        return { type: "voice", voiceId: activeVoiceId };
+      case "changed":
+        return { type: "changed", noteIds: playbackChangedNoteIds };
+      case "flagged":
+        return {
+          type: "around-note",
+          noteId: currentFlaggedNoteId,
+          beforeTicks: FLAGGED_PLAYBACK_WINDOW_TICKS,
+          afterTicks: FLAGGED_PLAYBACK_WINDOW_TICKS,
+        };
+      case "all":
+      default:
+        return { type: "all" };
+    }
+  }, [
+    playbackScopeMode,
+    selectedNoteIds,
+    activeVoiceId,
+    playbackChangedNoteIds,
+    currentFlaggedNoteId,
+  ]);
   const pianoRollVoiceDescriptions = useMemo(() => {
     const descriptions = new Map<string, string>();
     if (compareState?.viewing !== "B" || !comparePreview.matching || !displayedProject) {
@@ -348,7 +395,7 @@ export default function App() {
     }
     return descriptions;
   }, [compareState, comparePreview.matching, displayedProject, pianoRollProject]);
-  const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument);
+  const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument, playbackScope);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
     [displayedProject],
@@ -356,6 +403,20 @@ export default function App() {
   const playbackCurrentSeconds = tickToSeconds(tempoMap, playback.currentTick);
   const playbackDurationSeconds = tickToSeconds(tempoMap, displayedProject?.durationTicks ?? 0);
 
+  useEffect(() => {
+    if (playbackScopeMode === "changed" && !canUseChangedPlaybackScope) {
+      setPlaybackScopeMode("all");
+    } else if (playbackScopeMode === "voice" && !canUseVoicePlaybackScope) {
+      setPlaybackScopeMode("all");
+    } else if (playbackScopeMode === "flagged" && !canUseFlaggedPlaybackScope) {
+      setPlaybackScopeMode("all");
+    }
+  }, [
+    playbackScopeMode,
+    canUseChangedPlaybackScope,
+    canUseVoicePlaybackScope,
+    canUseFlaggedPlaybackScope,
+  ]);
   useEffect(() => {
     void getBackendStatus()
       .then((backendStatus) =>
@@ -1890,6 +1951,42 @@ export default function App() {
             {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
             {formatPlaybackTime(playbackDurationSeconds)}
           </span>
+          <label
+            className="playback-scope-label"
+            title={
+              !canUseChangedPlaybackScope
+                ? "Changed notes scope requires a comparable diff with changed notes."
+                : !canUseFlaggedPlaybackScope
+                  ? "Select a flagged note to enable that scope."
+                  : undefined
+            }
+          >
+            Scope
+            <select
+              className="playback-scope-select"
+              value={playbackScopeMode}
+              onChange={(event) => setPlaybackScopeMode(event.target.value as PlaybackScopeMode)}
+              aria-label="Playback scope"
+              disabled={isCompareReadOnly}
+            >
+              <option value="all">All notes</option>
+              <option value="selected">Selected notes</option>
+              <option value="voice" disabled={!canUseVoicePlaybackScope}>
+                Current voice
+              </option>
+              <option value="changed" disabled={!canUseChangedPlaybackScope}>
+                Changed notes
+              </option>
+              <option value="flagged" disabled={!canUseFlaggedPlaybackScope}>
+                Around flagged note
+              </option>
+            </select>
+          </label>
+          {playback.blockedReason ? (
+            <span className="playback-scope-message" role="status">
+              {playback.blockedReason}
+            </span>
+          ) : null}
           <button
             type="button"
             className={interactionMode === "paint" ? "secondary-button active" : "secondary-button"}

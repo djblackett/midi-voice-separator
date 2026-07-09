@@ -21,8 +21,74 @@ export interface ScheduledNote {
   waveform: Waveform;
 }
 
+export type PlaybackScope =
+  | { type: "all" }
+  | { type: "selected"; noteIds: ReadonlySet<string> }
+  | { type: "voice"; voiceId: string | null }
+  | { type: "changed"; noteIds: ReadonlySet<string> }
+  | { type: "around-note"; noteId: string | null; beforeTicks: number; afterTicks: number };
+
+export interface PlaybackScopeFilterResult {
+  notes: readonly MidiNote[];
+  scopeMatchedCount: number;
+  emptyReason: string | null;
+}
+
 export function waveformForVoice(voiceId: string): Waveform {
   return WAVEFORMS[voiceColorIndex(voiceId) % WAVEFORMS.length];
+}
+
+function noteIsInScope(
+  note: MidiNote,
+  allNotes: readonly MidiNote[],
+  scope: PlaybackScope,
+): boolean {
+  switch (scope.type) {
+    case "all":
+      return true;
+    case "selected":
+    case "changed":
+      return scope.noteIds.has(note.id);
+    case "voice":
+      return scope.voiceId !== null && note.voiceId === scope.voiceId;
+    case "around-note": {
+      if (!scope.noteId) {
+        return false;
+      }
+      const anchor = allNotes.find((candidate) => candidate.id === scope.noteId);
+      if (!anchor) {
+        return false;
+      }
+      const windowStart = Math.max(0, anchor.startTick - scope.beforeTicks);
+      const windowEnd = anchor.endTick + scope.afterTicks;
+      return note.endTick > windowStart && note.startTick < windowEnd;
+    }
+  }
+}
+
+export function filterNotesForPlaybackScope(
+  notes: readonly MidiNote[],
+  startTick: number,
+  soloVoiceId: string | null,
+  scope: PlaybackScope = { type: "all" },
+): PlaybackScopeFilterResult {
+  const activeNotes = notes.filter((note) => note.endTick > startTick);
+  const scopedNotes = activeNotes.filter((note) => noteIsInScope(note, notes, scope));
+  const filteredNotes =
+    soloVoiceId === null ? scopedNotes : scopedNotes.filter((note) => note.voiceId === soloVoiceId);
+
+  let emptyReason: string | null = null;
+  if (scopedNotes.length === 0 && scope.type !== "all") {
+    emptyReason = "No notes in playback scope.";
+  } else if (filteredNotes.length === 0 && soloVoiceId !== null) {
+    emptyReason = "No notes in scope for soloed voice.";
+  }
+
+  return {
+    notes: filteredNotes,
+    scopeMatchedCount: scopedNotes.length,
+    emptyReason,
+  };
 }
 
 /**
@@ -36,17 +102,12 @@ export function buildScheduledNotes(
   tempoMap: TempoMap,
   startTick: number,
   soloVoiceId: string | null,
+  scope: PlaybackScope = { type: "all" },
 ): ScheduledNote[] {
   const scheduled: ScheduledNote[] = [];
+  const { notes: scopedNotes } = filterNotesForPlaybackScope(notes, startTick, soloVoiceId, scope);
 
-  for (const note of notes) {
-    if (note.endTick <= startTick) {
-      continue;
-    }
-    if (soloVoiceId !== null && note.voiceId !== soloVoiceId) {
-      continue;
-    }
-
+  for (const note of scopedNotes) {
     // A note already in progress at the resume point starts immediately
     // with its remaining duration, rather than being skipped or starting
     // late at its original tick.
