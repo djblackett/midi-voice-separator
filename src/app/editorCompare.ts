@@ -6,6 +6,7 @@ import {
   type VoiceMatching,
 } from "../domain/midi/assignmentDiff";
 import type { VoiceOverrides } from "../domain/midi/voiceAssignments";
+import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import type { EditorSnapshot } from "./editorHistory";
 import type { NamedSnapshot } from "./editorSnapshots";
 
@@ -49,14 +50,7 @@ export function updateCompareViewing(
 }
 
 export function materializeSnapshotProject(snapshot: NamedSnapshot | null): MidiProject | null {
-  if (!snapshot || !snapshot.state.project) {
-    return null;
-  }
-  const side = toDiffSide(snapshot.state, snapshot.rerunSettings);
-  if (!side) {
-    return null;
-  }
-  return { ...snapshot.state.project, notes: [...side.notes], voices: [...side.voices] };
+  return snapshot ? materializeEditorProject(snapshot.state) : null;
 }
 
 export function buildComparePreview(

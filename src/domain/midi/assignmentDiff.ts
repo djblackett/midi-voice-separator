@@ -1,8 +1,9 @@
 import type { MidiNote, MidiProject, MidiVoice, SeparationStrategy } from "./midiProject";
 import { LOW_CONFIDENCE_THRESHOLD } from "./midiProject";
 import type { VoiceOverrides } from "./voiceAssignments";
-import { applyVoiceOverrides, materializeAssignments } from "./voiceAssignments";
-import { buildVoiceList, PERCUSSION_VOICE_ID } from "./voiceManagement";
+import { materializeAssignments } from "./voiceAssignments";
+import { PERCUSSION_VOICE_ID } from "./voiceManagement";
+import { materializeEditorProject } from "./editorMaterialization";
 
 /**
  * Structurally matches `RerunSettings` in `src/app/editorSnapshots.ts`
@@ -47,16 +48,18 @@ export function toDiffSide(
   editorState: DiffEditorState,
   rerunSettings: DiffRerunSettings,
 ): DiffSide | null {
-  const { project, voiceOverrides, voiceOrder, voiceLabels } = editorState;
+  const { project, voiceOverrides } = editorState;
   if (!project) {
     return null;
   }
-
-  const withOverrides = applyVoiceOverrides(project, voiceOverrides);
+  const materialized = materializeEditorProject(editorState);
+  if (!materialized) {
+    return null;
+  }
 
   return {
-    notes: withOverrides.notes,
-    voices: buildVoiceList(voiceOrder, voiceLabels, withOverrides.notes),
+    notes: materialized.notes,
+    voices: materialized.voices,
     assignments: materializeAssignments(project, voiceOverrides),
     lockedNoteIds: new Set(Object.keys(voiceOverrides)),
     rerunSettings,

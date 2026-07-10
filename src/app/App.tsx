@@ -43,13 +43,9 @@ import {
   type ExportMidiResult,
   type SeparationStrategy,
 } from "../lib/tauri/commands";
+import { voiceIdForNumber, type VoiceOverrides } from "../domain/midi/voiceAssignments";
+import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import {
-  applyVoiceOverrides,
-  voiceIdForNumber,
-  type VoiceOverrides,
-} from "../domain/midi/voiceAssignments";
-import {
-  buildVoiceList,
   mergeVoiceOverrides,
   nextVoiceId,
   reconcileVoiceOrderAfterReassign,
@@ -213,16 +209,10 @@ export default function App() {
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<CompareState | null>(null);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
-  const displayedProject = useMemo(() => {
-    if (!project) {
-      return null;
-    }
-    const withOverrides = applyVoiceOverrides(project, voiceOverrides);
-    return {
-      ...withOverrides,
-      voices: buildVoiceList(voiceOrder, voiceLabels, withOverrides.notes),
-    };
-  }, [project, voiceOverrides, voiceOrder, voiceLabels]);
+  const displayedProject = useMemo(
+    () => materializeEditorProject({ project, voiceOverrides, voiceOrder, voiceLabels }),
+    [project, voiceOverrides, voiceOrder, voiceLabels],
+  );
   const selectedNotes = useMemo(
     () => displayedProject?.notes.filter((note) => selectedNoteIds.has(note.id)) ?? [],
     [displayedProject, selectedNoteIds],
