@@ -78,7 +78,6 @@ import {
   findVoiceConflicts,
 } from "../domain/midi/voiceConflicts";
 import {
-  applyRangePatchPreservingHandCorrections,
   buildDefaultPitchMarkers,
   buildDefaultVoiceRangeRules,
   buildVoiceOverridesFromRangeRules,
@@ -86,13 +85,7 @@ import {
   describePitchRangeRule,
   type PitchMarker,
 } from "../domain/midi/rangeRules";
-import {
-  createEditorHistory,
-  pushHistory,
-  redoHistory,
-  undoHistory,
-  type EditorHistoryState,
-} from "./editorHistory";
+import { createEditorHistory, pushHistory, type EditorHistoryState } from "./editorHistory";
 import type { EditorDocument } from "./editor/editorDocument";
 import { useEditorBranch } from "./editor/useEditorBranch";
 import {
@@ -244,7 +237,11 @@ export default function App() {
     },
     [],
   );
-  const { dispatch: dispatchEditorCommand } = useEditorBranch({
+  const {
+    dispatch: dispatchEditorCommand,
+    undo: undoEditorBranch,
+    redo: redoEditorBranch,
+  } = useEditorBranch({
     document: editorDocument,
     history,
     onCommit: applyEditorBranchCommit,
@@ -909,44 +906,18 @@ export default function App() {
   }
 
   function handleUndo() {
-    const result = undoHistory(history, {
-      project,
-      voiceOverrides,
-      voiceOrder,
-      voiceLabels,
-      rangeAssignedNoteIds,
-    });
-    if (!result) {
+    if (!undoEditorBranch()) {
       return;
     }
-    setHistory(result.history);
-    setProject(result.snapshot.project);
     setSkippedReviewNoteIds(new Set());
-    setVoiceOverrides(result.snapshot.voiceOverrides);
-    setVoiceOrder(result.snapshot.voiceOrder);
-    setVoiceLabels(result.snapshot.voiceLabels);
-    setRangeAssignedNoteIds(result.snapshot.rangeAssignedNoteIds);
     setExportResult(null);
   }
 
   function handleRedo() {
-    const result = redoHistory(history, {
-      project,
-      voiceOverrides,
-      voiceOrder,
-      voiceLabels,
-      rangeAssignedNoteIds,
-    });
-    if (!result) {
+    if (!redoEditorBranch()) {
       return;
     }
-    setHistory(result.history);
-    setProject(result.snapshot.project);
     setSkippedReviewNoteIds(new Set());
-    setVoiceOverrides(result.snapshot.voiceOverrides);
-    setVoiceOrder(result.snapshot.voiceOrder);
-    setVoiceLabels(result.snapshot.voiceLabels);
-    setRangeAssignedNoteIds(result.snapshot.rangeAssignedNoteIds);
     setExportResult(null);
   }
 
@@ -974,18 +945,15 @@ export default function App() {
   }
 
   // Restoring rewrites voiceOverrides, which doubles as the lock set the
-  // next "Re-run separation" honors -- see editorSnapshots.ts C4. Goes
-  // through pushHistorySnapshot() first so it is itself a normal undoable
-  // action, same as every other mutating handler in this file.
+  // next "Re-run separation" honors -- see editorSnapshots.ts C4. The
+  // whole restore travels through one undoable editor transaction.
   function handleRestoreSnapshot(snapshot: NamedSnapshot) {
-    pushHistorySnapshot();
     const restored = restoreEditorState(snapshot);
-    setProject(restored.project);
+    dispatchEditorCommand({
+      kind: "restoreDocument",
+      document: { ...editorDocument, ...restored },
+    });
     setSkippedReviewNoteIds(new Set());
-    setVoiceOverrides(restored.voiceOverrides);
-    setVoiceOrder(restored.voiceOrder);
-    setVoiceLabels(restored.voiceLabels);
-    setRangeAssignedNoteIds(restored.rangeAssignedNoteIds);
     setSelectedNoteIds(new Set());
     setExportResult(null);
     setCompareState(null);
@@ -1143,12 +1111,10 @@ export default function App() {
       return;
     }
 
-    const { overrides, rangeAssignedNoteIds: nextRangeAssignedNoteIds } =
-      applyRangePatchPreservingHandCorrections(voiceOverrides, rangeAssignedNoteIds, rangePatch);
-
-    pushHistorySnapshot();
-    setVoiceOverrides(overrides);
-    setRangeAssignedNoteIds(nextRangeAssignedNoteIds);
+    dispatchEditorCommand({
+      kind: "applyRangeAssignments",
+      assignments: new Map(Object.entries(rangePatch)),
+    });
     setSelectedNoteIds(new Set(Object.keys(rangePatch)));
     setExportResult(null);
   }
