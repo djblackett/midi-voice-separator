@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MidiNote, MidiProject } from "../domain/midi/midiProject";
 import {
   formatMidiChannel,
@@ -95,6 +95,8 @@ import {
   undoHistory,
   type EditorHistoryState,
 } from "./editorHistory";
+import type { EditorDocument } from "./editor/editorDocument";
+import { useEditorBranch } from "./editor/useEditorBranch";
 import {
   appendSnapshot,
   createNamedSnapshot,
@@ -212,6 +214,43 @@ export default function App() {
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<CompareState | null>(null);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
+  const editorRevision = useRef(0);
+  const editorDocument = useMemo<EditorDocument>(
+    () => ({
+      documentId: "A",
+      revision: editorRevision.current,
+      project,
+      voiceOverrides,
+      voiceOrder,
+      voiceLabels,
+      rangeAssignedNoteIds,
+      assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
+    }),
+    [project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds],
+  );
+  const applyEditorBranchCommit = useCallback(
+    ({
+      document: nextDocument,
+      history: nextHistory,
+    }: {
+      document: EditorDocument;
+      history: EditorHistoryState;
+    }) => {
+      editorRevision.current = nextDocument.revision;
+      setProject(nextDocument.project);
+      setVoiceOverrides(nextDocument.voiceOverrides);
+      setVoiceOrder([...nextDocument.voiceOrder]);
+      setVoiceLabels({ ...nextDocument.voiceLabels });
+      setRangeAssignedNoteIds(new Set(nextDocument.rangeAssignedNoteIds));
+      setHistory(nextHistory);
+    },
+    [],
+  );
+  const { dispatch: dispatchEditorCommand } = useEditorBranch({
+    document: editorDocument,
+    history,
+    onCommit: applyEditorBranchCommit,
+  });
   const displayedProject = useMemo(
     () => materializeEditorProject({ project, voiceOverrides, voiceOrder, voiceLabels }),
     [project, voiceOverrides, voiceOrder, voiceLabels],
@@ -620,20 +659,10 @@ export default function App() {
         return;
       }
 
-      pushHistorySnapshot();
-      setVoiceOverrides((currentOverrides) => {
-        const nextOverrides = { ...currentOverrides };
-        for (const noteId of selectedNoteIds) {
-          nextOverrides[noteId] = targetVoiceId;
-        }
-        return nextOverrides;
-      });
-      setRangeAssignedNoteIds((current) => {
-        const next = new Set(current);
-        for (const noteId of selectedNoteIds) {
-          next.delete(noteId);
-        }
-        return next;
+      dispatchEditorCommand({
+        kind: "assignNotes",
+        noteIds: Array.from(selectedNoteIds),
+        voiceId: targetVoiceId,
       });
       setExportResult(null);
     }
@@ -652,6 +681,7 @@ export default function App() {
     voiceOrder,
     voiceLabels,
     isCompareReadOnly,
+    dispatchEditorCommand,
   ]);
 
   useEffect(() => {
@@ -1099,21 +1129,7 @@ export default function App() {
   }
 
   function applyNoteReassignment(noteIds: string[], voiceId: string) {
-    pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => {
-      const nextOverrides = { ...currentOverrides };
-      for (const noteId of noteIds) {
-        nextOverrides[noteId] = voiceId;
-      }
-      return nextOverrides;
-    });
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of noteIds) {
-        next.delete(noteId);
-      }
-      return next;
-    });
+    dispatchEditorCommand({ kind: "assignNotes", noteIds, voiceId });
     setExportResult(null);
   }
 
@@ -1121,7 +1137,8 @@ export default function App() {
     if (!activeVoiceId) {
       return;
     }
-    applyNoteReassignment(noteIds, activeVoiceId);
+    dispatchEditorCommand({ kind: "paintNotes", noteIds, voiceId: activeVoiceId });
+    setExportResult(null);
   }
 
   /** Context-menu "Assign to" — same reassignment path, explicit voice. */
