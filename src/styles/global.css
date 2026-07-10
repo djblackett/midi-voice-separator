@@ -797,6 +797,128 @@ button {
   font-weight: 700;
 }
 
+.assignment-metric {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #334155;
+}
+
+.assignment-metric-heading,
+.assignment-metric-sides {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assignment-metric-heading {
+  align-items: flex-start;
+}
+
+.assignment-metric-heading h3,
+.assignment-metric-heading p {
+  margin: 0;
+}
+
+.assignment-metric-heading h3 {
+  color: #e2e8f0;
+  font-size: 15px;
+}
+
+.assignment-metric-heading p,
+.assignment-metric-heading > span,
+.assignment-metric-status,
+.assignment-metric-side > span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.assignment-metric-heading p {
+  margin-top: 3px;
+}
+
+.assignment-metric-heading > span {
+  flex-shrink: 0;
+}
+
+.assignment-metric-sides {
+  margin-top: 10px;
+}
+
+.assignment-metric-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+}
+
+.assignment-metric-side strong,
+.assignment-metric-total {
+  color: #e2e8f0;
+}
+
+.assignment-metric-total {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.assignment-metric-status,
+.assignment-metric-outcome,
+.assignment-metric-warning,
+.assignment-metric-error {
+  margin: 9px 0 0;
+  font-size: 13px;
+}
+
+.assignment-metric-outcome {
+  color: #a7f3d0;
+}
+
+.assignment-metric-warning {
+  color: #fde68a;
+}
+
+.assignment-metric-error {
+  color: #fca5a5;
+}
+
+.assignment-metric .secondary-button {
+  margin-top: 8px;
+}
+
+.assignment-metric-components {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.assignment-metric-components caption {
+  color: #94a3b8;
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.assignment-metric-components th,
+.assignment-metric-components td {
+  padding: 4px 6px;
+  border-top: 1px solid #334155;
+  text-align: right;
+}
+
+.assignment-metric-components th:first-child {
+  text-align: left;
+}
+
+@media (max-width: 680px) {
+  .assignment-metric-sides {
+    flex-direction: column;
+  }
+}
+
 .diff-visual-controls {
   display: flex;
   align-items: center;

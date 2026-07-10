@@ -110,6 +110,7 @@ import {
   editorSnapshotFromCurrent,
   isEditingDisabledForCompare,
   mapSoloVoiceForPreview,
+  materializeSnapshotProject,
   updateCompareViewing,
   type CompareState,
   type CompareViewing,
@@ -135,6 +136,8 @@ import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
 import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
 import type { PlaybackScope } from "../features/playback/scheduledNotes";
+import { AssignmentMetricPanel } from "../features/assignment-metric/AssignmentMetricPanel";
+import { useAssignmentMetricComparison } from "../features/assignment-metric/useAssignmentMetricComparison";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -312,6 +315,14 @@ export default function App() {
   const mostRecentSnapshot =
     namedSnapshots.length > 0 ? namedSnapshots[namedSnapshots.length - 1] : undefined;
   const diffTarget = namedSnapshots.find((entry) => entry.id === diffTargetId) ?? null;
+  const assignmentMetricTargetProject = useMemo(
+    () => materializeSnapshotProject(diffTarget),
+    [diffTarget],
+  );
+  const assignmentMetric = useAssignmentMetricComparison(
+    assignmentMetricTargetProject,
+    displayedProject,
+  );
   // Diffs the selected snapshot (the reference/"before" side) against the
   // live current state ("after"), never a raw project or override map
   // alone (C6) -- toDiffSide reconstructs the same displayed composition
@@ -2074,6 +2085,11 @@ export default function App() {
                   {formatOnlyInOneSideSummary(assignmentDiffResult)}
                 </p>
               ) : null}
+              <AssignmentMetricPanel
+                state={assignmentMetric.state}
+                targetLabel={diffTarget?.name ?? "Target"}
+                onRetry={assignmentMetric.retry}
+              />
               <div className="diff-visual-controls" aria-label="Piano-roll change display">
                 <label>
                   <input

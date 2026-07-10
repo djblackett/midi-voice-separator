@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
 import type { MidiNote, MidiProject, MidiVoice } from "../../src/domain/midi/midiProject";
+import type {
+  AssignmentEvaluationRequest,
+  AssignmentMetricComponent,
+  AssignmentMetricReport,
+} from "../../src/domain/midi/assignmentMetric";
 
 /**
  * Fakes the Tauri IPC boundary so Playwright can drive the real frontend
@@ -32,6 +37,10 @@ export interface TauriMockOptions {
   importedProject: MidiProject;
   /** Called for the "Re-run separation" command; defaults to a no-op (returns the project unchanged). */
   reassign?: (args: ReassignArgs) => MidiProject;
+  /** Called for the derived assignment-cost command; defaults to a deterministic minimal report. */
+  evaluateAssignment?: (
+    request: AssignmentEvaluationRequest,
+  ) => AssignmentMetricReport | Promise<AssignmentMetricReport>;
   importPath?: string;
   exportPath?: string;
   /** When set, `import_midi` rejects with this instead of resolving `importedProject`. */
@@ -48,6 +57,11 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
 
   await page.exposeFunction("__fakeReassign", (args: ReassignArgs) =>
     options.reassign ? options.reassign(args) : args.project,
+  );
+  await page.exposeFunction("__fakeEvaluateAssignment", (request: AssignmentEvaluationRequest) =>
+    options.evaluateAssignment
+      ? options.evaluateAssignment(request)
+      : buildAssignmentMetricReport(request),
   );
 
   await page.addInitScript(
@@ -107,6 +121,13 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
               window as unknown as { __fakeReassign: (a: unknown) => Promise<unknown> }
             ).__fakeReassign(args);
           }
+          if (cmd === "evaluate_assignment") {
+            return (
+              window as unknown as {
+                __fakeEvaluateAssignment: (request: unknown) => Promise<unknown>;
+              }
+            ).__fakeEvaluateAssignment((args as { request: unknown }).request);
+          }
           throw new Error(`Unhandled fake invoke: ${cmd}`);
         },
       };
@@ -120,6 +141,43 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
       reassignError: options.reassignError,
     },
   );
+}
+
+const COMPONENT_IDS: AssignmentMetricComponent["id"][] = [
+  "VOICE_COMPLEXITY",
+  "PITCH_MOTION",
+  "REGISTER_EXPANSION",
+  "SILENCE_GAP",
+  "CHANNEL_SWITCH",
+  "VOICE_CROSSING",
+];
+
+export function buildAssignmentMetricReport(
+  request: AssignmentEvaluationRequest,
+  overrides: Partial<AssignmentMetricReport> = {},
+): AssignmentMetricReport {
+  const melodicNotes = request.notes.filter((note) => note.channel !== 9);
+  const melodicVoiceCount = new Set(
+    melodicNotes.map((note) => note.voiceId).filter((voiceId) => voiceId.trim() !== ""),
+  ).size;
+  const totalCost = melodicVoiceCount * 12;
+  return {
+    metric: { id: "ASSIGNMENT_MODEL_COST", version: 1 },
+    profile: request.profile,
+    melodicNoteCount: melodicNotes.length,
+    excludedPercussionNoteCount: request.notes.length - melodicNotes.length,
+    melodicVoiceCount,
+    components: COMPONENT_IDS.map((id) => ({
+      id,
+      rawValue: id === "VOICE_COMPLEXITY" ? melodicVoiceCount : 0,
+      unit: id === "VOICE_COMPLEXITY" ? "VOICES" : "TRANSITIONS",
+      weight: id === "VOICE_COMPLEXITY" ? 12 : 0,
+      cost: id === "VOICE_COMPLEXITY" ? totalCost : 0,
+    })),
+    totalCost,
+    hardViolations: [],
+    ...overrides,
+  };
 }
 
 export function note(
