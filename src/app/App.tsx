@@ -2117,39 +2117,10 @@ export default function App() {
               </div>
               <div className="compare-controls" aria-label="A/B compare preview controls">
                 {compareState ? (
-                  <>
-                    <div className="compare-view-toggle" role="group" aria-label="Compare view">
-                      {(["A", "B", "diff"] as const).map((viewing) => (
-                        <button
-                          key={viewing}
-                          type="button"
-                          className={
-                            compareState.viewing === viewing
-                              ? "secondary-button active"
-                              : "secondary-button"
-                          }
-                          onClick={() => handleSetCompareViewing(viewing)}
-                          aria-pressed={compareState.viewing === viewing ? "true" : "false"}
-                        >
-                          {viewing === "A"
-                            ? "A: Current"
-                            : viewing === "B"
-                              ? "B: Snapshot"
-                              : "Diff"}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={handleRestoreCompareTarget}
-                    >
-                      Restore B
-                    </button>
-                    <button type="button" className="secondary-button" onClick={handleExitCompare}>
-                      Exit compare
-                    </button>
-                  </>
+                  <p className="compare-active-hint">
+                    A/B compare active — use the A / B / Diff toggle above the piano roll to switch
+                    views.
+                  </p>
                 ) : (
                   <button
                     type="button"
@@ -2303,8 +2274,16 @@ export default function App() {
           )}
         </section>
       ) : null}
-      {isCompareReadOnly ? (
-        <section className="compare-readonly-banner" aria-live="polite">
+      {compareState ? (
+        <section
+          className={
+            isCompareReadOnly
+              ? "compare-readonly-banner"
+              : "compare-readonly-banner compare-readonly-banner-placeholder"
+          }
+          aria-live="polite"
+          aria-hidden={isCompareReadOnly ? undefined : "true"}
+        >
           Read-only preview: editing is disabled while viewing the snapshot or diff. Exit compare or
           restore B to edit.
         </section>
@@ -2318,6 +2297,37 @@ export default function App() {
       >
         {displayedProject ? (
           <section className="piano-roll-toolbar">
+            {compareState ? (
+              <div className="compare-toolbar-group" aria-label="A/B compare preview controls">
+                <div className="compare-view-toggle" role="group" aria-label="Compare view">
+                  {(["A", "B", "diff"] as const).map((viewing) => (
+                    <button
+                      key={viewing}
+                      type="button"
+                      className={
+                        compareState.viewing === viewing
+                          ? "secondary-button active"
+                          : "secondary-button"
+                      }
+                      onClick={() => handleSetCompareViewing(viewing)}
+                      aria-pressed={compareState.viewing === viewing ? "true" : "false"}
+                    >
+                      {viewing === "A" ? "A: Current" : viewing === "B" ? "B: Snapshot" : "Diff"}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleRestoreCompareTarget}
+                >
+                  Restore B
+                </button>
+                <button type="button" className="secondary-button" onClick={handleExitCompare}>
+                  Exit compare
+                </button>
+              </div>
+            ) : null}
             <button
               type="button"
               className={
