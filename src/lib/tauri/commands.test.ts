@@ -96,4 +96,53 @@ describe("tauri command adapter", () => {
       message: "Invalid MIDI file.",
     });
   });
+
+  it("falls back to an unknown-error code for a plain Error rejection", async () => {
+    invokeMock.mockRejectedValue(new Error("the IPC bridge is not available"));
+
+    await expect(importMidi("song.mid")).rejects.toEqual({
+      code: "UNKNOWN_ERROR",
+      message: "the IPC bridge is not available",
+    });
+  });
+
+  it("falls back to a generic message for a rejection with no Error and no structured shape", async () => {
+    invokeMock.mockRejectedValue("a plain string rejection");
+
+    await expect(importMidi("song.mid")).rejects.toEqual({
+      code: "UNKNOWN_ERROR",
+      message: "An unexpected application error occurred.",
+    });
+  });
+
+  it("maps backend status errors", async () => {
+    invokeMock.mockRejectedValue({ code: "BACKEND_UNAVAILABLE", message: "Backend not ready." });
+
+    await expect(getBackendStatus()).rejects.toEqual({
+      code: "BACKEND_UNAVAILABLE",
+      message: "Backend not ready.",
+    });
+  });
+
+  it("maps export errors", async () => {
+    const project = { fileName: "song.mid", notes: [] };
+    invokeMock.mockRejectedValue({ code: "WRITE_FAILED", message: "Could not write file." });
+
+    await expect(exportMidi("C:\\music\\song.mid", project as never)).rejects.toEqual({
+      code: "WRITE_FAILED",
+      message: "Could not write file.",
+    });
+  });
+
+  it("maps reassign-voices errors", async () => {
+    const project = { fileName: "song.mid", notes: [] };
+    invokeMock.mockRejectedValue({ code: "INVALID_MIDI", message: "Bad project state." });
+
+    await expect(
+      reassignVoices(project as never, {}, undefined, "BALANCED", "GREEDY"),
+    ).rejects.toEqual({
+      code: "INVALID_MIDI",
+      message: "Bad project state.",
+    });
+  });
 });

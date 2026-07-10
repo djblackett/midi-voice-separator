@@ -213,6 +213,40 @@ mod tests {
     }
 
     #[test]
+    fn import_midi_reports_file_not_found_for_a_missing_file() {
+        let path = std::env::temp_dir().join("chiptune-voice-separator-does-not-exist.mid");
+        let error =
+            import_midi(path.display().to_string()).expect_err("a missing file should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::FileNotFound);
+    }
+
+    #[test]
+    fn import_midi_reports_invalid_midi_for_unparsable_bytes() {
+        let path = std::env::temp_dir().join("chiptune-voice-separator-garbage.mid");
+        std::fs::write(&path, b"not a midi file").expect("temp file should write");
+
+        let error =
+            import_midi(path.display().to_string()).expect_err("garbage bytes should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::InvalidMidi);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn export_midi_reports_write_failed_when_the_directory_does_not_exist() {
+        let path = std::env::temp_dir()
+            .join("chiptune-voice-separator-missing-dir")
+            .join("out.mid");
+
+        let error = export_midi(path.display().to_string(), project())
+            .expect_err("a missing parent directory should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::WriteFailed);
+    }
+
+    #[test]
     fn reassign_voices_keeps_a_locked_note_pinned_through_the_command() {
         let mut input = project();
         input.notes.push(note("b", "voice-1", 64, 480, 960));
@@ -274,5 +308,69 @@ mod tests {
         .expect("reassignment should succeed");
 
         assert_eq!(result.separation_summary.voice_count, result.voices.len());
+    }
+}
+
+#[cfg(test)]
+mod workflow_integration_tests {
+    use super::{export_midi, import_midi, reassign_voices};
+    use crate::midi::model::{AssignmentMode, SeparationStrategy};
+    use std::{
+        collections::HashMap,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("two-note-smoke.mid")
+    }
+
+    fn unique_export_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("chiptune-voice-separator-workflow-{nonce}.mid"))
+    }
+
+    #[test]
+    fn command_workflow_imports_reassigns_exports_and_reimports_a_real_file() {
+        let imported = import_midi(fixture_path().display().to_string())
+            .expect("fixture should import through the production command");
+        let locked_note = imported.notes[0].id.clone();
+        let locked_voice = imported.notes[0].voice_id.clone();
+        let reassigned = reassign_voices(
+            imported,
+            HashMap::from([(locked_note.clone(), locked_voice.clone())]),
+            None,
+            SeparationStrategy::Balanced,
+            AssignmentMode::Greedy,
+        )
+        .expect("reassignment should succeed through the production command");
+        assert_eq!(
+            reassigned
+                .notes
+                .iter()
+                .find(|note| note.id == locked_note)
+                .expect("locked note should remain present")
+                .voice_id,
+            locked_voice
+        );
+
+        let output = unique_export_path();
+        let export_result = export_midi(output.display().to_string(), reassigned)
+            .expect("workflow export should succeed through the production command");
+        let reimported = import_midi(export_result.path)
+            .expect("workflow export should reimport through the production command");
+        assert_eq!(reimported.notes.len(), 2);
+        assert!(reimported
+            .notes
+            .iter()
+            .all(|note| !note.voice_id.is_empty()));
+        fs::remove_file(output).expect("workflow export should be removable");
     }
 }

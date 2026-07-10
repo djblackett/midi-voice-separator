@@ -279,6 +279,8 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 - Export fails (e.g. invalid path) → an inline error with code and message
   appears.
 
+- Reimport the exported file through the native **Import MIDI** dialog → every note and voice track returns, labels remain meaningful, and the app shows no unexpected warnings.
+
 ## Cross-cutting / edge cases
 
 - All of the above while a low-confidence/flagged note is selected — confirm

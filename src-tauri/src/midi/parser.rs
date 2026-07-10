@@ -854,3 +854,33 @@ mod tests {
         assert_eq!(first_project, second_project);
     }
 }
+
+#[cfg(test)]
+mod robustness_tests {
+    use super::parse_midi_project;
+    use std::{
+        panic::{catch_unwind, AssertUnwindSafe},
+        path::Path,
+    };
+
+    #[test]
+    fn arbitrary_untrusted_bytes_never_panic_the_parser() {
+        // This deterministic fuzz-like corpus covers many truncated and malformed
+        // inputs without making the test suite depend on a separate fuzz runner.
+        let mut state = 0x5eed_cafe_u64;
+        for length in 0..=512 {
+            let mut bytes = Vec::with_capacity(length);
+            for _ in 0..length {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                bytes.push((state >> 24) as u8);
+            }
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                parse_midi_project(Path::new("untrusted.mid"), &bytes)
+            }));
+            assert!(
+                result.is_ok(),
+                "parser panicked for malformed input of length {length}"
+            );
+        }
+    }
+}
