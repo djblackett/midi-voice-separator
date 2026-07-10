@@ -100,6 +100,11 @@ export function describeVoiceMatch(
   return match ? `Matches ${match.beforeVoiceId}` : "New in preview";
 }
 
+/**
+ * Compatibility adapter for legacy snapshot consumers. The active editor
+ * itself now owns one EditorDocument/branch; this helper only clones its
+ * correction layer into the older snapshot shape.
+ */
 export function editorSnapshotFromCurrent(current: {
   project: MidiProject | null;
   voiceOverrides: VoiceOverrides;

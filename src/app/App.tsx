@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MidiNote, MidiProject } from "../domain/midi/midiProject";
 import {
   formatMidiChannel,
@@ -43,14 +43,13 @@ import {
   type ExportMidiResult,
   type SeparationStrategy,
 } from "../lib/tauri/commands";
-import { voiceIdForNumber, type VoiceOverrides } from "../domain/midi/voiceAssignments";
+import { voiceIdForNumber } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import {
   reconcileVoiceOrderAfterReassign,
   seedVoiceLabelsFromImport,
 } from "../domain/midi/voiceManagement";
 import {
-  applyReviewDecision,
   buildFlaggedNoteQueue,
   buildReviewProgress,
   findCurrentFlaggedNote,
@@ -85,7 +84,6 @@ import {
   describePitchRangeRule,
   type PitchMarker,
 } from "../domain/midi/rangeRules";
-import { createEditorHistory, pushHistory, type EditorHistoryState } from "./editorHistory";
 import type { EditorDocument } from "./editor/editorDocument";
 import { useEditorBranch } from "./editor/useEditorBranch";
 import {
@@ -100,7 +98,6 @@ import {
 import {
   buildComparePreview,
   createCompareState,
-  editorSnapshotFromCurrent,
   isEditingDisabledForCompare,
   mapSoloVoiceForPreview,
   materializeSnapshotProject,
@@ -166,7 +163,6 @@ function parseMaxVoiceCount(input: string): number | undefined {
 }
 
 export default function App() {
-  const [project, setProject] = useState<MidiProject | null>(null);
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -177,9 +173,6 @@ export default function App() {
   const [exportResult, setExportResult] = useState<ExportMidiResult | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [skippedReviewNoteIds, setSkippedReviewNoteIds] = useState<ReadonlySet<string>>(new Set());
-  const [voiceOverrides, setVoiceOverrides] = useState<VoiceOverrides>({});
-  const [voiceOrder, setVoiceOrder] = useState<string[]>([]);
-  const [voiceLabels, setVoiceLabels] = useState<Record<string, string>>({});
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
   const [soloVoiceId, setSoloVoiceId] = useState<string | null>(null);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
@@ -190,8 +183,6 @@ export default function App() {
   const [isConfidenceHeatOn, setIsConfidenceHeatOn] = useState(false);
   const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
-  const [rangeAssignedNoteIds, setRangeAssignedNoteIds] = useState<ReadonlySet<string>>(new Set());
-  const [history, setHistory] = useState<EditorHistoryState>(createEditorHistory());
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("GREEDY");
@@ -205,47 +196,16 @@ export default function App() {
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<CompareState | null>(null);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
-  const editorRevision = useRef(0);
-  const editorDocument = useMemo<EditorDocument>(
-    () => ({
-      documentId: "A",
-      revision: editorRevision.current,
-      project,
-      voiceOverrides,
-      voiceOrder,
-      voiceLabels,
-      rangeAssignedNoteIds,
-      assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
-    }),
-    [project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds],
-  );
-  const applyEditorBranchCommit = useCallback(
-    ({
-      document: nextDocument,
-      history: nextHistory,
-    }: {
-      document: EditorDocument;
-      history: EditorHistoryState;
-    }) => {
-      editorRevision.current = nextDocument.revision;
-      setProject(nextDocument.project);
-      setVoiceOverrides(nextDocument.voiceOverrides);
-      setVoiceOrder([...nextDocument.voiceOrder]);
-      setVoiceLabels({ ...nextDocument.voiceLabels });
-      setRangeAssignedNoteIds(new Set(nextDocument.rangeAssignedNoteIds));
-      setHistory(nextHistory);
-    },
-    [],
-  );
   const {
+    branch: editorBranch,
+    document: editorDocument,
     dispatch: dispatchEditorCommand,
     undo: undoEditorBranch,
     redo: redoEditorBranch,
-  } = useEditorBranch({
-    document: editorDocument,
-    history,
-    onCommit: applyEditorBranchCommit,
-  });
+    reset: resetEditorBranch,
+  } = useEditorBranch();
+  const { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds } = editorDocument;
+  const history = editorBranch.history;
   const displayedProject = useMemo(
     () => materializeEditorProject({ project, voiceOverrides, voiceOrder, voiceLabels }),
     [project, voiceOverrides, voiceOrder, voiceLabels],
@@ -428,16 +388,14 @@ export default function App() {
     showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
   const currentCompareState = useMemo(
     () => ({
-      ...editorSnapshotFromCurrent({
-        project,
-        voiceOverrides,
-        voiceOrder,
-        voiceLabels,
-        rangeAssignedNoteIds,
-      }),
+      project: editorDocument.project,
+      voiceOverrides: editorDocument.voiceOverrides,
+      voiceOrder: [...editorDocument.voiceOrder],
+      voiceLabels: { ...editorDocument.voiceLabels },
+      rangeAssignedNoteIds: new Set(editorDocument.rangeAssignedNoteIds),
       rerunSettings: currentRerunSettings,
     }),
-    [project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds, currentRerunSettings],
+    [editorDocument, currentRerunSettings],
   );
   const comparePreview = useMemo(
     () => buildComparePreview(compareState, namedSnapshots, currentCompareState),
@@ -714,19 +672,23 @@ export default function App() {
     const importVoiceOrder = importedProject.voices.map((voice) => voice.id);
     const importVoiceLabels = seedVoiceLabelsFromImport(importedProject.voices);
 
-    setProject(importedProject);
+    resetEditorBranch({
+      documentId: "A",
+      revision: 0,
+      project: importedProject,
+      voiceOverrides: {},
+      voiceOrder: importVoiceOrder,
+      voiceLabels: importVoiceLabels,
+      rangeAssignedNoteIds: new Set(),
+      assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
+    });
     setSelectedNoteIds(new Set());
     setSkippedReviewNoteIds(new Set());
-    setVoiceOverrides({});
-    setVoiceOrder(importVoiceOrder);
-    setVoiceLabels(importVoiceLabels);
     setSeparationStrategy(importedProject.strategySuggestion.strategy);
     setActiveVoiceId(null);
     setSoloVoiceId(null);
     setInteractionMode("select");
     setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
-    setRangeAssignedNoteIds(new Set());
-    setHistory(createEditorHistory());
     setMaxVoiceCountInput("");
     setExportResult(null);
     setExportError(null);
@@ -838,16 +800,20 @@ export default function App() {
         assignmentMode,
         maxVoiceCount: maxVoiceCount ?? null,
       };
-      // Captured from this closure's pre-mutation state, the same
-      // discipline pushHistorySnapshot() below relies on: a failed
-      // reassignVoices call above would have thrown, so no snapshot (auto
-      // or undo) is recorded for a no-op re-run attempt.
-      pushHistorySnapshot();
+      // A failed reassignVoices call above throws before any undo or
+      // automatic snapshot is recorded, keeping this one whole command
+      // transaction atomic from the editor's perspective.
       setNamedSnapshots((current) =>
         appendSnapshot(
           current,
           createNamedSnapshot(
-            { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds },
+            {
+              project,
+              voiceOverrides,
+              voiceOrder: [...voiceOrder],
+              voiceLabels,
+              rangeAssignedNoteIds,
+            },
             rerunSettings,
             "before-rerun",
           ),
@@ -857,9 +823,13 @@ export default function App() {
         voiceOrder,
         reassignedProject.notes.map((note) => note.voiceId),
       );
-      setProject(reassignedProject);
+      dispatchEditorCommand({
+        kind: "replaceProject",
+        project: reassignedProject,
+        provenance: editorDocument.assignmentProvenance,
+        voiceOrder: nextVoiceOrder,
+      });
       setSkippedReviewNoteIds(new Set());
-      setVoiceOrder(nextVoiceOrder);
       setNamedSnapshots((current) =>
         appendSnapshot(
           current,
@@ -893,18 +863,6 @@ export default function App() {
     }
   }
 
-  function pushHistorySnapshot() {
-    setHistory((currentHistory) =>
-      pushHistory(currentHistory, {
-        project,
-        voiceOverrides,
-        voiceOrder,
-        voiceLabels,
-        rangeAssignedNoteIds,
-      }),
-    );
-  }
-
   function handleUndo() {
     if (!undoEditorBranch()) {
       return;
@@ -930,7 +888,13 @@ export default function App() {
       appendSnapshot(
         current,
         createNamedSnapshot(
-          { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds },
+          {
+            project,
+            voiceOverrides,
+            voiceOrder: [...voiceOrder],
+            voiceLabels,
+            rangeAssignedNoteIds,
+          },
           {
             strategy: separationStrategy,
             assignmentMode,
@@ -1119,6 +1083,20 @@ export default function App() {
     setExportResult(null);
   }
 
+  function restoreEditorDocument(
+    changes: Partial<
+      Pick<
+        EditorDocument,
+        "project" | "voiceOverrides" | "voiceOrder" | "voiceLabels" | "rangeAssignedNoteIds"
+      >
+    >,
+  ) {
+    dispatchEditorCommand({
+      kind: "restoreDocument",
+      document: { ...editorDocument, ...changes },
+    });
+  }
+
   function handleSplitVoiceByPitch(voiceId: string) {
     if (!displayedProject) {
       return;
@@ -1131,19 +1109,18 @@ export default function App() {
 
     const sourceLabel =
       displayedProject.voices.find((voice) => voice.id === voiceId)?.label ?? voiceId;
-    pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
-    setVoiceOrder(repair.voiceOrder);
-    setVoiceLabels((currentLabels) => ({
-      ...currentLabels,
-      [repair.newVoiceId]: `${sourceLabel} high`,
-    }));
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of repair.movedNoteIds) {
-        next.delete(noteId);
-      }
-      return next;
+    const nextRangeAssignedNoteIds = new Set(rangeAssignedNoteIds);
+    for (const noteId of repair.movedNoteIds) {
+      nextRangeAssignedNoteIds.delete(noteId);
+    }
+    restoreEditorDocument({
+      voiceOverrides: { ...voiceOverrides, ...repair.overrides },
+      voiceOrder: repair.voiceOrder,
+      voiceLabels: {
+        ...voiceLabels,
+        [repair.newVoiceId]: `${sourceLabel} high`,
+      },
+      rangeAssignedNoteIds: nextRangeAssignedNoteIds,
     });
     setSelectedNoteIds(new Set(repair.movedNoteIds));
     setActiveVoiceId(repair.newVoiceId);
@@ -1165,23 +1142,20 @@ export default function App() {
     }
 
     const sourceLabels = new Map(displayedProject.voices.map((voice) => [voice.id, voice.label]));
-    pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
-    setVoiceOrder(repair.voiceOrder);
-    setVoiceLabels((currentLabels) => {
-      const nextLabels = { ...currentLabels };
-      for (const item of repair.repairs) {
-        const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
-        nextLabels[item.newVoiceId] = `${sourceLabel} high`;
-      }
-      return nextLabels;
-    });
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of repair.movedNoteIds) {
-        next.delete(noteId);
-      }
-      return next;
+    const nextLabels = { ...voiceLabels };
+    for (const item of repair.repairs) {
+      const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
+      nextLabels[item.newVoiceId] = `${sourceLabel} high`;
+    }
+    const nextRangeAssignedNoteIds = new Set(rangeAssignedNoteIds);
+    for (const noteId of repair.movedNoteIds) {
+      nextRangeAssignedNoteIds.delete(noteId);
+    }
+    restoreEditorDocument({
+      voiceOverrides: { ...voiceOverrides, ...repair.overrides },
+      voiceOrder: repair.voiceOrder,
+      voiceLabels: nextLabels,
+      rangeAssignedNoteIds: nextRangeAssignedNoteIds,
     });
     setSelectedNoteIds(new Set(repair.movedNoteIds));
     setActiveVoiceId(repair.repairs[0]?.newVoiceId ?? null);
@@ -1202,23 +1176,20 @@ export default function App() {
     }
 
     const sourceLabels = new Map(displayedProject.voices.map((voice) => [voice.id, voice.label]));
-    pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
-    setVoiceOrder(repair.voiceOrder);
-    setVoiceLabels((currentLabels) => {
-      const nextLabels = { ...currentLabels };
-      for (const item of repair.repairs) {
-        const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
-        nextLabels[item.newVoiceId] = `${sourceLabel} ${formatMidiChannel(item.movedChannel)}`;
-      }
-      return nextLabels;
-    });
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of repair.movedNoteIds) {
-        next.delete(noteId);
-      }
-      return next;
+    const nextLabels = { ...voiceLabels };
+    for (const item of repair.repairs) {
+      const sourceLabel = sourceLabels.get(item.sourceVoiceId) ?? item.sourceVoiceId;
+      nextLabels[item.newVoiceId] = `${sourceLabel} ${formatMidiChannel(item.movedChannel)}`;
+    }
+    const nextRangeAssignedNoteIds = new Set(rangeAssignedNoteIds);
+    for (const noteId of repair.movedNoteIds) {
+      nextRangeAssignedNoteIds.delete(noteId);
+    }
+    restoreEditorDocument({
+      voiceOverrides: { ...voiceOverrides, ...repair.overrides },
+      voiceOrder: repair.voiceOrder,
+      voiceLabels: nextLabels,
+      rangeAssignedNoteIds: nextRangeAssignedNoteIds,
     });
     setSelectedNoteIds(new Set(repair.movedNoteIds));
     setActiveVoiceId(repair.repairs[0]?.newVoiceId ?? null);
@@ -1236,19 +1207,18 @@ export default function App() {
 
     const sourceLabel =
       displayedProject.voices.find((voice) => voice.id === voiceId)?.label ?? voiceId;
-    pushHistorySnapshot();
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...repair.overrides }));
-    setVoiceOrder(repair.voiceOrder);
-    setVoiceLabels((currentLabels) => ({
-      ...currentLabels,
-      [repair.newVoiceId]: `${sourceLabel} ${formatMidiChannel(repair.movedChannel)}`,
-    }));
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of repair.movedNoteIds) {
-        next.delete(noteId);
-      }
-      return next;
+    const nextRangeAssignedNoteIds = new Set(rangeAssignedNoteIds);
+    for (const noteId of repair.movedNoteIds) {
+      nextRangeAssignedNoteIds.delete(noteId);
+    }
+    restoreEditorDocument({
+      voiceOverrides: { ...voiceOverrides, ...repair.overrides },
+      voiceOrder: repair.voiceOrder,
+      voiceLabels: {
+        ...voiceLabels,
+        [repair.newVoiceId]: `${sourceLabel} ${formatMidiChannel(repair.movedChannel)}`,
+      },
+      rangeAssignedNoteIds: nextRangeAssignedNoteIds,
     });
     setSelectedNoteIds(new Set(repair.movedNoteIds));
     setActiveVoiceId(repair.newVoiceId);
@@ -1268,15 +1238,11 @@ export default function App() {
     if (!currentFlaggedNote) {
       return;
     }
-    pushHistorySnapshot();
-    const decision = applyReviewDecision(
-      voiceOverrides,
-      rangeAssignedNoteIds,
-      currentFlaggedNote.id,
-      currentFlaggedNote.voiceId,
-    );
-    setVoiceOverrides(decision.voiceOverrides);
-    setRangeAssignedNoteIds(decision.rangeAssignedNoteIds);
+    dispatchEditorCommand({
+      kind: "assignNotes",
+      noteIds: [currentFlaggedNote.id],
+      voiceId: currentFlaggedNote.voiceId,
+    });
     setSkippedReviewNoteIds((current) => {
       const next = new Set(current);
       next.delete(currentFlaggedNote.id);
@@ -1289,15 +1255,7 @@ export default function App() {
     if (!currentFlaggedNote || voiceId === "") {
       return;
     }
-    pushHistorySnapshot();
-    const decision = applyReviewDecision(
-      voiceOverrides,
-      rangeAssignedNoteIds,
-      currentFlaggedNote.id,
-      voiceId,
-    );
-    setVoiceOverrides(decision.voiceOverrides);
-    setRangeAssignedNoteIds(decision.rangeAssignedNoteIds);
+    dispatchEditorCommand({ kind: "assignNotes", noteIds: [currentFlaggedNote.id], voiceId });
     setSkippedReviewNoteIds((current) => {
       const next = new Set(current);
       next.delete(currentFlaggedNote.id);
