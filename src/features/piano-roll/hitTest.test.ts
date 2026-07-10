@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MidiProject } from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
-import { hitTestPianoRollNote, hitTestPianoRollNotesInRect } from "./hitTest";
+import { hitTestPianoRollNote, hitTestPianoRollNotesInRect, hitTestVoiceLaneNote } from "./hitTest";
 
 const viewport: PianoRollViewport = {
   width: 1056,
@@ -113,5 +113,42 @@ describe("hitTestPianoRollNotesInRect", () => {
     expect(
       hitTestPianoRollNotesInRect({ x0: 0, y0: 0, x1: 40, y1: 260 }, project, viewport),
     ).toEqual([]);
+  });
+});
+
+describe("hitTestVoiceLaneNote", () => {
+  it("returns null for the lane-label area", () => {
+    expect(hitTestVoiceLaneNote({ x: 20, y: 20 }, project, viewport)).toBeNull();
+  });
+
+  it("returns null without a project", () => {
+    expect(hitTestVoiceLaneNote({ x: 200, y: 10 }, null, viewport)).toBeNull();
+  });
+
+  it("finds the shorter, higher-pitched note at its lane position", () => {
+    expect(hitTestVoiceLaneNote({ x: 200, y: 10 }, project, viewport)?.id).toBe("short");
+  });
+
+  it("finds the longer, lower-pitched note at its own lane position", () => {
+    expect(hitTestVoiceLaneNote({ x: 100, y: 200 }, project, viewport)?.id).toBe("long");
+  });
+
+  it("returns null when no note's lane rect contains the point", () => {
+    expect(hitTestVoiceLaneNote({ x: 500, y: 250 }, project, viewport)).toBeNull();
+  });
+
+  it("skips notes whose voice has no matching lane", () => {
+    const projectWithOrphanNote: MidiProject = {
+      ...project,
+      notes: [
+        {
+          ...project.notes[0],
+          id: "orphan",
+          voiceId: "voice-does-not-exist",
+        },
+      ],
+    };
+
+    expect(hitTestVoiceLaneNote({ x: 100, y: 200 }, projectWithOrphanNote, viewport)).toBeNull();
   });
 });

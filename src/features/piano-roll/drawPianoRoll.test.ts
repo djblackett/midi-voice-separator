@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { MidiNote } from "../../domain/midi/midiProject";
+import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
+import type { PianoRollViewport } from "../../domain/midi/viewport";
+import { createMockCanvasContext } from "./canvasTestContext";
 import {
   confidenceHeatColor,
+  drawPianoRoll,
+  drawTimeRuler,
+  drawVoiceLanes,
   getVoiceFillColor,
   getVoiceStrokeColor,
   resolveNoteRenderStyle,
@@ -291,6 +296,375 @@ describe("confidence heat colors", () => {
   it("clamps out-of-range confidence", () => {
     expect(confidenceHeatColor(-1)).toBe(confidenceHeatColor(0));
     expect(confidenceHeatColor(2)).toBe(confidenceHeatColor(1));
+  });
+});
+
+const viewport: PianoRollViewport = {
+  width: 856,
+  height: 260,
+  startTick: 0,
+  endTick: 960,
+  lowestPitch: 60,
+  highestPitch: 64,
+};
+
+function project(overrides: Partial<MidiProject> = {}): MidiProject {
+  return {
+    fileName: "test.mid",
+    format: "single-track",
+    ppq: 480,
+    durationTicks: 960,
+    trackCount: 1,
+    voices: [{ id: "voice-1", label: "Voice 1", noteCount: 1, lowestPitch: 60, highestPitch: 64 }],
+    notes: [note()],
+    tempoChanges: [],
+    timeSignatures: [],
+    warnings: [],
+    separationSummary: { meanConfidence: 1, lowConfidenceNoteCount: 0, voiceCount: 1 },
+    strategySuggestion: { strategy: "BALANCED", reason: "test fixture" },
+    ...overrides,
+  };
+}
+
+interface DrawPianoRollArgs {
+  selectedNoteIds?: ReadonlySet<string>;
+  marqueeRect?: Parameters<typeof drawPianoRoll>[4];
+  soloVoiceId?: string | null;
+  paintPreview?: ReadonlyMap<string, string>;
+  pitchMarkers?: Parameters<typeof drawPianoRoll>[7];
+  playheadTick?: number | null;
+  changedNoteIds?: ReadonlySet<string>;
+  previousVoiceId?: ReadonlyMap<string, string>;
+  onlyChangedNotes?: boolean;
+  confidenceHeatmap?: boolean;
+  conflictNoteIds?: ReadonlySet<string>;
+  timeRangeSelection?: Parameters<typeof drawPianoRoll>[14];
+}
+
+function callDrawPianoRoll(
+  context: CanvasRenderingContext2D,
+  midiProject: MidiProject | null,
+  args: DrawPianoRollArgs = {},
+): void {
+  drawPianoRoll(
+    context,
+    midiProject,
+    viewport,
+    args.selectedNoteIds,
+    args.marqueeRect ?? null,
+    args.soloVoiceId ?? null,
+    args.paintPreview,
+    args.pitchMarkers,
+    args.playheadTick ?? null,
+    args.changedNoteIds,
+    args.previousVoiceId,
+    args.onlyChangedNotes,
+    args.confidenceHeatmap,
+    args.conflictNoteIds,
+    args.timeRangeSelection ?? null,
+  );
+}
+
+describe("drawPianoRoll", () => {
+  it("clears and fills the background", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project());
+
+    expect(context.clearRect).toHaveBeenCalledWith(0, 0, viewport.width, viewport.height);
+  });
+
+  it("shows a placeholder and draws no notes when there is no project", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, null);
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillText" && call.args[0] === "No notes loaded",
+      ),
+    ).toBe(true);
+    expect(context.strokeRect).not.toHaveBeenCalled();
+  });
+
+  it("shows a placeholder when the project has no notes", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project({ notes: [] }));
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillText" && call.args[0] === "No notes loaded",
+      ),
+    ).toBe(true);
+  });
+
+  it("draws exactly one strokeRect for a single visible note", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project());
+
+    expect(context.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it("fills a note in its voice color at full opacity when not dimmed", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project());
+
+    const noteFill = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
+    );
+    expect(noteFill?.globalAlpha).toBe(1);
+  });
+
+  it("gives a selected note a thicker white stroke", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), { selectedNoteIds: new Set(["a"]) });
+
+    const strokeCall = context.styledCalls.find((call) => call.method === "strokeRect");
+    expect(strokeCall?.lineWidth).toBe(3);
+    expect(strokeCall?.strokeStyle).toBe("#f8fafc");
+  });
+
+  it("dims a note whose voice does not match the soloed voice", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), { soloVoiceId: "voice-2" });
+
+    const noteFill = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
+    );
+    expect(noteFill?.globalAlpha).toBe(0.25);
+  });
+
+  it("dashes and then resets the stroke for a low-confidence note", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project({ notes: [note({ assignmentConfidence: 0.1 })] }));
+
+    expect(context.setLineDash).toHaveBeenCalledWith([3, 2]);
+    expect(context.setLineDash).toHaveBeenLastCalledWith([]);
+  });
+
+  it("draws an extra edge-marker fillRect for a changed note", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), { changedNoteIds: new Set(["a"]) });
+
+    const edgeMarker = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === "#facc15",
+    );
+    expect(edgeMarker).toBeDefined();
+  });
+
+  it("uses the previous voice's color for the changed-note edge marker when known", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), {
+      changedNoteIds: new Set(["a"]),
+      previousVoiceId: new Map([["a", "voice-3"]]),
+    });
+
+    const edgeMarker = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-3"),
+    );
+    expect(edgeMarker).toBeDefined();
+  });
+
+  it("draws an extra underline fillRect for a conflicting note", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), { conflictNoteIds: new Set(["a"]) });
+
+    const underline = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === "#ef4444",
+    );
+    expect(underline).toBeDefined();
+  });
+
+  it("draws the marquee overlay only when a marqueeRect is given", () => {
+    const withoutMarquee = createMockCanvasContext();
+    callDrawPianoRoll(withoutMarquee, project());
+    expect(
+      withoutMarquee.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === "rgba(56, 189, 248, 0.15)",
+      ),
+    ).toBe(false);
+
+    const withMarquee = createMockCanvasContext();
+    callDrawPianoRoll(withMarquee, project(), {
+      marqueeRect: { x0: 100, y0: 0, x1: 200, y1: 100 },
+    });
+    expect(
+      withMarquee.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === "rgba(56, 189, 248, 0.15)",
+      ),
+    ).toBe(true);
+  });
+
+  it("highlights the selected time range when given", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), {
+      timeRangeSelection: { startTick: 0, endTick: 480 },
+    });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === "rgba(56, 189, 248, 0.18)",
+      ),
+    ).toBe(true);
+  });
+
+  it("only draws notes in changedNoteIds when onlyChangedNotes is set", () => {
+    const context = createMockCanvasContext();
+    const notes = [note({ id: "a" }), note({ id: "b", startTick: 200, endTick: 300 })];
+
+    callDrawPianoRoll(context, project({ notes }), {
+      changedNoteIds: new Set(["a"]),
+      onlyChangedNotes: true,
+    });
+
+    expect(context.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws a playhead line only when the tick is within the visible window", () => {
+    const inRange = createMockCanvasContext();
+    callDrawPianoRoll(inRange, project(), { playheadTick: 100 });
+    expect(
+      inRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(true);
+
+    const outOfRange = createMockCanvasContext();
+    callDrawPianoRoll(outOfRange, project(), { playheadTick: 5000 });
+    expect(
+      outOfRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(false);
+  });
+
+  it("draws a pitch marker within the visible pitch range, with its label", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), {
+      pitchMarkers: [{ id: "m1", label: "Melody floor", pitch: 62 }],
+    });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillText" && call.args[0] === "Melody floor: 62",
+      ),
+    ).toBe(true);
+  });
+
+  it("skips a pitch marker outside the visible pitch range", () => {
+    const context = createMockCanvasContext();
+
+    callDrawPianoRoll(context, project(), {
+      pitchMarkers: [{ id: "m1", label: "Out of view", pitch: 20 }],
+    });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillText" && String(call.args[0]).startsWith("Out of view"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("drawTimeRuler", () => {
+  const rulerViewport: PianoRollViewport = { ...viewport, height: 20 };
+
+  it("clears and fills the ruler background", () => {
+    const context = createMockCanvasContext();
+
+    drawTimeRuler(context, rulerViewport, 480);
+
+    expect(context.clearRect).toHaveBeenCalledWith(0, 0, rulerViewport.width, 20);
+  });
+
+  it("draws a playhead tick only when within the visible window", () => {
+    const inRange = createMockCanvasContext();
+    drawTimeRuler(inRange, rulerViewport, 480, 100);
+    expect(
+      inRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(true);
+
+    const outOfRange = createMockCanvasContext();
+    drawTimeRuler(outOfRange, rulerViewport, 480, 5000);
+    expect(
+      outOfRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(false);
+  });
+
+  it("highlights the selected time range when given", () => {
+    const context = createMockCanvasContext();
+
+    drawTimeRuler(context, rulerViewport, 480, null, { startTick: 0, endTick: 480 });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === "rgba(56, 189, 248, 0.28)",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("drawVoiceLanes", () => {
+  it("shows a placeholder and draws no notes when the project has no notes", () => {
+    const context = createMockCanvasContext();
+
+    drawVoiceLanes(context, project({ notes: [] }), viewport);
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillText" && call.args[0] === "No notes loaded",
+      ),
+    ).toBe(true);
+    expect(context.strokeRect).not.toHaveBeenCalled();
+  });
+
+  it("draws one strokeRect per visible note across its voice's lane", () => {
+    const context = createMockCanvasContext();
+
+    drawVoiceLanes(context, project(), viewport);
+
+    expect(context.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a note whose voice has no matching lane", () => {
+    const context = createMockCanvasContext();
+
+    drawVoiceLanes(context, project({ notes: [note({ voiceId: "voice-missing" })] }), viewport);
+
+    expect(context.strokeRect).not.toHaveBeenCalled();
+  });
+
+  it("dims a note whose voice does not match the soloed voice", () => {
+    const context = createMockCanvasContext();
+
+    drawVoiceLanes(context, project(), viewport, undefined, "voice-2");
+
+    const noteFill = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
+    );
+    expect(noteFill?.globalAlpha).toBe(0.25);
+  });
+
+  it("draws a playhead line only when the tick is within the visible window", () => {
+    const inRange = createMockCanvasContext();
+    // signature: (context, project, viewport, selectedNoteIds, soloVoiceId, paintPreview, playheadTick)
+    drawVoiceLanes(inRange, project(), viewport, undefined, null, undefined, 100);
+    expect(
+      inRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(true);
+
+    const outOfRange = createMockCanvasContext();
+    drawVoiceLanes(outOfRange, project(), viewport, undefined, null, undefined, 5000);
+    expect(
+      outOfRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
+    ).toBe(false);
   });
 });
 
