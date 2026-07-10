@@ -9,19 +9,19 @@ export interface EditorSnapshot {
   rangeAssignedNoteIds: ReadonlySet<string>;
 }
 
-export interface EditorHistoryState {
-  past: EditorSnapshot[];
-  future: EditorSnapshot[];
+export interface EditorHistoryState<TSnapshot = EditorSnapshot> {
+  past: TSnapshot[];
+  future: TSnapshot[];
 }
 
-export interface EditorHistoryStep {
-  history: EditorHistoryState;
-  snapshot: EditorSnapshot;
+export interface EditorHistoryStep<TSnapshot = EditorSnapshot> {
+  history: EditorHistoryState<TSnapshot>;
+  snapshot: TSnapshot;
 }
 
 const MAX_HISTORY_DEPTH = 50;
 
-export function createEditorHistory(): EditorHistoryState {
+export function createEditorHistory<TSnapshot = EditorSnapshot>(): EditorHistoryState<TSnapshot> {
   return { past: [], future: [] };
 }
 
@@ -35,18 +35,18 @@ export function createEditorHistory(): EditorHistoryState {
  * state) so a "Re-run separation" call, which replaces `project` wholesale,
  * is undoable like every other correction.
  */
-export function pushHistory(
-  history: EditorHistoryState,
-  snapshot: EditorSnapshot,
-): EditorHistoryState {
+export function pushHistory<TSnapshot>(
+  history: EditorHistoryState<TSnapshot>,
+  snapshot: TSnapshot,
+): EditorHistoryState<TSnapshot> {
   const past = [...history.past, snapshot].slice(-MAX_HISTORY_DEPTH);
   return { past, future: [] };
 }
 
-export function undoHistory(
-  history: EditorHistoryState,
-  current: EditorSnapshot,
-): EditorHistoryStep | null {
+export function undoHistory<TSnapshot>(
+  history: EditorHistoryState<TSnapshot>,
+  current: TSnapshot,
+): EditorHistoryStep<TSnapshot> | null {
   if (history.past.length === 0) {
     return null;
   }
@@ -57,10 +57,10 @@ export function undoHistory(
   return { history: { past, future }, snapshot };
 }
 
-export function redoHistory(
-  history: EditorHistoryState,
-  current: EditorSnapshot,
-): EditorHistoryStep | null {
+export function redoHistory<TSnapshot>(
+  history: EditorHistoryState<TSnapshot>,
+  current: TSnapshot,
+): EditorHistoryStep<TSnapshot> | null {
   if (history.future.length === 0) {
     return null;
   }
