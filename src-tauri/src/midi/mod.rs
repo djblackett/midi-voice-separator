@@ -1,6 +1,3 @@
-// Slice 1 deliberately lands the pure evaluator before its Tauri adapter.
-// The adapter in the next slice makes these public DTOs production-reachable.
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod assignment_metric;
 pub mod exporter;
 pub mod model;

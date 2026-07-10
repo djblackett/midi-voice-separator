@@ -3,6 +3,10 @@ use std::{collections::HashMap, fs, path::Path};
 use crate::{
     error::AppError,
     midi::{
+        assignment_metric::{
+            evaluate_assignment_model_cost, AssignmentEvaluationRequestDto, AssignmentMetricError,
+            AssignmentMetricReportDto,
+        },
         exporter::export_midi_bytes,
         model::{AssignmentMode, SeparationStrategy},
         parser::parse_midi_project,
@@ -10,6 +14,24 @@ use crate::{
         ExportMidiResultDto, MidiProjectDto,
     },
 };
+
+#[tauri::command]
+pub fn evaluate_assignment(
+    request: AssignmentEvaluationRequestDto,
+) -> Result<AssignmentMetricReportDto, AppError> {
+    evaluate_assignment_model_cost(&request).map_err(|error| {
+        let message = match error {
+            AssignmentMetricError::InvalidPpq => "Assignment cost requires a positive PPQ value.",
+            AssignmentMetricError::UnsupportedProfile => {
+                "The requested assignment evaluation profile is not supported."
+            }
+            AssignmentMetricError::CostOverflow => {
+                "The assignment cost exceeds the supported numeric range."
+            }
+        };
+        AppError::invalid_assignment_evaluation(message)
+    })
+}
 
 #[tauri::command]
 pub fn import_midi(path: String) -> Result<MidiProjectDto, AppError> {
@@ -91,6 +113,7 @@ pub fn reassign_voices(
 mod tests {
     use super::*;
     use crate::error::AppErrorCode;
+    use crate::midi::assignment_metric::GENERAL_PURPOSE_PROFILE;
     use crate::midi::model::{
         AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
         StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
@@ -308,6 +331,38 @@ mod tests {
         .expect("reassignment should succeed");
 
         assert_eq!(result.separation_summary.voice_count, result.voices.len());
+    }
+
+    #[test]
+    fn evaluate_assignment_returns_the_versioned_report_through_the_command() {
+        let project = project();
+        let result = evaluate_assignment(AssignmentEvaluationRequestDto {
+            ppq: project.ppq,
+            notes: project.notes,
+            profile: GENERAL_PURPOSE_PROFILE,
+        })
+        .expect("evaluation should succeed");
+
+        assert_eq!(result.profile, GENERAL_PURPOSE_PROFILE);
+        assert_eq!(result.metric.version, 1);
+        assert_eq!(result.melodic_note_count, 1);
+        assert_eq!(result.total_cost, 12.0);
+    }
+
+    #[test]
+    fn evaluate_assignment_maps_invalid_input_to_a_structured_error() {
+        let error = evaluate_assignment(AssignmentEvaluationRequestDto {
+            ppq: 0,
+            notes: Vec::new(),
+            profile: GENERAL_PURPOSE_PROFILE,
+        })
+        .expect_err("zero PPQ should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::InvalidAssignmentEvaluation);
+        assert_eq!(
+            error.message,
+            "Assignment cost requires a positive PPQ value."
+        );
     }
 }
 

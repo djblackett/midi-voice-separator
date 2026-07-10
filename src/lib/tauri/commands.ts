@@ -1,11 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MidiProject, SeparationStrategy } from "../../domain/midi/midiProject";
+import type {
+  AssignmentEvaluationRequest,
+  AssignmentMetricReport,
+} from "../../domain/midi/assignmentMetric";
 
 const COMMANDS = {
   backendStatus: "backend_status",
   importMidi: "import_midi",
   exportMidi: "export_midi",
   reassignVoices: "reassign_voices",
+  evaluateAssignment: "evaluate_assignment",
 } as const;
 
 export interface BackendStatus {
@@ -103,6 +108,16 @@ export async function reassignVoices(
       strategy,
       mode,
     });
+  } catch (error) {
+    throw toCommandError(error);
+  }
+}
+
+export async function evaluateAssignment(
+  request: AssignmentEvaluationRequest,
+): Promise<AssignmentMetricReport> {
+  try {
+    return await invoke<AssignmentMetricReport>(COMMANDS.evaluateAssignment, { request });
   } catch (error) {
     throw toCommandError(error);
   }

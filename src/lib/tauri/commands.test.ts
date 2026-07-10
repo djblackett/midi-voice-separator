@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { exportMidi, getBackendStatus, importMidi, reassignVoices } from "./commands";
+import {
+  evaluateAssignment,
+  exportMidi,
+  getBackendStatus,
+  importMidi,
+  reassignVoices,
+} from "./commands";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -88,6 +94,28 @@ describe("tauri command adapter", () => {
     });
   });
 
+  it("passes only the explicit evaluation request to assignment cost", async () => {
+    const request = {
+      ppq: 480,
+      notes: [],
+      profile: { id: "GENERAL_PURPOSE" as const, version: 1 },
+    };
+    const report = {
+      metric: { id: "ASSIGNMENT_MODEL_COST", version: 1 },
+      profile: request.profile,
+      melodicNoteCount: 0,
+      excludedPercussionNoteCount: 0,
+      melodicVoiceCount: 0,
+      components: [],
+      totalCost: 0,
+      hardViolations: [],
+    };
+    invokeMock.mockResolvedValue(report);
+
+    await expect(evaluateAssignment(request)).resolves.toEqual(report);
+    expect(invokeMock).toHaveBeenCalledWith("evaluate_assignment", { request });
+  });
+
   it("preserves structured command errors", async () => {
     invokeMock.mockRejectedValue({ code: "INVALID_MIDI", message: "Invalid MIDI file." });
 
@@ -143,6 +171,24 @@ describe("tauri command adapter", () => {
     ).rejects.toEqual({
       code: "INVALID_MIDI",
       message: "Bad project state.",
+    });
+  });
+
+  it("maps assignment evaluation errors", async () => {
+    invokeMock.mockRejectedValue({
+      code: "INVALID_ASSIGNMENT_EVALUATION",
+      message: "Assignment cost requires a positive PPQ value.",
+    });
+
+    await expect(
+      evaluateAssignment({
+        ppq: 0,
+        notes: [],
+        profile: { id: "GENERAL_PURPOSE", version: 1 },
+      }),
+    ).rejects.toEqual({
+      code: "INVALID_ASSIGNMENT_EVALUATION",
+      message: "Assignment cost requires a positive PPQ value.",
     });
   });
 });

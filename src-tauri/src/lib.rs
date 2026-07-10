@@ -16,7 +16,8 @@ pub fn run() {
             commands::backend_status,
             commands::midi::import_midi,
             commands::midi::export_midi,
-            commands::midi::reassign_voices
+            commands::midi::reassign_voices,
+            commands::midi::evaluate_assignment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
