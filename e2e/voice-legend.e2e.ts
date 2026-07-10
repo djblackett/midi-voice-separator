@@ -57,6 +57,18 @@ test.describe("voice legend", () => {
     await expect(page.locator(".voice-legend li")).toHaveCount(3);
   });
 
+  test("renaming a voice is undoable without relying on input focus", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: threeVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    await page.getByLabel("Rename Voice 1").fill("Bass");
+    await expect(voiceRow(page, "Bass")).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect(voiceRow(page, "Voice 1")).toHaveCount(1);
+  });
+
   test("merging a voice moves its notes and removes it from the legend", async ({ page }) => {
     await installFakeTauri(page, { importedProject: threeVoiceProject });
     await page.goto("/");

@@ -46,8 +46,6 @@ import {
 import { voiceIdForNumber, type VoiceOverrides } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import {
-  mergeVoiceOverrides,
-  nextVoiceId,
   reconcileVoiceOrderAfterReassign,
   seedVoiceLabelsFromImport,
 } from "../domain/midi/voiceManagement";
@@ -1061,32 +1059,15 @@ export default function App() {
   }
 
   function handleCreateVoice() {
-    pushHistorySnapshot();
-    const newVoiceId = nextVoiceId(voiceOrder);
-    setVoiceOrder((currentOrder) => [...currentOrder, newVoiceId]);
-
-    if (selectedNoteIds.size > 0) {
-      setVoiceOverrides((currentOverrides) => {
-        const nextOverrides = { ...currentOverrides };
-        for (const noteId of selectedNoteIds) {
-          nextOverrides[noteId] = newVoiceId;
-        }
-        return nextOverrides;
-      });
-      setRangeAssignedNoteIds((current) => {
-        const next = new Set(current);
-        for (const noteId of selectedNoteIds) {
-          next.delete(noteId);
-        }
-        return next;
-      });
-    }
-
+    dispatchEditorCommand({
+      kind: "createVoice",
+      assignSelection: selectedNoteIds.size > 0 ? Array.from(selectedNoteIds) : undefined,
+    });
     setExportResult(null);
   }
 
   function handleRenameVoice(voiceId: string, label: string) {
-    setVoiceLabels((currentLabels) => ({ ...currentLabels, [voiceId]: label }));
+    dispatchEditorCommand({ kind: "renameVoice", voiceId, label });
   }
 
   function handleMergeVoice(fromVoiceId: string, toVoiceId: string) {
@@ -1094,34 +1075,14 @@ export default function App() {
       return;
     }
 
-    pushHistorySnapshot();
-    const patch = mergeVoiceOverrides(displayedProject.notes, fromVoiceId, toVoiceId);
-    setVoiceOverrides((currentOverrides) => ({ ...currentOverrides, ...patch }));
-    setRangeAssignedNoteIds((current) => {
-      const next = new Set(current);
-      for (const noteId of Object.keys(patch)) {
-        next.delete(noteId);
-      }
-      return next;
-    });
-    setVoiceOrder((currentOrder) => currentOrder.filter((voiceId) => voiceId !== fromVoiceId));
+    dispatchEditorCommand({ kind: "mergeVoice", from: fromVoiceId, to: toVoiceId });
     setActiveVoiceId((current) => (current === fromVoiceId ? null : current));
     setSoloVoiceId((current) => (current === fromVoiceId ? null : current));
     setExportResult(null);
   }
 
   function handleReorderVoice(voiceId: string, direction: -1 | 1) {
-    pushHistorySnapshot();
-    setVoiceOrder((currentOrder) => {
-      const index = currentOrder.indexOf(voiceId);
-      const targetIndex = index + direction;
-      if (index < 0 || targetIndex < 0 || targetIndex >= currentOrder.length) {
-        return currentOrder;
-      }
-      const nextOrder = [...currentOrder];
-      [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
-      return nextOrder;
-    });
+    dispatchEditorCommand({ kind: "reorderVoice", voiceId, direction });
   }
 
   function handleToggleSolo(voiceId: string) {
@@ -1835,7 +1796,6 @@ export default function App() {
                   className="voice-name-input"
                   disabled={isCompareReadOnly}
                   value={voice.label}
-                  onFocus={pushHistorySnapshot}
                   onChange={(event) => handleRenameVoice(voice.id, event.target.value)}
                   aria-label={`Rename ${voice.label}`}
                 />
