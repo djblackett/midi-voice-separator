@@ -86,7 +86,7 @@ import {
 } from "../domain/midi/rangeRules";
 import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
-import { useEditorBranch } from "./editor/useEditorBranch";
+import { useComparisonEditor } from "./editor/useComparisonEditor";
 import {
   appendSnapshot,
   createNamedSnapshot,
@@ -205,7 +205,7 @@ export default function App() {
     redo: redoEditorBranch,
     reset: resetEditorBranch,
     currentRevision: currentEditorRevision,
-  } = useEditorBranch();
+  } = useComparisonEditor();
   const rerunRequestSequence = useRef(0);
   const latestRerunRequestId = useRef(0);
   const { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds } = editorDocument;
