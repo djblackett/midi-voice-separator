@@ -199,6 +199,7 @@ export default function App() {
     branch: editorBranch,
     document: editorDocument,
     activeSide: editorActiveSide,
+    branchB: editorBranchB,
     dispatch: dispatchEditorCommand,
     undo: undoEditorBranch,
     redo: redoEditorBranch,
@@ -307,23 +308,41 @@ export default function App() {
   const mostRecentSnapshot =
     namedSnapshots.length > 0 ? namedSnapshots[namedSnapshots.length - 1] : undefined;
   const diffTarget = namedSnapshots.find((entry) => entry.id === diffTargetId) ?? null;
+  // The diff's reference ("before") side. While a comparison is open it is the
+  // live B branch -- so editing B is reflected in the diff -- rather than the
+  // frozen snapshot B was forked from. Outside a comparison it is the selected
+  // diff-target snapshot. Both expose the same materializable/provenance shape.
+  const diffReference = useMemo(() => {
+    if (compareState && editorBranchB) {
+      return {
+        state: editorBranchB.present,
+        assignmentProvenance: editorBranchB.present.assignmentProvenance,
+      };
+    }
+    if (diffTarget) {
+      return { state: diffTarget.state, assignmentProvenance: diffTarget.assignmentProvenance };
+    }
+    return null;
+  }, [compareState, editorBranchB, diffTarget]);
   const assignmentMetricTargetProject = useMemo(
-    () => materializeSnapshotProject(diffTarget),
-    [diffTarget],
+    () =>
+      compareState && editorBranchB
+        ? materializeEditorProject(editorBranchB.present)
+        : materializeSnapshotProject(diffTarget),
+    [compareState, editorBranchB, diffTarget],
   );
   const assignmentMetric = useAssignmentMetricComparison(
     assignmentMetricTargetProject,
     displayedProject,
   );
-  // Diffs the selected snapshot (the reference/"before" side) against the
-  // live current state ("after"), never a raw project or override map
-  // alone (C6) -- toDiffSide reconstructs the same displayed composition
-  // App.tsx itself renders.
+  // Diffs the reference ("before") side against the live current state
+  // ("after"), never a raw project or override map alone (C6) -- toDiffSide
+  // reconstructs the same displayed composition App.tsx itself renders.
   const assignmentDiffResult = useMemo(() => {
-    if (!diffTarget) {
+    if (!diffReference) {
       return null;
     }
-    const targetSide = toDiffSide(diffTarget.state, diffTarget.assignmentProvenance);
+    const targetSide = toDiffSide(diffReference.state, diffReference.assignmentProvenance);
     const currentSide = toDiffSide(
       { project, voiceOverrides, voiceOrder, voiceLabels },
       editorDocument.assignmentProvenance,
@@ -332,7 +351,7 @@ export default function App() {
       return null;
     }
     return diffAssignments(targetSide, currentSide);
-  }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, editorDocument]);
+  }, [diffReference, project, voiceOverrides, voiceOrder, voiceLabels, editorDocument]);
   const exportReadinessSummary = useMemo(
     () =>
       buildExportReadinessSummary({
@@ -355,18 +374,16 @@ export default function App() {
         : [],
     [displayedProject, voiceOverrides],
   );
-  // The diff target's own materialized assignments -- the "before" side's
+  // The reference ("before") side's own materialized assignments -- its
   // noteId -> voiceId map, reused directly as the changed-note overlay's
-  // "previous voice" lookup rather than recomputing it from the diff
-  // result. Depends only on diffTarget (not the live editor state), since
-  // it's always the target/"before" side.
+  // "previous voice" lookup rather than recomputing it from the diff result.
   const changedNotePreviousVoiceId = useMemo(() => {
-    if (!diffTarget) {
+    if (!diffReference) {
       return new Map<string, string>();
     }
-    const targetSide = toDiffSide(diffTarget.state, diffTarget.assignmentProvenance);
+    const targetSide = toDiffSide(diffReference.state, diffReference.assignmentProvenance);
     return targetSide?.assignments ?? new Map<string, string>();
-  }, [diffTarget]);
+  }, [diffReference]);
   const isDiffPreview = compareState?.viewing === "diff";
   const pianoRollChangedNoteIds = useMemo(() => {
     if (

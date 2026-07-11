@@ -27,6 +27,10 @@ function voiceRow(page: Page, label: string) {
     .filter({ has: page.getByLabel(`Select notes in ${label}`, { exact: true }) });
 }
 
+function statsRow(page: Page, label: string) {
+  return page.locator(".diff-summary-stats div", { hasText: label }).innerText();
+}
+
 test("editing side B leaves side A untouched, with independent per-side undo", async ({ page }) => {
   await installFakeTauri(page, {
     importedProject: project,
@@ -71,4 +75,33 @@ test("editing side B leaves side A untouched, with independent per-side undo", a
   await page.getByRole("button", { name: "B: Snapshot" }).click();
   await expect(voiceRow(page, "Lead")).toContainText("0 notes");
   await expect(voiceRow(page, "Bass")).toContainText("3 notes");
+});
+
+test("the diff reflects edits to the live B branch, not the frozen snapshot", async ({ page }) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    // Re-run moves the Bass note (c) into Lead, so A becomes all-Lead while the
+    // forked B snapshot keeps its Lead/Bass split -- the two sides differ.
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "c" ? { ...entry, voiceId: "voice-1" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+
+  // A (all Lead) vs the just-forked B (Lead a,b / Bass c): the Bass note differs.
+  await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("1");
+
+  // Edit B to match A: move its Bass note into Lead so B is now all-Lead too.
+  await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await page.getByLabel("Select notes in Bass").click();
+  await page.keyboard.press("1");
+
+  // Back on A, the diff re-derives against the edited B branch and now finds no
+  // difference. A frozen-snapshot reference would still report the one change.
+  await page.getByRole("button", { name: "A: Current" }).click();
+  await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("0");
 });
