@@ -4,12 +4,12 @@ import type { EditorSnapshot } from "./editorHistory";
 import { createNamedSnapshot, type NamedSnapshot, type RerunSettings } from "./editorSnapshots";
 import {
   buildComparePreview,
-  createCompareState,
+  createComparisonWorkspace,
   describeVoiceMatch,
   editorSnapshotFromCurrent,
-  isEditingDisabledForCompare,
+  isEditingDisabledForComparison,
   mapSoloVoiceForPreview,
-  updateCompareViewing,
+  updateComparisonViewing,
   type CurrentEditorCompareState,
 } from "./editorCompare";
 
@@ -87,13 +87,14 @@ function snapshot(
 }
 
 describe("editor compare state", () => {
-  it("disables editing only for B and diff views", () => {
-    const compareState = createCompareState("current", "snapshot-a");
+  it("disables editing whenever the canvas shows a side other than the active one", () => {
+    const workspace = createComparisonWorkspace("snapshot-a");
 
-    expect(isEditingDisabledForCompare(null)).toBe(false);
-    expect(isEditingDisabledForCompare(compareState)).toBe(false);
-    expect(isEditingDisabledForCompare(updateCompareViewing(compareState, "B"))).toBe(true);
-    expect(isEditingDisabledForCompare(updateCompareViewing(compareState, "diff"))).toBe(true);
+    expect(workspace.activeSide).toBe("A");
+    expect(isEditingDisabledForComparison(null)).toBe(false);
+    expect(isEditingDisabledForComparison(workspace)).toBe(false);
+    expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "B"))).toBe(true);
+    expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "diff"))).toBe(true);
   });
 
   it("materializes the B snapshot project without mutating the current editor project", () => {
@@ -126,7 +127,7 @@ describe("editor compare state", () => {
     };
 
     const preview = buildComparePreview(
-      updateCompareViewing(createCompareState("current", "target"), "B"),
+      updateComparisonViewing(createComparisonWorkspace("target"), "B"),
       [target],
       current,
     );
@@ -164,7 +165,7 @@ describe("editor compare state", () => {
     };
 
     const preview = buildComparePreview(
-      updateCompareViewing(createCompareState("current", "target"), "B"),
+      updateComparisonViewing(createComparisonWorkspace("target"), "B"),
       [target],
       current,
     );

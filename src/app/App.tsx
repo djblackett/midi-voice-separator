@@ -98,12 +98,12 @@ import {
 } from "./editorSnapshots";
 import {
   buildComparePreview,
-  createCompareState,
-  isEditingDisabledForCompare,
+  createComparisonWorkspace,
+  isEditingDisabledForComparison,
   mapSoloVoiceForPreview,
   materializeSnapshotProject,
-  updateCompareViewing,
-  type CompareState,
+  updateComparisonViewing,
+  type ComparisonWorkspace,
   type CompareViewing,
 } from "./editorCompare";
 import {
@@ -195,7 +195,7 @@ export default function App() {
   const [diffTargetId, setDiffTargetId] = useState("");
   const [showChangedNotes, setShowChangedNotes] = useState(false);
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
-  const [compareState, setCompareState] = useState<CompareState | null>(null);
+  const [compareState, setCompareState] = useState<ComparisonWorkspace | null>(null);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const {
     branch: editorBranch,
@@ -397,7 +397,7 @@ export default function App() {
     () => buildComparePreview(compareState, namedSnapshots, currentCompareState),
     [compareState, namedSnapshots, currentCompareState],
   );
-  const isCompareReadOnly = isEditingDisabledForCompare(compareState);
+  const isCompareReadOnly = isEditingDisabledForComparison(compareState);
   const pianoRollProject =
     compareState?.viewing === "B" ? comparePreview.project : displayedProject;
   const pianoRollSoloVoiceId =
@@ -997,13 +997,13 @@ export default function App() {
     if (!diffTargetId) {
       return;
     }
-    setCompareState(createCompareState("current", diffTargetId));
+    setCompareState(createComparisonWorkspace(diffTargetId));
     setInteractionMode("select");
     setOnlyChangedNotes(false);
   }
 
   function handleSetCompareViewing(viewing: CompareViewing) {
-    setCompareState((current) => updateCompareViewing(current, viewing));
+    setCompareState((current) => updateComparisonViewing(current, viewing));
     if (viewing === "B" || viewing === "diff") {
       setInteractionMode("select");
       setSelectedNoteIds(new Set());

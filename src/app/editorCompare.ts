@@ -3,14 +3,22 @@ import type { MidiProject, MidiVoice } from "../domain/midi/midiProject";
 import { matchVoices, toDiffSide, type VoiceMatching } from "../domain/midi/assignmentDiff";
 import type { VoiceOverrides } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
+import type { BranchId } from "./editor/editorBranch";
 import type { EditorSnapshot } from "./editorHistory";
 import type { NamedSnapshot } from "./editorSnapshots";
 
 export type CompareViewing = "A" | "B" | "diff";
 
-export interface CompareState {
-  baselineSnapshotId: string;
+/**
+ * Reference-only comparison state (M4). It names the snapshot side B is drawn
+ * from, which side edits and inspectors bind to (`activeSide`), and which side
+ * the single canvas is showing (`viewing`). It never stores materialized
+ * projects, diffs, matches, or scores. Until B can be forked into a live
+ * branch (slice D2), `activeSide` is always "A" and B is a snapshot reference.
+ */
+export interface ComparisonWorkspace {
   targetSnapshotId: string;
+  activeSide: BranchId;
   viewing: CompareViewing;
 }
 
@@ -23,26 +31,25 @@ export interface ComparePreview {
   matching: VoiceMatching | null;
 }
 
-export function isReadOnlyCompareViewing(viewing: CompareViewing): boolean {
-  return viewing === "B" || viewing === "diff";
+/**
+ * Editing is disabled whenever the canvas shows a side other than the one
+ * being edited -- the "diff" view included, since it is never an editable
+ * side. With `activeSide` pinned to "A" this reproduces the prior "B and diff
+ * are read-only" rule while expressing it in the terms slice D3 needs.
+ */
+export function isEditingDisabledForComparison(workspace: ComparisonWorkspace | null): boolean {
+  return workspace !== null && workspace.viewing !== workspace.activeSide;
 }
 
-export function isEditingDisabledForCompare(compareState: CompareState | null): boolean {
-  return compareState !== null && isReadOnlyCompareViewing(compareState.viewing);
+export function createComparisonWorkspace(targetSnapshotId: string): ComparisonWorkspace {
+  return { targetSnapshotId, activeSide: "A", viewing: "A" };
 }
 
-export function createCompareState(
-  baselineSnapshotId: string,
-  targetSnapshotId: string,
-): CompareState {
-  return { baselineSnapshotId, targetSnapshotId, viewing: "A" };
-}
-
-export function updateCompareViewing(
-  compareState: CompareState | null,
+export function updateComparisonViewing(
+  workspace: ComparisonWorkspace | null,
   viewing: CompareViewing,
-): CompareState | null {
-  return compareState ? { ...compareState, viewing } : null;
+): ComparisonWorkspace | null {
+  return workspace ? { ...workspace, viewing } : null;
 }
 
 export function materializeSnapshotProject(snapshot: NamedSnapshot | null): MidiProject | null {
@@ -50,17 +57,15 @@ export function materializeSnapshotProject(snapshot: NamedSnapshot | null): Midi
 }
 
 export function buildComparePreview(
-  compareState: CompareState | null,
+  workspace: ComparisonWorkspace | null,
   snapshots: readonly NamedSnapshot[],
   current: CurrentEditorCompareState,
 ): ComparePreview {
-  if (!compareState || compareState.viewing === "A") {
+  if (!workspace || workspace.viewing === "A") {
     return { project: current.project, matching: null };
   }
 
-  const targetSnapshot = snapshots.find(
-    (snapshot) => snapshot.id === compareState.targetSnapshotId,
-  );
+  const targetSnapshot = snapshots.find((snapshot) => snapshot.id === workspace.targetSnapshotId);
   if (!targetSnapshot) {
     return { project: current.project, matching: null };
   }
@@ -70,7 +75,7 @@ export function buildComparePreview(
   const targetSide = toDiffSide(targetSnapshot.state, targetSnapshot.assignmentProvenance);
   const matching = currentSide && targetSide ? matchVoices(currentSide, targetSide) : null;
 
-  return { project: compareState.viewing === "B" ? targetProject : current.project, matching };
+  return { project: workspace.viewing === "B" ? targetProject : current.project, matching };
 }
 
 export function mapSoloVoiceForPreview(
