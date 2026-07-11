@@ -1,8 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { importMidi } from "../../lib/tauri/commands";
-import type { MidiProject } from "../../domain/midi/midiProject";
+import { importMidi, type AssignmentOperationResult } from "../../lib/tauri/commands";
 
-export async function selectAndImportMidi(): Promise<MidiProject | null> {
+export async function selectAndImportMidi(): Promise<AssignmentOperationResult | null> {
   const selectedPath = await open({
     multiple: false,
     filters: [

@@ -4,7 +4,7 @@ pub mod model;
 pub mod parser;
 pub mod voice_assignment;
 
-pub use model::{ExportMidiResultDto, MidiProjectDto};
+pub use model::{AssignmentOperationResultDto, ExportMidiResultDto, MidiProjectDto};
 
 /// Legacy marker: exports used to write this as every voice track's name,
 /// and the parser detected app-exported files by it. Kept so files

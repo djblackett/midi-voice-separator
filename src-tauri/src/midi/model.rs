@@ -1,5 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+/// Bump when a change can alter the heuristic-produced base assignment.
+pub const ASSIGNMENT_ALGORITHM_VERSION: u32 = 1;
+
+/// Backend-minted record of how a document's base assignment was produced.
+/// Manual corrections are deliberately not represented here; they remain in
+/// the editor's override layer.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AssignmentProvenanceDto {
+    Imported {
+        #[serde(rename = "algorithmVersion")]
+        algorithm_version: u32,
+    },
+    AppExportedVoiceTracks,
+    Reassigned {
+        strategy: SeparationStrategy,
+        mode: AssignmentMode,
+        #[serde(rename = "maxVoiceCount")]
+        max_voice_count: Option<usize>,
+        #[serde(rename = "algorithmVersion")]
+        algorithm_version: u32,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignmentOperationResultDto {
+    pub project: MidiProjectDto,
+    pub provenance: AssignmentProvenanceDto,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MidiProjectDto {

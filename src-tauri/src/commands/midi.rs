@@ -8,10 +8,13 @@ use crate::{
             AssignmentMetricReportDto,
         },
         exporter::export_midi_bytes,
-        model::{AssignmentMode, SeparationStrategy},
-        parser::parse_midi_project,
+        model::{
+            AssignmentMode, AssignmentProvenanceDto, SeparationStrategy,
+            ASSIGNMENT_ALGORITHM_VERSION,
+        },
+        parser::{has_exported_voice_tracks, parse_midi_project},
         voice_assignment::{assign_voices_with_locks, summarize_separation_quality},
-        ExportMidiResultDto, MidiProjectDto,
+        AssignmentOperationResultDto, ExportMidiResultDto, MidiProjectDto,
     },
 };
 
@@ -34,7 +37,7 @@ pub fn evaluate_assignment(
 }
 
 #[tauri::command]
-pub fn import_midi(path: String) -> Result<MidiProjectDto, AppError> {
+pub fn import_midi(path: String) -> Result<AssignmentOperationResultDto, AppError> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
         return Err(AppError::empty_path());
@@ -55,9 +58,22 @@ pub fn import_midi(path: String) -> Result<MidiProjectDto, AppError> {
         AppError::from_io(&error)
     })?;
 
-    parse_midi_project(path, &bytes).map_err(|error| {
+    let project = parse_midi_project(path, &bytes).map_err(|error| {
         eprintln!("Failed to parse MIDI file '{}': {error}", path.display());
         error
+    })?;
+
+    let provenance = if has_exported_voice_tracks(&bytes) {
+        AssignmentProvenanceDto::AppExportedVoiceTracks
+    } else {
+        AssignmentProvenanceDto::Imported {
+            algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+        }
+    };
+
+    Ok(AssignmentOperationResultDto {
+        project,
+        provenance,
     })
 }
 
@@ -102,11 +118,19 @@ pub fn reassign_voices(
     max_voice_count: Option<usize>,
     strategy: SeparationStrategy,
     mode: AssignmentMode,
-) -> Result<MidiProjectDto, AppError> {
+) -> Result<AssignmentOperationResultDto, AppError> {
     project.voices =
         assign_voices_with_locks(&mut project.notes, &locked, max_voice_count, strategy, mode);
     project.separation_summary = summarize_separation_quality(&project.notes);
-    Ok(project)
+    Ok(AssignmentOperationResultDto {
+        project,
+        provenance: AssignmentProvenanceDto::Reassigned {
+            strategy,
+            mode,
+            max_voice_count,
+            algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -115,8 +139,9 @@ mod tests {
     use crate::error::AppErrorCode;
     use crate::midi::assignment_metric::GENERAL_PURPOSE_PROFILE;
     use crate::midi::model::{
-        AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
-        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
+        AssignmentMode, AssignmentProvenanceDto, AssignmentReason, MidiNoteDto, MidiVoiceDto,
+        SeparationSummaryDto, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
+        ASSIGNMENT_ALGORITHM_VERSION,
     };
     use std::path::PathBuf;
 
@@ -201,7 +226,13 @@ mod tests {
 
         let imported = import_midi(path).expect("fixture should import");
 
-        assert_eq!(imported.notes.len(), 2);
+        assert_eq!(imported.project.notes.len(), 2);
+        assert_eq!(
+            imported.provenance,
+            AssignmentProvenanceDto::Imported {
+                algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+            }
+        );
     }
 
     #[test]
@@ -285,13 +316,26 @@ mod tests {
         .expect("reassignment should succeed");
 
         let locked_note = result
+            .project
             .notes
             .iter()
             .find(|note| note.id == "a")
             .expect("locked note should still be present");
         assert_eq!(locked_note.voice_id, "voice-9");
         assert_eq!(locked_note.assignment_reason, AssignmentReason::UserLocked);
-        assert_eq!(result.separation_summary.voice_count, result.voices.len());
+        assert_eq!(
+            result.project.separation_summary.voice_count,
+            result.project.voices.len()
+        );
+        assert_eq!(
+            result.provenance,
+            AssignmentProvenanceDto::Reassigned {
+                strategy: SeparationStrategy::Balanced,
+                mode: AssignmentMode::Greedy,
+                max_voice_count: None,
+                algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+            }
+        );
     }
 
     #[test]
@@ -310,8 +354,20 @@ mod tests {
         )
         .expect("reassignment should succeed");
 
-        assert_eq!(result.notes[0].voice_id, result.notes[1].voice_id);
-        assert_eq!(result.separation_summary.voice_count, 1);
+        assert_eq!(
+            result.project.notes[0].voice_id,
+            result.project.notes[1].voice_id
+        );
+        assert_eq!(result.project.separation_summary.voice_count, 1);
+        assert_eq!(
+            result.provenance,
+            AssignmentProvenanceDto::Reassigned {
+                strategy: SeparationStrategy::Balanced,
+                mode: AssignmentMode::Greedy,
+                max_voice_count: Some(1),
+                algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+            }
+        );
     }
 
     #[test]
@@ -330,7 +386,19 @@ mod tests {
         )
         .expect("reassignment should succeed");
 
-        assert_eq!(result.separation_summary.voice_count, result.voices.len());
+        assert_eq!(
+            result.project.separation_summary.voice_count,
+            result.project.voices.len()
+        );
+        assert_eq!(
+            result.provenance,
+            AssignmentProvenanceDto::Reassigned {
+                strategy: SeparationStrategy::Balanced,
+                mode: AssignmentMode::Global,
+                max_voice_count: None,
+                algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+            }
+        );
     }
 
     #[test]
@@ -396,10 +464,10 @@ mod workflow_integration_tests {
     fn command_workflow_imports_reassigns_exports_and_reimports_a_real_file() {
         let imported = import_midi(fixture_path().display().to_string())
             .expect("fixture should import through the production command");
-        let locked_note = imported.notes[0].id.clone();
-        let locked_voice = imported.notes[0].voice_id.clone();
+        let locked_note = imported.project.notes[0].id.clone();
+        let locked_voice = imported.project.notes[0].voice_id.clone();
         let reassigned = reassign_voices(
-            imported,
+            imported.project,
             HashMap::from([(locked_note.clone(), locked_voice.clone())]),
             None,
             SeparationStrategy::Balanced,
@@ -408,6 +476,7 @@ mod workflow_integration_tests {
         .expect("reassignment should succeed through the production command");
         assert_eq!(
             reassigned
+                .project
                 .notes
                 .iter()
                 .find(|note| note.id == locked_note)
@@ -417,12 +486,17 @@ mod workflow_integration_tests {
         );
 
         let output = unique_export_path();
-        let export_result = export_midi(output.display().to_string(), reassigned)
+        let export_result = export_midi(output.display().to_string(), reassigned.project)
             .expect("workflow export should succeed through the production command");
         let reimported = import_midi(export_result.path)
             .expect("workflow export should reimport through the production command");
-        assert_eq!(reimported.notes.len(), 2);
+        assert_eq!(reimported.project.notes.len(), 2);
+        assert_eq!(
+            reimported.provenance,
+            crate::midi::model::AssignmentProvenanceDto::AppExportedVoiceTracks
+        );
         assert!(reimported
+            .project
             .notes
             .iter()
             .all(|note| !note.voice_id.is_empty()));

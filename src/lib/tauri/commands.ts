@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AssignmentProvenance } from "../../domain/midi/assignmentProvenance";
 import type { MidiProject, SeparationStrategy } from "../../domain/midi/midiProject";
 import type {
   AssignmentEvaluationRequest,
@@ -27,6 +28,12 @@ export interface ExportMidiResult {
   path: string;
   trackCount: number;
   noteCount: number;
+}
+
+/** Result returned by import and rerun commands before B2 carries it on the document. */
+export interface AssignmentOperationResult {
+  project: MidiProject;
+  provenance: AssignmentProvenance;
 }
 
 // `SeparationStrategy` is a domain concept (it also appears in the
@@ -77,9 +84,9 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   }
 }
 
-export async function importMidi(path: string): Promise<MidiProject> {
+export async function importMidi(path: string): Promise<AssignmentOperationResult> {
   try {
-    return await invoke<MidiProject>(COMMANDS.importMidi, { path });
+    return await invoke<AssignmentOperationResult>(COMMANDS.importMidi, { path });
   } catch (error) {
     throw toCommandError(error);
   }
@@ -99,9 +106,9 @@ export async function reassignVoices(
   maxVoiceCount: number | undefined,
   strategy: SeparationStrategy,
   mode: AssignmentMode,
-): Promise<MidiProject> {
+): Promise<AssignmentOperationResult> {
   try {
-    return await invoke<MidiProject>(COMMANDS.reassignVoices, {
+    return await invoke<AssignmentOperationResult>(COMMANDS.reassignVoices, {
       project,
       locked,
       maxVoiceCount: maxVoiceCount ?? null,

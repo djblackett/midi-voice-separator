@@ -213,6 +213,19 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
     })
 }
 
+/// Identifies MIDI exported by this app without assigning it again. This is
+/// intentionally separate from parsing the project DTO so the command layer
+/// can mint the corresponding provenance while keeping parser callers simple.
+pub fn has_exported_voice_tracks(bytes: &[u8]) -> bool {
+    Smf::parse(bytes)
+        .map(|smf| {
+            smf.tracks
+                .iter()
+                .any(|track| is_exported_voice_track(track))
+        })
+        .unwrap_or(false)
+}
+
 /// The first named `TrackName` in a track, decoded leniently and trimmed;
 /// `None` for unnamed tracks and for the legacy fixed export sentinel
 /// (which was a detection marker, not a real name).

@@ -19,14 +19,35 @@ describe("native Tauri IPC bridge", () => {
       { timeout: 30_000, interval: 500, timeoutMsg: "The native window never finished loading." },
     );
 
-    const project = await browser.execute(
+    const imported = await browser.execute(
       async (importPath) => window.__TAURI__.core.invoke("import_midi", { path: importPath }),
       fixturePath,
     );
+    const { project } = imported;
 
     assert.equal(project.notes.length, 2, "the fixture has exactly two notes");
     assert.equal(project.notes[0].pitch, 60); // C4
     assert.equal(project.notes[1].pitch, 64); // E4
+    assert.deepEqual(imported.provenance, { kind: "imported", algorithmVersion: 1 });
+
+    const reassigned = await browser.execute(
+      async (inputProject) =>
+        window.__TAURI__.core.invoke("reassign_voices", {
+          project: inputProject,
+          locked: {},
+          maxVoiceCount: 4,
+          strategy: "REGISTER_PRIORITY",
+          mode: "GLOBAL",
+        }),
+      project,
+    );
+    assert.deepEqual(reassigned.provenance, {
+      kind: "reassigned",
+      strategy: "REGISTER_PRIORITY",
+      mode: "GLOBAL",
+      maxVoiceCount: 4,
+      algorithmVersion: 1,
+    });
 
     const outputPath = path.join(os.tmpdir(), "chiptune-voice-separator-native-e2e-export.mid");
     rmSync(outputPath, { force: true });
@@ -47,7 +68,12 @@ describe("native Tauri IPC bridge", () => {
         outputPath,
       );
 
-      assert.equal(reimported.notes.length, 2, "the exported file should re-import cleanly");
+      assert.equal(
+        reimported.project.notes.length,
+        2,
+        "the exported file should re-import cleanly",
+      );
+      assert.deepEqual(reimported.provenance, { kind: "appExportedVoiceTracks" });
     } finally {
       rmSync(outputPath, { force: true });
     }

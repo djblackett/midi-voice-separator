@@ -29,10 +29,13 @@ describe("selectAndImportMidi", () => {
 
   it("imports whatever path the dialog returns", async () => {
     openMock.mockResolvedValue("C:\\music\\song.mid");
-    const project = { fileName: "song.mid" } as never;
-    importMidiMock.mockResolvedValue(project);
+    const imported = {
+      project: { fileName: "song.mid" },
+      provenance: { kind: "imported" as const, algorithmVersion: 1 },
+    } as never;
+    importMidiMock.mockResolvedValue(imported);
 
-    await expect(selectAndImportMidi()).resolves.toBe(project);
+    await expect(selectAndImportMidi()).resolves.toBe(imported);
     expect(importMidiMock).toHaveBeenCalledWith("C:\\music\\song.mid");
   });
 

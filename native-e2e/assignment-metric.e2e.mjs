@@ -13,10 +13,11 @@ describe("native assignment model cost IPC", () => {
       { timeout: 30_000, interval: 500, timeoutMsg: "The native window never finished loading." },
     );
 
-    const project = await browser.execute(
+    const imported = await browser.execute(
       async (importPath) => window.__TAURI__.core.invoke("import_midi", { path: importPath }),
       fixturePath,
     );
+    const { project } = imported;
     const request = { ppq: project.ppq, notes: project.notes, profile };
     const first = await browser.execute(
       async (evaluationRequest) =>

@@ -30,12 +30,13 @@ describe("tauri command adapter", () => {
   });
 
   it("maps import success", async () => {
-    invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
+    const result = {
+      project: { fileName: "song.mid", notes: [] },
+      provenance: { kind: "imported", algorithmVersion: 1 },
+    };
+    invokeMock.mockResolvedValue(result);
 
-    await expect(importMidi("C:\\music\\song.mid")).resolves.toEqual({
-      fileName: "song.mid",
-      notes: [],
-    });
+    await expect(importMidi("C:\\music\\song.mid")).resolves.toEqual(result);
     expect(invokeMock).toHaveBeenCalledWith("import_midi", { path: "C:\\music\\song.mid" });
   });
 
@@ -61,14 +62,21 @@ describe("tauri command adapter", () => {
   it("maps reassign-voices success with no voice cap", async () => {
     const project = { fileName: "song.mid", notes: [] };
     const locked = { "note-1": "voice-2" };
-    invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
+    const result = {
+      project: { fileName: "song.mid", notes: [] },
+      provenance: {
+        kind: "reassigned",
+        strategy: "BALANCED",
+        mode: "GREEDY",
+        maxVoiceCount: null,
+        algorithmVersion: 1,
+      },
+    };
+    invokeMock.mockResolvedValue(result);
 
     await expect(
       reassignVoices(project as never, locked, undefined, "BALANCED", "GREEDY"),
-    ).resolves.toEqual({
-      fileName: "song.mid",
-      notes: [],
-    });
+    ).resolves.toEqual(result);
     expect(invokeMock).toHaveBeenCalledWith("reassign_voices", {
       project,
       locked,
@@ -81,7 +89,16 @@ describe("tauri command adapter", () => {
   it("passes an explicit max voice count, strategy, and assignment mode through to the command", async () => {
     const project = { fileName: "song.mid", notes: [] };
     const locked = {};
-    invokeMock.mockResolvedValue({ fileName: "song.mid", notes: [] });
+    invokeMock.mockResolvedValue({
+      project: { fileName: "song.mid", notes: [] },
+      provenance: {
+        kind: "reassigned",
+        strategy: "REGISTER_PRIORITY",
+        mode: "GLOBAL",
+        maxVoiceCount: 4,
+        algorithmVersion: 1,
+      },
+    });
 
     await reassignVoices(project as never, locked, 4, "REGISTER_PRIORITY", "GLOBAL");
 

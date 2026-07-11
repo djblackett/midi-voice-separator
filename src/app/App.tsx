@@ -723,9 +723,9 @@ export default function App() {
     setError(null);
 
     try {
-      const importedProject = await selectAndImportMidi();
-      if (importedProject) {
-        applyImportedProject(importedProject);
+      const imported = await selectAndImportMidi();
+      if (imported) {
+        applyImportedProject(imported.project);
       }
     } catch (commandError) {
       setError(toAppCommandError(commandError));
@@ -739,7 +739,7 @@ export default function App() {
     setError(null);
 
     try {
-      applyImportedProject(await importMidi(path));
+      applyImportedProject((await importMidi(path)).project);
     } catch (commandError) {
       setError(toAppCommandError(commandError));
     } finally {
@@ -788,13 +788,14 @@ export default function App() {
     setReassignError(null);
 
     try {
-      const reassignedProject = await reassignVoices(
+      const reassigned = await reassignVoices(
         project,
         voiceOverrides,
         maxVoiceCount,
         separationStrategy,
         assignmentMode,
       );
+      const reassignedProject = reassigned.project;
       const rerunSettings: RerunSettings = {
         strategy: separationStrategy,
         assignmentMode,

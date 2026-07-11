@@ -91,7 +91,10 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
             if (importError) {
               throw importError;
             }
-            return importedProject;
+            return {
+              project: importedProject,
+              provenance: { kind: "imported", algorithmVersion: 1 },
+            };
           }
           if (cmd === "plugin:dialog|open") {
             return importPath;
@@ -117,9 +120,18 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
             if (reassignError) {
               throw reassignError;
             }
-            return (
-              window as unknown as { __fakeReassign: (a: unknown) => Promise<unknown> }
-            ).__fakeReassign(args);
+            return {
+              project: await (
+                window as unknown as { __fakeReassign: (a: unknown) => Promise<unknown> }
+              ).__fakeReassign(args),
+              provenance: {
+                kind: "reassigned",
+                strategy: (args as { strategy: string }).strategy,
+                mode: (args as { mode: string }).mode,
+                maxVoiceCount: (args as { maxVoiceCount: number | null }).maxVoiceCount,
+                algorithmVersion: 1,
+              },
+            };
           }
           if (cmd === "evaluate_assignment") {
             return (
