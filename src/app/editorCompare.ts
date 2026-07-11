@@ -10,15 +10,13 @@ import type { NamedSnapshot } from "./editorSnapshots";
 export type CompareViewing = "A" | "B" | "diff";
 
 /**
- * Reference-only comparison state (M4). It names the snapshot side B is drawn
- * from, which side edits and inspectors bind to (`activeSide`), and which side
- * the single canvas is showing (`viewing`). It never stores materialized
- * projects, diffs, matches, or scores. Until B can be forked into a live
- * branch (slice D2), `activeSide` is always "A" and B is a snapshot reference.
+ * Reference-only comparison state (M4). It names the snapshot side B was forked
+ * from and which side the single canvas is showing (`viewing`). It never stores
+ * materialized projects, diffs, matches, or scores. The editable `activeSide`
+ * is owned by the branch hook, not duplicated here.
  */
 export interface ComparisonWorkspace {
   targetSnapshotId: string;
-  activeSide: BranchId;
   viewing: CompareViewing;
 }
 
@@ -33,16 +31,18 @@ export interface ComparePreview {
 
 /**
  * Editing is disabled whenever the canvas shows a side other than the one
- * being edited -- the "diff" view included, since it is never an editable
- * side. With `activeSide` pinned to "A" this reproduces the prior "B and diff
- * are read-only" rule while expressing it in the terms slice D3 needs.
+ * being edited -- the "diff" view included, since it is never an editable side
+ * (`activeSide` is "A" or "B", so `viewing === "diff"` is always disabled).
  */
-export function isEditingDisabledForComparison(workspace: ComparisonWorkspace | null): boolean {
-  return workspace !== null && workspace.viewing !== workspace.activeSide;
+export function isEditingDisabledForComparison(
+  workspace: ComparisonWorkspace | null,
+  activeSide: BranchId,
+): boolean {
+  return workspace !== null && workspace.viewing !== activeSide;
 }
 
 export function createComparisonWorkspace(targetSnapshotId: string): ComparisonWorkspace {
-  return { targetSnapshotId, activeSide: "A", viewing: "A" };
+  return { targetSnapshotId, viewing: "A" };
 }
 
 export function updateComparisonViewing(

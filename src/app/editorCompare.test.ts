@@ -90,11 +90,18 @@ describe("editor compare state", () => {
   it("disables editing whenever the canvas shows a side other than the active one", () => {
     const workspace = createComparisonWorkspace("snapshot-a");
 
-    expect(workspace.activeSide).toBe("A");
-    expect(isEditingDisabledForComparison(null)).toBe(false);
-    expect(isEditingDisabledForComparison(workspace)).toBe(false);
-    expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "B"))).toBe(true);
-    expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "diff"))).toBe(true);
+    expect(isEditingDisabledForComparison(null, "A")).toBe(false);
+    // Viewing A while A is active is editable; viewing A while B is active is not.
+    expect(isEditingDisabledForComparison(workspace, "A")).toBe(false);
+    expect(isEditingDisabledForComparison(workspace, "B")).toBe(true);
+    // Viewing B is editable only when B is the active side.
+    const viewingB = updateComparisonViewing(workspace, "B");
+    expect(isEditingDisabledForComparison(viewingB, "B")).toBe(false);
+    expect(isEditingDisabledForComparison(viewingB, "A")).toBe(true);
+    // The diff view is never an editable side.
+    expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "diff"), "A")).toBe(
+      true,
+    );
   });
 
   it("materializes the B snapshot project without mutating the current editor project", () => {

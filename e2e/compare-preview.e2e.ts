@@ -17,7 +17,9 @@ async function importAndCompare(page: Page) {
   await page.getByRole("button", { name: "Start A/B compare" }).click();
 }
 
-test("snapshot preview is read-only and exiting restores normal editing", async ({ page }) => {
+test("the diff view is read-only while side B stays editable, and exiting restores side A", async ({
+  page,
+}) => {
   await installFakeTauri(page, {
     importedProject: project,
     reassign: ({ project: current }) => ({
@@ -30,7 +32,14 @@ test("snapshot preview is read-only and exiting restores normal editing", async 
   await page.goto("/");
   await importAndCompare(page);
 
+  // Side B is now a live editable branch, not a frozen read-only preview.
   await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await expect(page.getByText("Read-only preview: editing is disabled")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Paint mode: off" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Re-run separation" })).toBeEnabled();
+
+  // The diff view is the only read-only comparison view.
+  await page.getByRole("button", { name: "Diff" }).click();
   await expect(page.getByText("Read-only preview: editing is disabled")).toBeVisible();
   await expect(page.getByRole("button", { name: "Paint mode: off" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Re-run separation" })).toBeDisabled();

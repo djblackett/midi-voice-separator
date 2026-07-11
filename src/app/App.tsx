@@ -97,10 +97,8 @@ import {
   type RerunSettings,
 } from "./editorSnapshots";
 import {
-  buildComparePreview,
   createComparisonWorkspace,
   isEditingDisabledForComparison,
-  mapSoloVoiceForPreview,
   materializeSnapshotProject,
   updateComparisonViewing,
   type ComparisonWorkspace,
@@ -200,10 +198,14 @@ export default function App() {
   const {
     branch: editorBranch,
     document: editorDocument,
+    activeSide: editorActiveSide,
     dispatch: dispatchEditorCommand,
     undo: undoEditorBranch,
     redo: redoEditorBranch,
     reset: resetEditorBranch,
+    forkB: forkEditorSideB,
+    discardB: discardEditorSideB,
+    setActiveSide: setEditorActiveSide,
     currentRevision: currentEditorRevision,
   } = useComparisonEditor();
   const rerunRequestSequence = useRef(0);
@@ -382,28 +384,13 @@ export default function App() {
     assignmentDiffResult.changedNoteIds.length > 0;
   const pianoRollOnlyChangedNotes =
     showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
-  const currentCompareState = useMemo(
-    () => ({
-      project: editorDocument.project,
-      voiceOverrides: editorDocument.voiceOverrides,
-      voiceOrder: [...editorDocument.voiceOrder],
-      voiceLabels: { ...editorDocument.voiceLabels },
-      rangeAssignedNoteIds: new Set(editorDocument.rangeAssignedNoteIds),
-      assignmentProvenance: editorDocument.assignmentProvenance,
-    }),
-    [editorDocument],
-  );
-  const comparePreview = useMemo(
-    () => buildComparePreview(compareState, namedSnapshots, currentCompareState),
-    [compareState, namedSnapshots, currentCompareState],
-  );
-  const isCompareReadOnly = isEditingDisabledForComparison(compareState);
-  const pianoRollProject =
-    compareState?.viewing === "B" ? comparePreview.project : displayedProject;
-  const pianoRollSoloVoiceId =
-    compareState?.viewing === "B"
-      ? mapSoloVoiceForPreview(soloVoiceId, comparePreview.matching)
-      : soloVoiceId;
+  const isCompareReadOnly = isEditingDisabledForComparison(compareState, editorActiveSide);
+  // The canvas always renders the active side's own materialized document:
+  // switching the A/B toggle switches the active branch, so `displayedProject`
+  // already is the viewed side. Cross-side voice correspondence (matched
+  // colors/labels/solo) is deferred to the split-screen feature (M9/M10).
+  const pianoRollProject = displayedProject;
+  const pianoRollSoloVoiceId = soloVoiceId;
   const flaggedNoteIdSet = useMemo(
     () => new Set(flaggedNotes.map((note) => note.id)),
     [flaggedNotes],
@@ -445,27 +432,10 @@ export default function App() {
     playbackChangedNoteIds,
     currentFlaggedNoteId,
   ]);
-  const pianoRollVoiceDescriptions = useMemo(() => {
-    const descriptions = new Map<string, string>();
-    if (compareState?.viewing !== "B" || !comparePreview.matching || !displayedProject) {
-      return descriptions;
-    }
-    const currentLabelById = new Map(
-      displayedProject.voices.map((voice) => [voice.id, voice.label]),
-    );
-    for (const match of comparePreview.matching.matched) {
-      descriptions.set(
-        match.afterVoiceId,
-        `Matches ${currentLabelById.get(match.beforeVoiceId) ?? match.beforeVoiceId}`,
-      );
-    }
-    for (const voice of pianoRollProject?.voices ?? []) {
-      if (!descriptions.has(voice.id)) {
-        descriptions.set(voice.id, "New in preview");
-      }
-    }
-    return descriptions;
-  }, [compareState, comparePreview.matching, displayedProject, pianoRollProject]);
+  // Cross-side "matches voice X" / "new in preview" descriptions came from the
+  // read-only B preview's voice matching. With B now a live editable branch,
+  // rich correspondence-based labels move to the split-screen feature (M9/M10).
+  const pianoRollVoiceDescriptions = useMemo(() => new Map<string, string>(), []);
   const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument, playbackScope);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -892,7 +862,9 @@ export default function App() {
   }
 
   function handleUndo() {
-    if (!undoEditorBranch()) {
+    // Undo/redo are authorized against the active side; a read-only view (the
+    // diff) cannot mutate any branch (M14 -- closes the read-only undo leak).
+    if (isCompareReadOnly || !undoEditorBranch()) {
       return;
     }
     setSkippedReviewNoteIds(new Set());
@@ -900,7 +872,7 @@ export default function App() {
   }
 
   function handleRedo() {
-    if (!redoEditorBranch()) {
+    if (isCompareReadOnly || !redoEditorBranch()) {
       return;
     }
     setSkippedReviewNoteIds(new Set());
@@ -994,23 +966,41 @@ export default function App() {
   }
 
   function handleStartCompare() {
-    if (!diffTargetId) {
+    const target = namedSnapshots.find((snapshot) => snapshot.id === diffTargetId);
+    if (!target) {
       return;
     }
+    // Fork B from the immutable snapshot into its own live editable branch;
+    // the snapshot is never mutated by later B edits.
+    forkEditorSideB(
+      {
+        documentId: "B",
+        revision: 0,
+        ...target.state,
+        assignmentProvenance: target.assignmentProvenance,
+      },
+      target.id,
+    );
     setCompareState(createComparisonWorkspace(diffTargetId));
     setInteractionMode("select");
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
     setOnlyChangedNotes(false);
   }
 
+  // The A/B toggle doubles as the active-side switch: viewing A or B makes that
+  // side the editable one; "diff" is read-only, so editing stays on A. Context
+  // that is voice/note-id specific to one side is cleared on every switch.
   function handleSetCompareViewing(viewing: CompareViewing) {
     setCompareState((current) => updateComparisonViewing(current, viewing));
-    if (viewing === "B" || viewing === "diff") {
-      setInteractionMode("select");
-      setSelectedNoteIds(new Set());
-    }
+    setEditorActiveSide(viewing === "B" ? "B" : "A");
+    setInteractionMode("select");
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
   }
 
   function handleExitCompare() {
+    discardEditorSideB();
     setCompareState(null);
   }
 
@@ -1019,8 +1009,10 @@ export default function App() {
       (snapshot) => snapshot.id === compareState?.targetSnapshotId,
     );
     if (target) {
+      // Restore always rewrites side A, then the comparison branch is dropped.
+      setEditorActiveSide("A");
       handleRestoreSnapshot(target);
-      setCompareState(null);
+      discardEditorSideB();
     }
   }
 
