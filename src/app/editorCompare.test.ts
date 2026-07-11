@@ -74,6 +74,13 @@ function snapshot(
       "manual",
       idName,
       1000,
+      {
+        kind: "reassigned",
+        strategy: rerunSettings.strategy,
+        mode: rerunSettings.assignmentMode,
+        maxVoiceCount: rerunSettings.maxVoiceCount,
+        algorithmVersion: 1,
+      },
     ),
     id: idName,
   };
@@ -109,7 +116,13 @@ describe("editor compare state", () => {
       voiceOrder: ["voice-1", "voice-2"],
       voiceLabels: {},
       rangeAssignedNoteIds: new Set(),
-      rerunSettings,
+      assignmentProvenance: {
+        kind: "reassigned",
+        strategy: rerunSettings.strategy,
+        mode: rerunSettings.assignmentMode,
+        maxVoiceCount: rerunSettings.maxVoiceCount,
+        algorithmVersion: 1,
+      },
     };
 
     const preview = buildComparePreview(
@@ -141,7 +154,13 @@ describe("editor compare state", () => {
       voiceOrder: ["voice-1", "voice-2"],
       voiceLabels: {},
       rangeAssignedNoteIds: new Set(),
-      rerunSettings,
+      assignmentProvenance: {
+        kind: "reassigned",
+        strategy: rerunSettings.strategy,
+        mode: rerunSettings.assignmentMode,
+        maxVoiceCount: rerunSettings.maxVoiceCount,
+        algorithmVersion: 1,
+      },
     };
 
     const preview = buildComparePreview(

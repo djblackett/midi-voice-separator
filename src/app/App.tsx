@@ -297,14 +297,6 @@ export default function App() {
   const separationRecommendation = displayedProject
     ? recommendSeparationAction(displayedProject, voiceDiagnostics, selectedMaxVoiceCount)
     : null;
-  const currentRerunSettings = useMemo(
-    () => ({
-      strategy: separationStrategy,
-      assignmentMode,
-      maxVoiceCount: selectedMaxVoiceCount ?? null,
-    }),
-    [separationStrategy, assignmentMode, selectedMaxVoiceCount],
-  );
   const importSnapshot = namedSnapshots.find((entry) => entry.source === "import");
   const mostRecentSnapshot =
     namedSnapshots.length > 0 ? namedSnapshots[namedSnapshots.length - 1] : undefined;
@@ -325,16 +317,16 @@ export default function App() {
     if (!diffTarget) {
       return null;
     }
-    const targetSide = toDiffSide(diffTarget.state, diffTarget.rerunSettings);
+    const targetSide = toDiffSide(diffTarget.state, diffTarget.assignmentProvenance);
     const currentSide = toDiffSide(
       { project, voiceOverrides, voiceOrder, voiceLabels },
-      currentRerunSettings,
+      editorDocument.assignmentProvenance,
     );
     if (!targetSide || !currentSide) {
       return null;
     }
     return diffAssignments(targetSide, currentSide);
-  }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, currentRerunSettings]);
+  }, [diffTarget, project, voiceOverrides, voiceOrder, voiceLabels, editorDocument]);
   const exportReadinessSummary = useMemo(
     () =>
       buildExportReadinessSummary({
@@ -366,7 +358,7 @@ export default function App() {
     if (!diffTarget) {
       return new Map<string, string>();
     }
-    const targetSide = toDiffSide(diffTarget.state, diffTarget.rerunSettings);
+    const targetSide = toDiffSide(diffTarget.state, diffTarget.assignmentProvenance);
     return targetSide?.assignments ?? new Map<string, string>();
   }, [diffTarget]);
   const isDiffPreview = compareState?.viewing === "diff";
@@ -393,9 +385,9 @@ export default function App() {
       voiceOrder: [...editorDocument.voiceOrder],
       voiceLabels: { ...editorDocument.voiceLabels },
       rangeAssignedNoteIds: new Set(editorDocument.rangeAssignedNoteIds),
-      rerunSettings: currentRerunSettings,
+      assignmentProvenance: editorDocument.assignmentProvenance,
     }),
-    [editorDocument, currentRerunSettings],
+    [editorDocument],
   );
   const comparePreview = useMemo(
     () => buildComparePreview(compareState, namedSnapshots, currentCompareState),
@@ -668,7 +660,10 @@ export default function App() {
     };
   }, [isImporting, isExporting, isReassigning]);
 
-  function applyImportedProject(importedProject: MidiProject) {
+  function applyImportedProject(
+    importedProject: MidiProject,
+    assignmentProvenance: EditorDocument["assignmentProvenance"],
+  ) {
     const importVoiceOrder = importedProject.voices.map((voice) => voice.id);
     const importVoiceLabels = seedVoiceLabelsFromImport(importedProject.voices);
 
@@ -680,7 +675,7 @@ export default function App() {
       voiceOrder: importVoiceOrder,
       voiceLabels: importVoiceLabels,
       rangeAssignedNoteIds: new Set(),
-      assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
+      assignmentProvenance,
     });
     setSelectedNoteIds(new Set());
     setSkippedReviewNoteIds(new Set());
@@ -710,6 +705,9 @@ export default function App() {
           maxVoiceCount: null,
         },
         "import",
+        undefined,
+        undefined,
+        assignmentProvenance,
       ),
     ]);
     setDiffTargetId("");
@@ -725,7 +723,7 @@ export default function App() {
     try {
       const imported = await selectAndImportMidi();
       if (imported) {
-        applyImportedProject(imported.project);
+        applyImportedProject(imported.project, imported.provenance);
       }
     } catch (commandError) {
       setError(toAppCommandError(commandError));
@@ -739,7 +737,8 @@ export default function App() {
     setError(null);
 
     try {
-      applyImportedProject((await importMidi(path)).project);
+      const imported = await importMidi(path);
+      applyImportedProject(imported.project, imported.provenance);
     } catch (commandError) {
       setError(toAppCommandError(commandError));
     } finally {
@@ -817,6 +816,9 @@ export default function App() {
             },
             rerunSettings,
             "before-rerun",
+            undefined,
+            undefined,
+            editorDocument.assignmentProvenance,
           ),
         ),
       );
@@ -827,7 +829,7 @@ export default function App() {
       dispatchEditorCommand({
         kind: "replaceProject",
         project: reassignedProject,
-        provenance: editorDocument.assignmentProvenance,
+        provenance: reassigned.provenance,
         voiceOrder: nextVoiceOrder,
       });
       setSkippedReviewNoteIds(new Set());
@@ -844,6 +846,9 @@ export default function App() {
             },
             rerunSettings,
             "after-rerun",
+            undefined,
+            undefined,
+            reassigned.provenance,
           ),
         ),
       );
@@ -903,6 +908,8 @@ export default function App() {
           },
           "manual",
           name === "" ? undefined : name,
+          undefined,
+          editorDocument.assignmentProvenance,
         ),
       ),
     );
@@ -916,7 +923,11 @@ export default function App() {
     const restored = restoreEditorState(snapshot);
     dispatchEditorCommand({
       kind: "restoreDocument",
-      document: { ...editorDocument, ...restored },
+      document: {
+        ...editorDocument,
+        ...restored,
+        assignmentProvenance: snapshot.assignmentProvenance,
+      },
     });
     setSkippedReviewNoteIds(new Set());
     setSelectedNoteIds(new Set());

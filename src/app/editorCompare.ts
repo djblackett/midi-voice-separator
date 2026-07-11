@@ -1,10 +1,6 @@
+import type { AssignmentProvenance } from "../domain/midi/assignmentProvenance";
 import type { MidiProject, MidiVoice } from "../domain/midi/midiProject";
-import {
-  matchVoices,
-  toDiffSide,
-  type DiffRerunSettings,
-  type VoiceMatching,
-} from "../domain/midi/assignmentDiff";
+import { matchVoices, toDiffSide, type VoiceMatching } from "../domain/midi/assignmentDiff";
 import type { VoiceOverrides } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import type { EditorSnapshot } from "./editorHistory";
@@ -19,7 +15,7 @@ export interface CompareState {
 }
 
 export interface CurrentEditorCompareState extends EditorSnapshot {
-  rerunSettings: DiffRerunSettings;
+  assignmentProvenance: AssignmentProvenance;
 }
 
 export interface ComparePreview {
@@ -70,8 +66,8 @@ export function buildComparePreview(
   }
 
   const targetProject = materializeSnapshotProject(targetSnapshot);
-  const currentSide = toDiffSide(current, current.rerunSettings);
-  const targetSide = toDiffSide(targetSnapshot.state, targetSnapshot.rerunSettings);
+  const currentSide = toDiffSide(current, current.assignmentProvenance);
+  const targetSide = toDiffSide(targetSnapshot.state, targetSnapshot.assignmentProvenance);
   const matching = currentSide && targetSide ? matchVoices(currentSide, targetSide) : null;
 
   return { project: compareState.viewing === "B" ? targetProject : current.project, matching };

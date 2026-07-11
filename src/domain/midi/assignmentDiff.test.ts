@@ -45,6 +45,13 @@ const balancedGreedy: DiffRerunSettings = {
   assignmentMode: "GREEDY",
   maxVoiceCount: null,
 };
+const balancedGreedyProvenance = {
+  kind: "reassigned" as const,
+  strategy: "BALANCED" as const,
+  mode: "GREEDY" as const,
+  maxVoiceCount: null,
+  algorithmVersion: 1,
+};
 
 /** Directly encodes assignments from each note's own voiceId, bypassing
  * override composition (that plumbing is toDiffSide's job, tested below). */
@@ -370,7 +377,7 @@ describe("toDiffSide", () => {
     expect(
       toDiffSide(
         { project: null, voiceOverrides: {}, voiceOrder: [], voiceLabels: {} },
-        balancedGreedy,
+        balancedGreedyProvenance,
       ),
     ).toBeNull();
   });
@@ -398,7 +405,7 @@ describe("toDiffSide", () => {
         voiceOrder: ["voice-1", "voice-2"],
         voiceLabels: { "voice-2": "New voice" },
       },
-      balancedGreedy,
+      balancedGreedyProvenance,
     );
 
     expect(result?.assignments.get("a")).toBe("voice-1");
@@ -471,7 +478,7 @@ describe("formatConfidenceDelta", () => {
 
   it("explains why when not comparable, regardless of confidence contents", () => {
     expect(formatConfidenceDelta(diffWith({ confidenceComparable: false, confidence: null }))).toBe(
-      "Not comparable — the two sides used a different strategy or search mode.",
+      "Not comparable — the two sides have different assignment provenance.",
     );
   });
 

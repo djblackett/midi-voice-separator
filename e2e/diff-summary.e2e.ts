@@ -91,7 +91,7 @@ test.describe("assignment diff summary", () => {
     await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("1");
   });
 
-  test("confidence delta is suppressed against a different-strategy target and computed against a same-strategy one", async ({
+  test("confidence delta is suppressed when stored assignment provenance differs", async ({
     page,
   }) => {
     await installFakeTauri(page, {
@@ -116,10 +116,10 @@ test.describe("assignment diff summary", () => {
     await selectDiffTargetByText(page, "Import");
     await expect.poll(() => statsRow(page, "Confidence")).toContain("Not comparable");
 
-    // "Before rerun" captured the same REGISTER_PRIORITY settings the
-    // re-run just used, so this comparison is valid and should report the
-    // two real confidence improvements.
+    // "Before rerun" is still the imported base assignment. Its saved
+    // next-rerun controls are REGISTER_PRIORITY, but its applied provenance
+    // remains import, so it must not be relabeled as comparable evidence.
     await selectDiffTargetByText(page, "Before rerun");
-    await expect.poll(() => statsRow(page, "Confidence")).toContain("2 improved");
+    await expect.poll(() => statsRow(page, "Confidence")).toContain("Not comparable");
   });
 });

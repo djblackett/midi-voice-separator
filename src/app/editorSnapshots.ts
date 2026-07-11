@@ -1,4 +1,5 @@
 import type { AssignmentMode } from "../lib/tauri/commands";
+import type { AssignmentProvenance } from "../domain/midi/assignmentProvenance";
 import { STRATEGY_LABELS, type SeparationStrategy } from "../domain/midi/midiProject";
 import { materializeAssignments } from "../domain/midi/voiceAssignments";
 import type { EditorSnapshot } from "./editorHistory";
@@ -29,6 +30,9 @@ export interface NamedSnapshot {
   name: string;
   createdAt: number;
   source: SnapshotSource;
+  /** How this snapshot's base assignment was actually produced. */
+  assignmentProvenance: AssignmentProvenance;
+  /** UI controls saved for a possible future rerun, never applied evidence. */
   rerunSettings: RerunSettings;
   state: EditorSnapshot;
 }
@@ -80,9 +84,25 @@ export function formatRerunSettings(settings: RerunSettings): string {
   return `${STRATEGY_LABELS[settings.strategy]} · ${ASSIGNMENT_MODE_SHORT_LABELS[settings.assignmentMode]} · ${voices}`;
 }
 
+export function formatAssignmentProvenance(provenance: AssignmentProvenance): string {
+  switch (provenance.kind) {
+    case "imported":
+      return `Imported assignment · algorithm v${provenance.algorithmVersion}`;
+    case "appExportedVoiceTracks":
+      return "App-exported voice tracks";
+    case "reassigned": {
+      const voices =
+        provenance.maxVoiceCount === null
+          ? "auto voices"
+          : `max ${provenance.maxVoiceCount} voices`;
+      return `${STRATEGY_LABELS[provenance.strategy]} · ${ASSIGNMENT_MODE_SHORT_LABELS[provenance.mode]} · ${voices} · algorithm v${provenance.algorithmVersion}`;
+    }
+  }
+}
+
 /** One-line "source · time · re-run settings" summary for a snapshot list row. */
 export function formatSnapshotSummary(snapshot: NamedSnapshot): string {
-  return `${formatSnapshotSource(snapshot.source)} · ${formatSnapshotTimestamp(snapshot.createdAt)} · ${formatRerunSettings(snapshot.rerunSettings)}`;
+  return `${formatSnapshotSource(snapshot.source)} · ${formatSnapshotTimestamp(snapshot.createdAt)} · ${formatAssignmentProvenance(snapshot.assignmentProvenance)}`;
 }
 
 export function createNamedSnapshot(
@@ -91,12 +111,14 @@ export function createNamedSnapshot(
   source: SnapshotSource,
   name?: string,
   createdAt: number = Date.now(),
+  assignmentProvenance: AssignmentProvenance = { kind: "imported", algorithmVersion: 1 },
 ): NamedSnapshot {
   return {
     id: generateSnapshotId(),
     name: name ?? defaultSnapshotName(source, createdAt),
     createdAt,
     source,
+    assignmentProvenance,
     rerunSettings,
     state,
   };

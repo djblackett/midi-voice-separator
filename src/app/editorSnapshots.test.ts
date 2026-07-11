@@ -73,7 +73,7 @@ function editorState(overrides: Partial<EditorSnapshot> = {}): EditorSnapshot {
 }
 
 describe("createNamedSnapshot", () => {
-  it("captures all five EditorSnapshot fields plus the rerun settings triple", () => {
+  it("captures all editor fields, applied provenance, and the next-rerun preset", () => {
     resetSnapshotIdSequence();
     const state = editorState({
       voiceOverrides: { a: "voice-2" },
@@ -89,6 +89,7 @@ describe("createNamedSnapshot", () => {
       name: "My snapshot",
       createdAt: 1000,
       source: "manual",
+      assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
       rerunSettings,
       state,
     });
@@ -212,12 +213,26 @@ describe("formatRerunSettings", () => {
 });
 
 describe("formatSnapshotSummary", () => {
-  it("joins source, timestamp, and rerun settings into one line", () => {
+  it("joins source, timestamp, and applied provenance into one line", () => {
     resetSnapshotIdSequence();
     const snapshot = createNamedSnapshot(editorState(), rerunSettings, "before-rerun", "x", 0);
 
     expect(formatSnapshotSummary(snapshot)).toBe(
-      `${formatSnapshotSource("before-rerun")} · ${formatSnapshotTimestamp(0)} · ${formatRerunSettings(rerunSettings)}`,
+      `${formatSnapshotSource("before-rerun")} · ${formatSnapshotTimestamp(0)} · Imported assignment · algorithm v1`,
     );
+  });
+
+  it("does not relabel an applied assignment when saved rerun controls differ", () => {
+    const snapshot = createNamedSnapshot(
+      editorState(),
+      { strategy: "STRICT_CHANNEL", assignmentMode: "CONTIG", maxVoiceCount: 2 },
+      "manual",
+      "x",
+      0,
+      { kind: "imported", algorithmVersion: 1 },
+    );
+
+    expect(formatSnapshotSummary(snapshot)).toContain("Imported assignment · algorithm v1");
+    expect(formatSnapshotSummary(snapshot)).not.toContain("Strict channel");
   });
 });

@@ -1,4 +1,5 @@
 import type { MidiNote, MidiProject, MidiVoice, SeparationStrategy } from "./midiProject";
+import type { AssignmentProvenance } from "./assignmentProvenance";
 import { LOW_CONFIDENCE_THRESHOLD } from "./midiProject";
 import type { VoiceOverrides } from "./voiceAssignments";
 import { materializeAssignments } from "./voiceAssignments";
@@ -27,7 +28,9 @@ export interface DiffSide {
   voices: readonly MidiVoice[];
   assignments: ReadonlyMap<string, string>;
   lockedNoteIds: ReadonlySet<string>;
-  rerunSettings: DiffRerunSettings;
+  provenance?: AssignmentProvenance;
+  /** @deprecated Compatibility input for old tests; comparison code uses provenance. */
+  rerunSettings?: DiffRerunSettings;
 }
 
 export interface DiffEditorState {
@@ -46,7 +49,7 @@ export interface DiffEditorState {
  */
 export function toDiffSide(
   editorState: DiffEditorState,
-  rerunSettings: DiffRerunSettings,
+  provenance: AssignmentProvenance,
 ): DiffSide | null {
   const { project, voiceOverrides } = editorState;
   if (!project) {
@@ -62,8 +65,42 @@ export function toDiffSide(
     voices: materialized.voices,
     assignments: materializeAssignments(project, voiceOverrides),
     lockedNoteIds: new Set(Object.keys(voiceOverrides)),
-    rerunSettings,
+    provenance,
   };
+}
+
+function provenanceForComparison(side: DiffSide): AssignmentProvenance {
+  if (side.provenance) {
+    return side.provenance;
+  }
+  const legacy = side.rerunSettings;
+  return legacy
+    ? {
+        kind: "reassigned",
+        strategy: legacy.strategy,
+        mode: legacy.assignmentMode,
+        maxVoiceCount: legacy.maxVoiceCount,
+        algorithmVersion: 1,
+      }
+    : { kind: "imported", algorithmVersion: 1 };
+}
+
+function sameAssignmentProvenance(before: DiffSide, after: DiffSide): boolean {
+  const left = provenanceForComparison(before);
+  const right = provenanceForComparison(after);
+  if (left.kind !== right.kind) {
+    return false;
+  }
+  if (left.kind === "reassigned" && right.kind === "reassigned") {
+    return (
+      left.strategy === right.strategy &&
+      left.mode === right.mode &&
+      left.algorithmVersion === right.algorithmVersion
+    );
+  }
+  return left.kind === "imported"
+    ? left.algorithmVersion === (right as typeof left).algorithmVersion
+    : true;
 }
 
 export interface VoiceMatch {
@@ -297,9 +334,7 @@ export function compareAssignments(
         }
       : null;
 
-  const confidenceComparable =
-    before.rerunSettings.strategy === after.rerunSettings.strategy &&
-    before.rerunSettings.assignmentMode === after.rerunSettings.assignmentMode;
+  const confidenceComparable = sameAssignmentProvenance(before, after);
 
   let confidence: ConfidenceDelta | null = null;
   if (confidenceComparable) {
@@ -404,7 +439,7 @@ export function formatPercussionDelta(delta: PercussionDelta): string {
 /** Confidence deltas are only meaningful within one strategy/search-mode pair (C5). */
 export function formatConfidenceDelta(diff: AssignmentDiff): string {
   if (!diff.confidenceComparable || !diff.confidence) {
-    return "Not comparable — the two sides used a different strategy or search mode.";
+    return "Not comparable — the two sides have different assignment provenance.";
   }
 
   const { improvedNoteIds, worsenedNoteIds } = diff.confidence;

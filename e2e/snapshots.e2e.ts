@@ -27,6 +27,21 @@ test.describe("editor snapshots", () => {
     await expect(rows.first().locator(".snapshot-meta span")).toContainText("Import");
   });
 
+  test("changing the next-rerun controls does not relabel imported provenance", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, { importedProject: twoVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    const importSummary = page.locator(".snapshot-list li").first().locator(".snapshot-meta span");
+    await expect(importSummary).toContainText("Imported assignment · algorithm v1");
+
+    await page.locator(".separation-strategy-select").selectOption("STRICT_CHANNEL");
+    await expect(importSummary).toContainText("Imported assignment · algorithm v1");
+    await expect(importSummary).not.toContainText("Strict channel");
+  });
+
   test("manual save, rename, and delete a snapshot", async ({ page }) => {
     await installFakeTauri(page, { importedProject: twoVoiceProject });
     await page.goto("/");
@@ -99,7 +114,8 @@ test.describe("editor snapshots", () => {
     await expect(page.locator(".voice-legend li")).toHaveCount(1);
 
     const importOptionValue = await page
-      .locator(".snapshot-list li", { hasText: "Import" })
+      .locator(".snapshot-list li")
+      .filter({ has: page.locator('input.snapshot-name-input[value^="Import"]') })
       .getByRole("button", { name: "Restore" });
     await importOptionValue.click();
 
