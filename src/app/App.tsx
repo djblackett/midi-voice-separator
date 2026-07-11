@@ -194,11 +194,13 @@ export default function App() {
   const [showChangedNotes, setShowChangedNotes] = useState(false);
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<ComparisonWorkspace | null>(null);
+  const [pendingCompareExit, setPendingCompareExit] = useState(false);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const {
     branch: editorBranch,
     document: editorDocument,
     activeSide: editorActiveSide,
+    branchA: editorBranchA,
     branchB: editorBranchB,
     dispatch: dispatchEditorCommand,
     undo: undoEditorBranch,
@@ -402,6 +404,10 @@ export default function App() {
   const pianoRollOnlyChangedNotes =
     showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
   const isCompareReadOnly = isEditingDisabledForComparison(compareState, editorActiveSide);
+  // Side B is "dirty" once it has been edited past its fork; its history is
+  // empty at fork and gains an entry per committed edit (undoing back to the
+  // fork empties it again).
+  const isSideBDirty = editorBranchB !== null && editorBranchB.history.past.length > 0;
   // The canvas always renders the active side's own materialized document:
   // switching the A/B toggle switches the active branch, so `displayedProject`
   // already is the viewed side. Cross-side voice correspondence (matched
@@ -999,6 +1005,7 @@ export default function App() {
       target.id,
     );
     setCompareState(createComparisonWorkspace(diffTargetId));
+    setPendingCompareExit(false);
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
@@ -1011,26 +1018,84 @@ export default function App() {
   function handleSetCompareViewing(viewing: CompareViewing) {
     setCompareState((current) => updateComparisonViewing(current, viewing));
     setEditorActiveSide(viewing === "B" ? "B" : "A");
+    setPendingCompareExit(false);
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
   }
 
-  function handleExitCompare() {
-    discardEditorSideB();
-    setCompareState(null);
+  function snapshotStateOfDocument(document: EditorDocument) {
+    return {
+      project: document.project,
+      voiceOverrides: document.voiceOverrides,
+      voiceOrder: [...document.voiceOrder],
+      voiceLabels: { ...document.voiceLabels },
+      rangeAssignedNoteIds: new Set(document.rangeAssignedNoteIds),
+    };
   }
 
-  function handleRestoreCompareTarget() {
-    const target = namedSnapshots.find(
-      (snapshot) => snapshot.id === compareState?.targetSnapshotId,
+  function appendManualSnapshot(document: EditorDocument, name: string) {
+    setNamedSnapshots((current) =>
+      appendSnapshot(
+        current,
+        createNamedSnapshot(
+          snapshotStateOfDocument(document),
+          {
+            strategy: separationStrategy,
+            assignmentMode,
+            maxVoiceCount: selectedMaxVoiceCount ?? null,
+          },
+          "manual",
+          name,
+          undefined,
+          document.assignmentProvenance,
+        ),
+      ),
     );
-    if (target) {
-      // Restore always rewrites side A, then the comparison branch is dropped.
-      setEditorActiveSide("A");
-      handleRestoreSnapshot(target);
-      discardEditorSideB();
+  }
+
+  // Save the current side-B draft as its own immutable named snapshot.
+  function handleSaveSideBSnapshot() {
+    if (!editorBranchB) {
+      return;
     }
+    appendManualSnapshot(editorBranchB.present, "Side B");
+  }
+
+  // Promote side B to the primary working result, preserving the pre-promotion
+  // A as a snapshot first (M5). The promotion is one undoable A transaction.
+  function handleUseSideB() {
+    if (!editorBranchB) {
+      return;
+    }
+    const promoted = editorBranchB.present;
+    appendManualSnapshot(editorBranchA.present, "A before using B");
+    setEditorActiveSide("A");
+    dispatchEditorCommand({ kind: "restoreDocument", document: promoted });
+    discardEditorSideB();
+    setCompareState(null);
+    setPendingCompareExit(false);
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
+    setExportResult(null);
+  }
+
+  // Exiting keeps A and drops B. Unsaved B edits are confirmed first so they
+  // are never silently lost (M5).
+  function handleExitCompare() {
+    if (isSideBDirty && !pendingCompareExit) {
+      setPendingCompareExit(true);
+      return;
+    }
+    discardEditorSideB();
+    setCompareState(null);
+    setPendingCompareExit(false);
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
+  }
+
+  function handleCancelExitCompare() {
+    setPendingCompareExit(false);
   }
 
   function handleCreateVoice() {
@@ -2228,8 +2293,7 @@ export default function App() {
           aria-live="polite"
           aria-hidden={isCompareReadOnly ? undefined : "true"}
         >
-          Read-only preview: editing is disabled while viewing the snapshot or diff. Exit compare or
-          restore B to edit.
+          Read-only preview: editing is disabled in the diff view. Switch to A or B to edit.
         </section>
       ) : null}
 
@@ -2256,20 +2320,47 @@ export default function App() {
                       onClick={() => handleSetCompareViewing(viewing)}
                       aria-pressed={compareState.viewing === viewing ? "true" : "false"}
                     >
-                      {viewing === "A" ? "A: Current" : viewing === "B" ? "B: Snapshot" : "Diff"}
+                      {viewing === "A" ? "A: Current" : viewing === "B" ? "B: Draft" : "Diff"}
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleRestoreCompareTarget}
-                >
-                  Restore B
-                </button>
-                <button type="button" className="secondary-button" onClick={handleExitCompare}>
-                  Exit compare
-                </button>
+                {pendingCompareExit ? (
+                  <span className="compare-exit-confirm" role="alert">
+                    Discard side B&rsquo;s unsaved edits?
+                    <button type="button" className="secondary-button" onClick={handleExitCompare}>
+                      Discard B
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={handleCancelExitCompare}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={handleUseSideB}
+                      title="Make side B the working result and keep A as a snapshot"
+                    >
+                      Use B
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={handleSaveSideBSnapshot}
+                      title="Save the side-B draft as its own snapshot"
+                    >
+                      Save B
+                    </button>
+                    <button type="button" className="secondary-button" onClick={handleExitCompare}>
+                      Exit compare
+                    </button>
+                  </>
+                )}
               </div>
             ) : null}
             <button

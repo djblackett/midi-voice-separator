@@ -51,7 +51,7 @@ test("editing side B leaves side A untouched, with independent per-side undo", a
   await expect(voiceRow(page, "Bass")).toContainText("2 notes");
 
   // Side B is the forked snapshot: Lead still has 2 notes, Bass 1.
-  await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await page.getByRole("button", { name: "B: Draft" }).click();
   await expect(voiceRow(page, "Lead")).toContainText("2 notes");
   await expect(voiceRow(page, "Bass")).toContainText("1 notes");
 
@@ -72,7 +72,7 @@ test("editing side B leaves side A untouched, with independent per-side undo", a
   await expect(voiceRow(page, "Bass")).toContainText("1 notes");
 
   // B still holds its own edit -- A's undo left it alone.
-  await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await page.getByRole("button", { name: "B: Draft" }).click();
   await expect(voiceRow(page, "Lead")).toContainText("0 notes");
   await expect(voiceRow(page, "Bass")).toContainText("3 notes");
 });
@@ -96,7 +96,7 @@ test("the diff reflects edits to the live B branch, not the frozen snapshot", as
   await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("1");
 
   // Edit B to match A: move its Bass note into Lead so B is now all-Lead too.
-  await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await page.getByRole("button", { name: "B: Draft" }).click();
   await page.getByLabel("Select notes in Bass").click();
   await page.keyboard.press("1");
 
@@ -104,4 +104,66 @@ test("the diff reflects edits to the live B branch, not the frozen snapshot", as
   // difference. A frozen-snapshot reference would still report the one change.
   await page.getByRole("button", { name: "A: Current" }).click();
   await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("0");
+});
+
+test("Use B promotes the B draft to the working result and keeps A as a snapshot", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    // A becomes all-Lead on re-run; the forked B keeps the Lead/Bass split.
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "c" ? { ...entry, voiceId: "voice-1" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+
+  // A (active) is all-Lead after the re-run.
+  await expect(voiceRow(page, "Lead")).toContainText("3 notes");
+
+  await page.getByRole("button", { name: "Use B" }).click();
+
+  // The comparison closes and the working result is now B's Lead/Bass split.
+  await expect(page.getByRole("button", { name: "A: Current" })).toHaveCount(0);
+  await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+  // A was preserved as a named snapshot before B overwrote it.
+  await expect(page.getByLabel("Rename snapshot A before using B")).toHaveCount(1);
+});
+
+test("exiting with unsaved B edits requires confirmation", async ({ page }) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "a" ? { ...entry, voiceId: "voice-2" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+
+  // Edit side B so it becomes dirty.
+  await page.getByRole("button", { name: "B: Draft" }).click();
+  await page.getByLabel("Select notes in Lead").click();
+  await page.keyboard.press("2");
+
+  // Exiting now asks first rather than silently dropping the edits.
+  await page.getByRole("button", { name: "Exit compare" }).click();
+  await expect(page.getByText("Discard side B")).toBeVisible();
+
+  // Cancel keeps the comparison open with B intact.
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: "A: Current" })).toBeVisible();
+  await expect(voiceRow(page, "Bass")).toContainText("3 notes");
+
+  // Confirming the discard exits the comparison.
+  await page.getByRole("button", { name: "Exit compare" }).click();
+  await page.getByRole("button", { name: "Discard B" }).click();
+  await expect(page.getByRole("button", { name: "A: Current" })).toHaveCount(0);
 });

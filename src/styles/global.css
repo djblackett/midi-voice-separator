@@ -973,6 +973,15 @@ button {
   border-right: 1px solid #334155;
 }
 
+.compare-exit-confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #fde68a;
+  font-size: 13px;
+}
+
 .compare-view-toggle .secondary-button.active {
   border-color: #38bdf8;
   background: #0c4a6e;

@@ -33,7 +33,7 @@ test("the diff view is read-only while side B stays editable, and exiting restor
   await importAndCompare(page);
 
   // Side B is now a live editable branch, not a frozen read-only preview.
-  await page.getByRole("button", { name: "B: Snapshot" }).click();
+  await page.getByRole("button", { name: "B: Draft" }).click();
   await expect(page.getByText("Read-only preview: editing is disabled")).toBeHidden();
   await expect(page.getByRole("button", { name: "Paint mode: off" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Re-run separation" })).toBeEnabled();
