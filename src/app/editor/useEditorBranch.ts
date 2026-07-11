@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { commit, createEditorBranch, redo, undo, type EditorBranch } from "./editorBranch";
 import type { EditorCommand } from "./editorCommand";
 import type { EditorDocument } from "./editorDocument";
@@ -27,13 +27,20 @@ export function useEditorBranch(): {
   undo: () => boolean;
   redo: () => boolean;
   reset: (document: EditorDocument) => void;
+  currentRevision: () => { branchId: EditorBranch["branchId"]; revision: number };
 } {
   const [branch, setBranch] = useState<EditorBranch>(() =>
     createEditorBranch("A", emptyDocument()),
   );
+  const branchRef = useRef(branch);
+  branchRef.current = branch;
 
   const dispatch = useCallback((command: EditorCommand) => {
-    setBranch((current) => commit(current, command));
+    setBranch((current) => {
+      const next = commit(current, command);
+      branchRef.current = next;
+      return next;
+    });
   }, []);
 
   const undoBranch = useCallback(() => {
@@ -42,6 +49,7 @@ export function useEditorBranch(): {
       return false;
     }
 
+    branchRef.current = next;
     setBranch(next);
     return true;
   }, [branch]);
@@ -52,13 +60,31 @@ export function useEditorBranch(): {
       return false;
     }
 
+    branchRef.current = next;
     setBranch(next);
     return true;
   }, [branch]);
 
   const reset = useCallback((document: EditorDocument) => {
-    setBranch((current) => createEditorBranch(current.branchId, document, current.forkedFrom));
+    setBranch((current) => {
+      const next = createEditorBranch(current.branchId, document, current.forkedFrom);
+      branchRef.current = next;
+      return next;
+    });
   }, []);
 
-  return { branch, document: branch.present, dispatch, undo: undoBranch, redo: redoBranch, reset };
+  const currentRevision = useCallback(
+    () => ({ branchId: branchRef.current.branchId, revision: branchRef.current.present.revision }),
+    [],
+  );
+
+  return {
+    branch,
+    document: branch.present,
+    dispatch,
+    undo: undoBranch,
+    redo: redoBranch,
+    reset,
+    currentRevision,
+  };
 }

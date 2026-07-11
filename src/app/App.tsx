@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MidiNote, MidiProject } from "../domain/midi/midiProject";
 import {
   formatMidiChannel,
@@ -85,6 +85,7 @@ import {
   type PitchMarker,
 } from "../domain/midi/rangeRules";
 import type { EditorDocument } from "./editor/editorDocument";
+import { canApplyRerunResult } from "./editor/rerunGuard";
 import { useEditorBranch } from "./editor/useEditorBranch";
 import {
   appendSnapshot,
@@ -203,7 +204,10 @@ export default function App() {
     undo: undoEditorBranch,
     redo: redoEditorBranch,
     reset: resetEditorBranch,
+    currentRevision: currentEditorRevision,
   } = useEditorBranch();
+  const rerunRequestSequence = useRef(0);
+  const latestRerunRequestId = useRef(0);
   const { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds } = editorDocument;
   const history = editorBranch.history;
   const displayedProject = useMemo(
@@ -782,6 +786,12 @@ export default function App() {
     }
 
     const maxVoiceCount = parseMaxVoiceCount(maxVoiceCountInput);
+    const rerunRequest = {
+      branchId: editorBranch.branchId,
+      revision: editorDocument.revision,
+      requestId: ++rerunRequestSequence.current,
+    };
+    latestRerunRequestId.current = rerunRequest.requestId;
 
     setIsReassigning(true);
     setReassignError(null);
@@ -794,6 +804,18 @@ export default function App() {
         separationStrategy,
         assignmentMode,
       );
+      if (
+        !canApplyRerunResult(rerunRequest, {
+          ...currentEditorRevision(),
+          requestId: latestRerunRequestId.current,
+        })
+      ) {
+        setReassignError({
+          code: "STALE_RERUN_DROPPED",
+          message: "Your edit during rerun was kept; rerun result dropped — rerun again.",
+        });
+        return;
+      }
       const reassignedProject = reassigned.project;
       const rerunSettings: RerunSettings = {
         strategy: separationStrategy,

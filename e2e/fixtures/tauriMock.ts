@@ -36,7 +36,7 @@ export interface CommandError {
 export interface TauriMockOptions {
   importedProject: MidiProject;
   /** Called for the "Re-run separation" command; defaults to a no-op (returns the project unchanged). */
-  reassign?: (args: ReassignArgs) => MidiProject;
+  reassign?: (args: ReassignArgs) => MidiProject | Promise<MidiProject>;
   /** Called for the derived assignment-cost command; defaults to a deterministic minimal report. */
   evaluateAssignment?: (
     request: AssignmentEvaluationRequest,
