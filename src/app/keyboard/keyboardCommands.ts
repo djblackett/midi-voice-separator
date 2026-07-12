@@ -87,10 +87,13 @@ const assignVoiceSpecs: CommandSpec[] = Array.from({ length: 9 }, (_, index) => 
 // Declared in priority order; the first matching, permitted spec wins.
 const COMMAND_SPECS: readonly CommandSpec[] = [
   {
+    // Undo/redo are authorized at the resolver (M14): they mutate, so they are
+    // blocked when the active side is read-only (the diff view), the same way
+    // the editing shortcuts are.
     id: "redo",
     chord: { key: "z", ctrlOrMeta: true, shift: true },
     requiresProject: false,
-    requiresEditable: false,
+    requiresEditable: true,
     mutating: true,
     repeatable: true,
   },
@@ -98,7 +101,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     id: "undo",
     chord: { key: "z", ctrlOrMeta: true, shift: false },
     requiresProject: false,
-    requiresEditable: false,
+    requiresEditable: true,
     mutating: true,
     repeatable: true,
   },
@@ -229,6 +232,12 @@ export function resolveKeyboardCommand(
   }
   const spec = COMMAND_SPECS.find((candidate) => chordMatches(event, candidate.chord));
   if (!spec) {
+    return null;
+  }
+  // Key-repeat policy: holding a key auto-repeats the event; only commands that
+  // opt in (undo/redo, brush size, voice assign, flagged stepping) should fire
+  // repeatedly. Toggles and tool switches fire once per press.
+  if (event.repeat && !spec.repeatable) {
     return null;
   }
   if (spec.requiresProject && !context.hasProject) {

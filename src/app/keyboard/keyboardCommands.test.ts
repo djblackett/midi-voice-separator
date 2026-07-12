@@ -68,17 +68,32 @@ describe("resolveKeyboardCommand", () => {
     expect(resolveKeyboardCommand(key({ key: "h", altKey: true }), context())).toBeNull();
   });
 
-  it("blocks editing shortcuts on a read-only side but keeps undo/redo and Escape", () => {
+  it("blocks editing and undo/redo on a read-only side but keeps Escape", () => {
     const readOnly = context({ activeSideEditable: false });
     expect(resolveKeyboardCommand(key({ key: "1" }), readOnly)).toBeNull();
     expect(resolveKeyboardCommand(key({ key: "b" }), readOnly)).toBeNull();
     expect(resolveKeyboardCommand(key({ key: "Tab" }), readOnly)).toBeNull();
     expect(resolveKeyboardCommand(key({ key: "h" }), readOnly)).toBeNull();
-    // Navigation and history are still allowed.
-    expect(resolveKeyboardCommand(key({ key: "z", ctrlKey: true }), readOnly)).toBe("undo");
+    // Undo/redo mutate, so they are authorized at the resolver too (M14).
+    expect(resolveKeyboardCommand(key({ key: "z", ctrlKey: true }), readOnly)).toBeNull();
+    expect(
+      resolveKeyboardCommand(key({ key: "z", ctrlKey: true, shiftKey: true }), readOnly),
+    ).toBeNull();
+    // Escape is non-mutating and still clears the selection.
     expect(resolveKeyboardCommand(key({ key: "Escape" }), readOnly)).toBe(
       "clearSelectionOrExitPaint",
     );
+  });
+
+  it("applies the key-repeat policy: toggles fire once, undo/assign repeat", () => {
+    // A held toggle/tool key auto-repeats; only its first press should resolve.
+    expect(resolveKeyboardCommand(key({ key: "h", repeat: true }), context())).toBeNull();
+    expect(resolveKeyboardCommand(key({ key: "b", repeat: true }), context())).toBeNull();
+    // Undo and voice assignment opt into repeating while held.
+    expect(resolveKeyboardCommand(key({ key: "z", ctrlKey: true, repeat: true }), context())).toBe(
+      "undo",
+    );
+    expect(resolveKeyboardCommand(key({ key: "1", repeat: true }), context())).toBe("assignVoice1");
   });
 
   it("maps Alt+A / Alt+B to side switching only while a comparison is open", () => {
