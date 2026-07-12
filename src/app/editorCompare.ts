@@ -9,15 +9,20 @@ import type { NamedSnapshot } from "./editorSnapshots";
 
 export type CompareViewing = "A" | "B" | "diff";
 
+/** Single canvas (the A/B/Diff toggle) or two panes side by side (M13). */
+export type ComparisonLayout = "single" | "split";
+
 /**
  * Reference-only comparison state (M4). It names the snapshot side B was forked
- * from and which side the single canvas is showing (`viewing`). It never stores
- * materialized projects, diffs, matches, or scores. The editable `activeSide`
- * is owned by the branch hook, not duplicated here.
+ * from, which side the single canvas is showing (`viewing`), and the `layout`
+ * (single canvas vs. split panes). It never stores materialized projects,
+ * diffs, matches, or scores. The editable `activeSide` is owned by the branch
+ * hook, not duplicated here.
  */
 export interface ComparisonWorkspace {
   targetSnapshotId: string;
   viewing: CompareViewing;
+  layout: ComparisonLayout;
 }
 
 export interface CurrentEditorCompareState extends EditorSnapshot {
@@ -42,7 +47,7 @@ export function isEditingDisabledForComparison(
 }
 
 export function createComparisonWorkspace(targetSnapshotId: string): ComparisonWorkspace {
-  return { targetSnapshotId, viewing: "A" };
+  return { targetSnapshotId, viewing: "A", layout: "single" };
 }
 
 export function updateComparisonViewing(
