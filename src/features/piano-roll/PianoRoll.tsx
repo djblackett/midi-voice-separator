@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -113,6 +114,12 @@ interface PianoRollProps {
   viewMode?: PianoRollViewMode;
   /** voiceId -> presentation key (M10), so matched voices render in a shared color. */
   presentationKeyByVoiceId?: ReadonlyMap<string, string>;
+  /** Controlled horizontal (tick) viewport (M13). Omit for internal, uncontrolled state. */
+  timeViewport?: ViewportWindow;
+  onTimeViewportChange?: (next: ViewportWindow) => void;
+  /** Controlled vertical (pitch) viewport (M13). Omit for internal, uncontrolled state. */
+  pitchViewport?: PitchViewportWindow;
+  onPitchViewportChange?: (next: PitchViewportWindow) => void;
 }
 
 export function PianoRoll({
@@ -143,6 +150,10 @@ export function PianoRoll({
   conflictNoteIds = new Set(),
   viewMode = "piano",
   presentationKeyByVoiceId = new Map(),
+  timeViewport,
+  onTimeViewportChange,
+  pitchViewport,
+  onPitchViewportChange,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rulerCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -160,9 +171,38 @@ export function PianoRoll({
     y: number;
     noteId: string | null;
   } | null>(null);
-  const [viewportWindow, setViewportWindow] = useState<ViewportWindow>(defaultViewportWindow());
-  const [pitchViewportWindow, setPitchViewportWindow] = useState<PitchViewportWindow>(
+  // The time/pitch viewports are controlled when the matching prop is provided
+  // (so split panes can share one window), and otherwise owned internally --
+  // an uncontrolled default that keeps single-pane behavior unchanged. Reads go
+  // through `viewportWindow`/`pitchViewportWindow`; writes go through the
+  // `setViewportWindow`/`setPitchViewportWindow` wrappers, so the existing
+  // pan/zoom call sites are untouched.
+  const [internalTimeViewport, setInternalTimeViewport] =
+    useState<ViewportWindow>(defaultViewportWindow());
+  const [internalPitchViewport, setInternalPitchViewport] = useState<PitchViewportWindow>(
     defaultPitchViewportWindow(),
+  );
+  const viewportWindow = timeViewport ?? internalTimeViewport;
+  const pitchViewportWindow = pitchViewport ?? internalPitchViewport;
+  const setViewportWindow = useCallback(
+    (update: ViewportWindow | ((current: ViewportWindow) => ViewportWindow)) => {
+      if (timeViewport !== undefined) {
+        onTimeViewportChange?.(typeof update === "function" ? update(timeViewport) : update);
+      } else {
+        setInternalTimeViewport(update);
+      }
+    },
+    [timeViewport, onTimeViewportChange],
+  );
+  const setPitchViewportWindow = useCallback(
+    (update: PitchViewportWindow | ((current: PitchViewportWindow) => PitchViewportWindow)) => {
+      if (pitchViewport !== undefined) {
+        onPitchViewportChange?.(typeof update === "function" ? update(pitchViewport) : update);
+      } else {
+        setInternalPitchViewport(update);
+      }
+    },
+    [pitchViewport, onPitchViewportChange],
   );
   const dragStartRef = useRef<{ point: { x: number; y: number }; additive: boolean } | null>(null);
   const isPaintingRef = useRef(false);
