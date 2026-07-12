@@ -5,6 +5,7 @@ import type { VoiceOverrides } from "./voiceAssignments";
 import { materializeAssignments } from "./voiceAssignments";
 import { PERCUSSION_VOICE_ID } from "./voiceManagement";
 import { materializeEditorProject } from "./editorMaterialization";
+import { correspondVoices } from "./voiceCorrespondence";
 
 /**
  * Structurally matches `RerunSettings` in `src/app/editorSnapshots.ts`
@@ -115,81 +116,27 @@ export interface VoiceMatching {
 }
 
 /**
- * Pairs `before`/`after` voices by maximum shared-note overlap so voice ids
- * (which are reallocated fresh on every full re-run, preserving only locked
- * ids) never get mistaken for stable identity -- see C3 in
- * `PLAN.local.md`. The percussion voice, if present on both sides, is
- * pre-matched to itself by its fixed id and never enters the general
- * overlap pool; if present on only one side it is excluded entirely (never
- * appears in `matched`/`addedVoiceIds`/`removedVoiceIds`) since its
- * presence is reported separately via `AssignmentDiff.percussionDelta`
- * (C7).
+ * Pairs `before`/`after` voices so voice ids (which are reallocated fresh on
+ * every full re-run, preserving only locked ids) never get mistaken for stable
+ * identity -- see C3 in `PLAN.local.md`. A thin adapter over the deterministic
+ * maximum-weight `correspondVoices` service (M9): a matched pair is expressed
+ * as before/after, and the percussion voice keeps its existing diff treatment
+ * -- pre-matched to itself when present on both sides, excluded from
+ * `addedVoiceIds`/`removedVoiceIds` when one-sided (its presence is reported
+ * separately via `AssignmentDiff.percussionDelta`, C7).
  */
 export function matchVoices(before: DiffSide, after: DiffSide): VoiceMatching {
-  const beforeVoiceIds = before.voices
-    .map((voice) => voice.id)
-    .filter((id) => id !== PERCUSSION_VOICE_ID);
-  const afterVoiceIds = after.voices
-    .map((voice) => voice.id)
-    .filter((id) => id !== PERCUSSION_VOICE_ID);
-
-  const overlap = new Map<string, Map<string, number>>();
-  for (const [noteId, beforeVoiceId] of before.assignments) {
-    if (beforeVoiceId === PERCUSSION_VOICE_ID) {
-      continue;
-    }
-    const afterVoiceId = after.assignments.get(noteId);
-    if (afterVoiceId === undefined || afterVoiceId === PERCUSSION_VOICE_ID) {
-      continue;
-    }
-    const row = overlap.get(beforeVoiceId) ?? new Map<string, number>();
-    row.set(afterVoiceId, (row.get(afterVoiceId) ?? 0) + 1);
-    overlap.set(beforeVoiceId, row);
-  }
-
-  const remainingBefore = new Set(beforeVoiceIds);
-  const remainingAfter = new Set(afterVoiceIds);
-  const matched: VoiceMatch[] = [];
-
-  const percussionInBefore = before.voices.some((voice) => voice.id === PERCUSSION_VOICE_ID);
-  const percussionInAfter = after.voices.some((voice) => voice.id === PERCUSSION_VOICE_ID);
-  if (percussionInBefore && percussionInAfter) {
-    matched.push({ beforeVoiceId: PERCUSSION_VOICE_ID, afterVoiceId: PERCUSSION_VOICE_ID });
-  }
-
-  // Greedy max-overlap matching: repeatedly commit the single best
-  // remaining pair until no positive-overlap pair is left. Sufficient at
-  // chiptune-file voice counts (single digits to low tens).
-  for (;;) {
-    let bestBeforeId: string | null = null;
-    let bestAfterId: string | null = null;
-    let bestCount = 0;
-    for (const beforeId of remainingBefore) {
-      const row = overlap.get(beforeId);
-      if (!row) {
-        continue;
-      }
-      for (const afterId of remainingAfter) {
-        const count = row.get(afterId) ?? 0;
-        if (count > bestCount) {
-          bestCount = count;
-          bestBeforeId = beforeId;
-          bestAfterId = afterId;
-        }
-      }
-    }
-    if (bestBeforeId === null || bestAfterId === null) {
-      break;
-    }
-    matched.push({ beforeVoiceId: bestBeforeId, afterVoiceId: bestAfterId });
-    remainingBefore.delete(bestBeforeId);
-    remainingAfter.delete(bestAfterId);
-  }
-
+  const correspondence = correspondVoices(
+    { voiceIds: before.voices.map((voice) => voice.id), assignments: before.assignments },
+    { voiceIds: after.voices.map((voice) => voice.id), assignments: after.assignments },
+  );
   return {
-    matched,
-    removedVoiceIds: [...remainingBefore],
-    addedVoiceIds: [...remainingAfter],
+    matched: correspondence.matched.map((pair) => ({
+      beforeVoiceId: pair.aVoiceId,
+      afterVoiceId: pair.bVoiceId,
+    })),
+    removedVoiceIds: correspondence.unmatchedA.filter((id) => id !== PERCUSSION_VOICE_ID),
+    addedVoiceIds: correspondence.unmatchedB.filter((id) => id !== PERCUSSION_VOICE_ID),
   };
 }
 
