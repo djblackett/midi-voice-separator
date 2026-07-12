@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import type { VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence";
+import { derivePresentationKeys, IDENTITY_PRESENTATION_KEYS } from "./presentationKeys";
+
+function correspondence(overrides: Partial<VoiceCorrespondence> = {}): VoiceCorrespondence {
+  return {
+    matched: [],
+    unmatchedA: [],
+    unmatchedB: [],
+    ambiguous: [],
+    splits: [],
+    merges: [],
+    matcherVersion: 1,
+    ...overrides,
+  };
+}
+
+describe("derivePresentationKeys", () => {
+  it("keeps every A voice on its own key", () => {
+    const keys = derivePresentationKeys(
+      correspondence({ matched: [{ aVoiceId: "voice-1", bVoiceId: "voice-9", overlap: 3 }] }),
+    );
+    expect(keys.keyForSide("A", "voice-1")).toBe("voice-1");
+    expect(keys.keyForSide("A", "voice-2")).toBe("voice-2");
+  });
+
+  it("gives a matched B voice its A partner's key", () => {
+    const keys = derivePresentationKeys(
+      correspondence({
+        matched: [
+          { aVoiceId: "voice-1", bVoiceId: "voice-9", overlap: 3 },
+          { aVoiceId: "voice-2", bVoiceId: "voice-7", overlap: 2 },
+        ],
+      }),
+    );
+    expect(keys.keyForSide("B", "voice-9")).toBe("voice-1");
+    expect(keys.keyForSide("B", "voice-7")).toBe("voice-2");
+  });
+
+  it("keeps an unmatched B voice on its own key", () => {
+    const keys = derivePresentationKeys(correspondence({ unmatchedB: ["voice-8"] }));
+    expect(keys.keyForSide("B", "voice-8")).toBe("voice-8");
+  });
+
+  it("keeps percussion on its semantic key via its self-match", () => {
+    const keys = derivePresentationKeys(
+      correspondence({
+        matched: [{ aVoiceId: "percussion", bVoiceId: "percussion", overlap: 4 }],
+      }),
+    );
+    expect(keys.keyForSide("B", "percussion")).toBe("percussion");
+  });
+
+  it("identity map returns the voice id for either side", () => {
+    expect(IDENTITY_PRESENTATION_KEYS.keyForSide("A", "voice-1")).toBe("voice-1");
+    expect(IDENTITY_PRESENTATION_KEYS.keyForSide("B", "voice-9")).toBe("voice-9");
+  });
+});
