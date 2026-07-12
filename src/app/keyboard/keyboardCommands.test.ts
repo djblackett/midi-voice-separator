@@ -81,6 +81,33 @@ describe("resolveKeyboardCommand", () => {
     );
   });
 
+  it("maps Alt+A / Alt+B to side switching only while a comparison is open", () => {
+    const comparing = context({ comparisonOpen: true });
+    expect(resolveKeyboardCommand(key({ key: "a", altKey: true }), comparing)).toBe(
+      "activateSideA",
+    );
+    expect(resolveKeyboardCommand(key({ key: "b", altKey: true }), comparing)).toBe(
+      "activateSideB",
+    );
+    // Outside a comparison the chords do nothing.
+    expect(resolveKeyboardCommand(key({ key: "b", altKey: true }), context())).toBeNull();
+  });
+
+  it("switches side even on a read-only side (navigation, not editing)", () => {
+    const readOnlyComparison = context({ comparisonOpen: true, activeSideEditable: false });
+    expect(resolveKeyboardCommand(key({ key: "b", altKey: true }), readOnlyComparison)).toBe(
+      "activateSideB",
+    );
+  });
+
+  it("keeps Alt+B (side switch) distinct from bare B (Brush)", () => {
+    const comparing = context({ comparisonOpen: true });
+    expect(resolveKeyboardCommand(key({ key: "b" }), comparing)).toBe("toolBrush");
+    expect(resolveKeyboardCommand(key({ key: "b", altKey: true }), comparing)).toBe(
+      "activateSideB",
+    );
+  });
+
   it("blocks project-dependent shortcuts when no project is loaded", () => {
     const empty = context({ hasProject: false });
     expect(resolveKeyboardCommand(key({ key: "1" }), empty)).toBeNull();

@@ -588,6 +588,19 @@ export default function App() {
           event.preventDefault();
           setIsConfidenceHeatOn((current) => !current);
           return;
+        case "activateSideA":
+        case "activateSideB": {
+          event.preventDefault();
+          const side = command === "activateSideA" ? "A" : "B";
+          // In split both panes are on screen, so just move the active side; in
+          // single view, switch which side the one canvas shows and edits.
+          if (isSplitLayout) {
+            handleActivateSide(side);
+          } else {
+            handleSetCompareViewing(side);
+          }
+          return;
+        }
         default: {
           // assignVoice1-9
           const voiceNumber = Number(command.slice("assignVoice".length));
@@ -651,6 +664,7 @@ export default function App() {
     isCompareReadOnly,
     isReassigning,
     compareState,
+    isSplitLayout,
     dispatchEditorCommand,
   ]);
 

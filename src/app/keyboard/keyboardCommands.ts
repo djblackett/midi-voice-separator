@@ -110,6 +110,24 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     mutating: false,
   },
   {
+    // Alt+A / Alt+B switch the active (edited) side; non-mutating navigation,
+    // allowed even in the read-only diff view, and clear of bare `B` (Brush).
+    id: "activateSideA",
+    chord: { key: "a", alt: true },
+    requiresProject: true,
+    requiresEditable: false,
+    requiresComparison: true,
+    mutating: false,
+  },
+  {
+    id: "activateSideB",
+    chord: { key: "b", alt: true },
+    requiresProject: true,
+    requiresEditable: false,
+    requiresComparison: true,
+    mutating: false,
+  },
+  {
     id: "stepFlaggedBackward",
     chord: { key: "Tab", shift: true },
     requiresProject: false,

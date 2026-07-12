@@ -53,6 +53,33 @@ test("split view shows both sides and clicking a pane sets the active side", asy
   await expect(page.locator(".editor-split")).toHaveCount(0);
 });
 
+test("Alt+A / Alt+B switch the active side from the keyboard without firing Brush", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "a" ? { ...entry, voiceId: "voice-2" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+  await page.getByRole("button", { name: "Split view" }).click();
+  await expect(page.locator(".editor-pane-active")).toContainText("Side A");
+
+  // Alt+B activates side B -- and must NOT enter Brush (bare B is Brush).
+  await page.keyboard.press("Alt+b");
+  await expect(page.locator(".editor-pane-active")).toContainText("Side B");
+  await expect(page.getByRole("button", { name: "Paint mode: off" })).toBeVisible();
+
+  // Alt+A switches back.
+  await page.keyboard.press("Alt+a");
+  await expect(page.locator(".editor-pane-active")).toContainText("Side A");
+});
+
 test("split offers an explicit linked/independent pitch-scroll toggle", async ({ page }) => {
   await installFakeTauri(page, {
     importedProject: project,
