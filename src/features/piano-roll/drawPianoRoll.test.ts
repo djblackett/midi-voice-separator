@@ -91,6 +91,26 @@ describe("resolveNoteRenderStyle", () => {
     expect(style.strokeColor).toBe(getVoiceStrokeColor("voice-3"));
   });
 
+  it("colors a note by its voice's presentation key when one is given (M10)", () => {
+    // A B-side voice-9 matched to A's voice-2 renders in voice-2's color.
+    const style = resolveNoteRenderStyle(
+      note({ voiceId: "voice-9" }),
+      context({ presentationKeyByVoiceId: new Map([["voice-9", "voice-2"]]) }),
+    );
+
+    expect(style.fillColor).toBe(getVoiceFillColor("voice-2"));
+    expect(style.strokeColor).toBe(getVoiceStrokeColor("voice-2"));
+  });
+
+  it("falls back to the voice's own color for an unmapped voice", () => {
+    const style = resolveNoteRenderStyle(
+      note({ voiceId: "voice-4" }),
+      context({ presentationKeyByVoiceId: new Map([["voice-9", "voice-2"]]) }),
+    );
+
+    expect(style.fillColor).toBe(getVoiceFillColor("voice-4"));
+  });
+
   it("dims a note whose effective voice does not match the soloed voice", () => {
     const style = resolveNoteRenderStyle(
       note({ voiceId: "voice-1" }),

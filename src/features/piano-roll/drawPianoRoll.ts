@@ -197,6 +197,12 @@ export interface NoteRenderContext {
   confidenceHeatmap?: boolean;
   /** Note ids involved in a same-voice overlap (`voiceConflicts.ts`). */
   conflictNoteIds?: ReadonlySet<string>;
+  /**
+   * voiceId -> presentation key (M10). A note's fill/stroke color is derived
+   * from its voice's presentation key so a matched B voice renders in its A
+   * partner's color. Empty = identity (color straight from the voice id).
+   */
+  presentationKeyByVoiceId?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -222,9 +228,11 @@ export function resolveNoteRenderStyle(
     previousVoiceId,
     confidenceHeatmap = false,
     conflictNoteIds = new Set(),
+    presentationKeyByVoiceId = new Map(),
   }: NoteRenderContext,
 ): NoteRenderStyle {
   const effectiveVoiceId = paintPreview.get(note.id) ?? note.voiceId;
+  const colorVoiceKey = presentationKeyByVoiceId.get(effectiveVoiceId) ?? effectiveVoiceId;
   const isSelected = selectedNoteIds.has(note.id);
   const isDimmed = soloVoiceId !== null && effectiveVoiceId !== soloVoiceId;
   const isLowConfidence = note.assignmentConfidence < LOW_CONFIDENCE_THRESHOLD;
@@ -245,12 +253,12 @@ export function resolveNoteRenderStyle(
   return {
     fillColor: useHeat
       ? confidenceHeatColor(note.assignmentConfidence)
-      : getVoiceFillColor(effectiveVoiceId),
+      : getVoiceFillColor(colorVoiceKey),
     strokeColor: isSelected
       ? "#f8fafc"
       : useHeat
         ? confidenceHeatStrokeColor(note.assignmentConfidence)
-        : getVoiceStrokeColor(effectiveVoiceId),
+        : getVoiceStrokeColor(colorVoiceKey),
     isSelected,
     isDimmed,
     isLowConfidence,
@@ -278,6 +286,7 @@ export function drawPianoRoll(
   confidenceHeatmap: boolean = false,
   conflictNoteIds: ReadonlySet<string> = new Set(),
   timeRangeSelection: TickWindow | null = null,
+  presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -364,6 +373,7 @@ export function drawPianoRoll(
       previousVoiceId,
       confidenceHeatmap,
       conflictNoteIds,
+      presentationKeyByVoiceId,
     });
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
@@ -493,6 +503,7 @@ export function drawVoiceLanes(
   previousVoiceId: ReadonlyMap<string, string> = new Map(),
   onlyChangedNotes: boolean = false,
   confidenceHeatmap: boolean = false,
+  presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
@@ -559,6 +570,7 @@ export function drawVoiceLanes(
       changedNoteIds,
       previousVoiceId,
       confidenceHeatmap,
+      presentationKeyByVoiceId,
     });
 
     context.globalAlpha = style.isDimmed ? 0.25 : 1;

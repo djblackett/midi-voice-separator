@@ -111,6 +111,8 @@ interface PianoRollProps {
   /** Note ids involved in a same-voice overlap conflict. */
   conflictNoteIds?: ReadonlySet<string>;
   viewMode?: PianoRollViewMode;
+  /** voiceId -> presentation key (M10), so matched voices render in a shared color. */
+  presentationKeyByVoiceId?: ReadonlyMap<string, string>;
 }
 
 export function PianoRoll({
@@ -140,6 +142,7 @@ export function PianoRoll({
   voiceDescriptions = new Map(),
   conflictNoteIds = new Set(),
   viewMode = "piano",
+  presentationKeyByVoiceId = new Map(),
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rulerCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -361,6 +364,7 @@ export function PianoRoll({
         previousVoiceId,
         onlyChangedNotes,
         confidenceHeatmap,
+        presentationKeyByVoiceId,
       );
       return;
     }
@@ -381,6 +385,7 @@ export function PianoRoll({
       confidenceHeatmap,
       conflictNoteIds,
       timeRangeDraft,
+      presentationKeyByVoiceId,
     );
   }
   function redrawCanvas() {
@@ -1270,7 +1275,11 @@ export function PianoRoll({
                       className="piano-roll-context-swatch"
                       title={voice.label}
                       aria-label={`Assign to ${voice.label}`}
-                      style={{ backgroundColor: getVoiceFillColor(voice.id) }}
+                      style={{
+                        backgroundColor: getVoiceFillColor(
+                          presentationKeyByVoiceId.get(voice.id) ?? voice.id,
+                        ),
+                      }}
                       onClick={() => handleMenuAssign(voice.id)}
                     />
                   ))}
