@@ -45,10 +45,8 @@ import {
 } from "../lib/tauri/commands";
 import { voiceIdForNumber } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
-import {
-  reconcileVoiceOrderAfterReassign,
-  seedVoiceLabelsFromImport,
-} from "../domain/midi/voiceManagement";
+import { seedVoiceLabelsFromImport } from "../domain/midi/voiceManagement";
+import { reconcileVoicesAfterReassign } from "../domain/midi/voiceReconciliation";
 import {
   buildFlaggedNoteQueue,
   buildReviewProgress,
@@ -862,16 +860,33 @@ export default function App() {
           ),
         ),
       );
-      const nextVoiceOrder = reconcileVoiceOrderAfterReassign(
+      // Reconcile voice order, labels, and the active/solo voice through voice
+      // correspondence (M9): a full re-run reallocates ids for the same
+      // grouping, so metadata follows the voices it belongs to instead of being
+      // orphaned by raw id.
+      const reconciled = reconcileVoicesAfterReassign(
+        {
+          voiceIds: displayedProject?.voices.map((voice) => voice.id) ?? [],
+          assignments: new Map(
+            (displayedProject?.notes ?? []).map((note) => [note.id, note.voiceId]),
+          ),
+        },
+        {
+          voiceIds: [...new Set(reassignedProject.notes.map((note) => note.voiceId))],
+          assignments: new Map(reassignedProject.notes.map((note) => [note.id, note.voiceId])),
+        },
         voiceOrder,
-        reassignedProject.notes.map((note) => note.voiceId),
+        voiceLabels,
       );
       dispatchEditorCommand({
         kind: "replaceProject",
         project: reassignedProject,
         provenance: reassigned.provenance,
-        voiceOrder: nextVoiceOrder,
+        voiceOrder: reconciled.voiceOrder,
+        voiceLabels: reconciled.voiceLabels,
       });
+      setActiveVoiceId((current) => (current ? (reconciled.oldToNew.get(current) ?? null) : null));
+      setSoloVoiceId((current) => (current ? (reconciled.oldToNew.get(current) ?? null) : null));
       setSkippedReviewNoteIds(new Set());
       setNamedSnapshots((current) =>
         appendSnapshot(
@@ -880,8 +895,8 @@ export default function App() {
             {
               project: reassignedProject,
               voiceOverrides,
-              voiceOrder: nextVoiceOrder,
-              voiceLabels,
+              voiceOrder: reconciled.voiceOrder,
+              voiceLabels: reconciled.voiceLabels,
               rangeAssignedNoteIds,
             },
             rerunSettings,

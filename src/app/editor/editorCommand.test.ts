@@ -227,6 +227,7 @@ describe("applyEditorCommand", () => {
       project: replacement,
       provenance: reassigned,
       voiceOrder: ["voice-9"],
+      voiceLabels: { "voice-9": "Lead" },
     });
 
     expectSingleRevisionStep(before, after);
@@ -235,7 +236,8 @@ describe("applyEditorCommand", () => {
     expect(after.assignmentProvenance).toEqual(reassigned);
     expect(after.voiceOverrides).toEqual({ a: "voice-2" });
     expect(after.rangeAssignedNoteIds).toEqual(new Set(["a"]));
-    expect(after.voiceLabels).toEqual({ "voice-1": "Lead" });
+    // Labels are reconciled onto the reallocated voice id, not left orphaned.
+    expect(after.voiceLabels).toEqual({ "voice-9": "Lead" });
   });
 
   it("restores all document fields atomically while retaining the active document identity", () => {

@@ -20,6 +20,7 @@ export type EditorCommand =
       readonly project: MidiProject;
       readonly provenance: AssignmentProvenance;
       readonly voiceOrder: readonly string[];
+      readonly voiceLabels: Readonly<Record<string, string>>;
     }
   | { readonly kind: "restoreDocument"; readonly document: EditorDocument };
 
@@ -169,6 +170,7 @@ export function applyEditorCommand(doc: EditorDocument, command: EditorCommand):
         project: command.project,
         assignmentProvenance: command.provenance,
         voiceOrder: command.voiceOrder,
+        voiceLabels: command.voiceLabels,
       });
 
     case "restoreDocument":
