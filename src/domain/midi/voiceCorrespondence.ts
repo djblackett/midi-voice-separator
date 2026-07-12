@@ -56,10 +56,9 @@ export interface VoiceCorrespondence {
  * rows/cols are simply absent. Exact (Kuhn-Munkres / Hungarian, O(n^3)) and
  * deterministic for a fixed input ordering; voice counts are tiny.
  */
-export function maxWeightMatching(weights: readonly (readonly number[])[]): (readonly [
-  number,
-  number,
-])[] {
+export function maxWeightMatching(
+  weights: readonly (readonly number[])[],
+): (readonly [number, number])[] {
   const rows = weights.length;
   const cols = rows === 0 ? 0 : weights[0].length;
   if (rows === 0 || cols === 0) {
@@ -161,14 +160,21 @@ function buildOverlap(
   return overlap;
 }
 
-export function correspondVoices(a: CorrespondenceSide, b: CorrespondenceSide): VoiceCorrespondence {
-  const aVoiceIds = a.voiceIds.filter((id) => id !== PERCUSSION_VOICE_ID).slice().sort();
-  const bVoiceIds = b.voiceIds.filter((id) => id !== PERCUSSION_VOICE_ID).slice().sort();
+export function correspondVoices(
+  a: CorrespondenceSide,
+  b: CorrespondenceSide,
+): VoiceCorrespondence {
+  const aVoiceIds = a.voiceIds
+    .filter((id) => id !== PERCUSSION_VOICE_ID)
+    .slice()
+    .sort();
+  const bVoiceIds = b.voiceIds
+    .filter((id) => id !== PERCUSSION_VOICE_ID)
+    .slice()
+    .sort();
   const overlap = buildOverlap(a, b);
 
-  const weights = aVoiceIds.map((aId) =>
-    bVoiceIds.map((bId) => overlap.get(aId)?.get(bId) ?? 0),
-  );
+  const weights = aVoiceIds.map((aId) => bVoiceIds.map((bId) => overlap.get(aId)?.get(bId) ?? 0));
   const matchedIndices = maxWeightMatching(weights);
 
   const matched: VoicePair[] = matchedIndices.map(([i, j]) => ({
@@ -190,8 +196,14 @@ export function correspondVoices(a: CorrespondenceSide, b: CorrespondenceSide): 
 
   const matchedA = new Set(matched.map((pair) => pair.aVoiceId));
   const matchedB = new Set(matched.map((pair) => pair.bVoiceId));
-  const unmatchedA = a.voiceIds.filter((id) => !matchedA.has(id)).slice().sort();
-  const unmatchedB = b.voiceIds.filter((id) => !matchedB.has(id)).slice().sort();
+  const unmatchedA = a.voiceIds
+    .filter((id) => !matchedA.has(id))
+    .slice()
+    .sort();
+  const unmatchedB = b.voiceIds
+    .filter((id) => !matchedB.has(id))
+    .slice()
+    .sort();
 
   return {
     matched,

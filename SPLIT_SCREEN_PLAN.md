@@ -39,7 +39,7 @@ Feature 2.
 **Explicit non-goals** (each is a later master-plan feature)
 
 - **A/B playback of two sides (M12)** — Feature 5. In split, one transport still plays the active/
-  monitored side; the shared playhead is *drawn* in both panes (time is linked), but no dual audio
+  monitored side; the shared playhead is _drawn_ in both panes (time is linked), but no dual audio
   and no per-pane engine. Presentation **timbre** keys are derived here but consumed by playback in
   Feature 5.
 - **Content-based note matching (M16)** — Feature 7. Linked selection here uses note-ID equality,
@@ -55,7 +55,7 @@ Feature 2.
 - **Voice matching is greedy.** `matchVoices(before, after)` (`assignmentDiff.ts:128`) builds an
   overlap map then "repeatedly commit[s] the single best remaining pair" (its own comment,
   line 160). It can pick a globally inferior pairing. Output `VoiceMatching = { matched:
-  {beforeVoiceId, afterVoiceId}[], removedVoiceIds, addedVoiceIds }`. Percussion is force-matched.
+{beforeVoiceId, afterVoiceId}[], removedVoiceIds, addedVoiceIds }`. Percussion is force-matched.
   It is consumed today only by the diff summary.
 - **Colors come from the raw voice id.** `getVoiceFillColor(voiceId)` → `voiceColorIndex(voiceId)` =
   `(voiceNumber - 1) % VOICE_COLORS.length`, parsing the `voice-N` suffix (`drawPianoRoll.ts:61`).
@@ -85,7 +85,7 @@ Feature 2.
 export interface VoicePair {
   readonly aVoiceId: string;
   readonly bVoiceId: string;
-  readonly overlap: number;         // shared-note weight
+  readonly overlap: number; // shared-note weight
 }
 export interface VoiceCorrespondence {
   readonly matched: readonly VoicePair[];
@@ -102,7 +102,7 @@ export function correspondVoices(a: DiffSide, b: DiffSide): VoiceCorrespondence;
 
 Deterministic **maximum-weight bipartite matching** over shared-note overlap (Hungarian /
 successive-shortest-augmenting-path on a small dense matrix — voice counts are tiny). Ties are
-broken by a total order (overlap desc, then voice id asc) and *also reported* as `ambiguous`, never
+broken by a total order (overlap desc, then voice id asc) and _also reported_ as `ambiguous`, never
 hidden. Percussion is matched by its semantic role, outside the weight problem. The old
 `VoiceMatching` becomes a thin adapter over this (or `matchVoices` is retired and callers move to
 `correspondVoices`), so the disjoint-id diff guard is never weakened (rejected-design list).
@@ -111,7 +111,7 @@ hidden. Percussion is matched by its semantic role, outside the weight problem. 
 
 ```ts
 // src/features/piano-roll/presentationKeys.ts
-export type PresentationKey = string;   // canonical color/timbre bucket, NOT a voice id
+export type PresentationKey = string; // canonical color/timbre bucket, NOT a voice id
 export interface PresentationKeyMap {
   keyForSide(side: "A" | "B", voiceId: string): PresentationKey;
 }
@@ -138,9 +138,9 @@ voice-id path becomes the identity mapping (single side → same colors as today
 ```ts
 interface PianoRollProps {
   // …existing…
-  timeViewport?: ViewportWindow;                 // controlled when provided
+  timeViewport?: ViewportWindow; // controlled when provided
   onTimeViewportChange?: (next: ViewportWindow) => void;
-  pitchViewport?: PitchViewportWindow;           // controlled when provided
+  pitchViewport?: PitchViewportWindow; // controlled when provided
   onPitchViewportChange?: (next: PitchViewportWindow) => void;
 }
 ```
@@ -156,18 +156,18 @@ window across two panes.
 export type ComparisonLayout = "single" | "split";
 export interface ComparisonWorkspace {
   targetSnapshotId: string;
-  viewing: CompareViewing;          // drives the single-layout canvas + diff view
+  viewing: CompareViewing; // drives the single-layout canvas + diff view
   layout: ComparisonLayout;
-  linkTimeViewport: boolean;        // default true
-  linkPitchViewport: boolean;       // default false (explicit choice, M13)
+  linkTimeViewport: boolean; // default true
+  linkPitchViewport: boolean; // default false (explicit choice, M13)
 }
 
 // src/app/editor/comparisonProjection.ts (new)
 export interface SideProjection {
   readonly side: "A" | "B";
   readonly document: EditorDocument;
-  readonly project: MidiProject;                 // materialized
-  readonly editable: boolean;                    // side === activeSide && layout allows edit
+  readonly project: MidiProject; // materialized
+  readonly editable: boolean; // side === activeSide && layout allows edit
   readonly revisionRef: { branchId: BranchId; revision: number };
 }
 export interface ComparisonProjection {
@@ -193,7 +193,7 @@ Same discipline as Feature 2: introduce pure cores with their own tests, flip ca
 behavior-preserving seam, then build the new UI last.
 
 1. Land M9 correspondence and M10 presentation keys as **pure, tested modules** first; wire the
-   *diff* and single-side rendering to them without any visible change (identity mapping for one
+   _diff_ and single-side rendering to them without any visible change (identity mapping for one
    side, and correspondence output shaped to keep the current diff numbers).
 2. Make the `PianoRoll` viewport controllable **uncontrolled-by-default**, so the single canvas is
    untouched.
@@ -219,7 +219,7 @@ No slice mixes "introduce core" with "delete old path"; each is one commit, gree
   unmatched B stable and non-colliding, percussion semantic, single-side identity).
 - **A4. Presentation-key rendering path.** `getVoiceFillColor`/`getVoiceStrokeColor` and the legend
   accept a presentation key; single-side rendering passes the identity map — pixels unchanged.
-  *Manual pause:* confirm single-side colors are visually identical.
+  _Manual pause:_ confirm single-side colors are visually identical.
 
 ### Phase B — Controlled viewport (M13 part 1)
 
@@ -248,7 +248,7 @@ No slice mixes "introduce core" with "delete old path"; each is one commit, gree
   active branch (already true via the hook — verified, not re-plumbed).
 - **D4. Linked selection through shared note IDs.** Selecting notes in one pane highlights the same
   note ids in the other (valid: shared note universe). Presentation keys give matched voices the
-  same color across panes. *Manual pause:* split readability and focus clarity on the two dense
+  same color across panes. _Manual pause:_ split readability and focus clarity on the two dense
   fixtures.
 
 ### Phase E — Correspondence-based reconciliation (M9 follow-through)
@@ -256,23 +256,23 @@ No slice mixes "introduce core" with "delete old path"; each is one commit, gree
 - **E1. Reconcile labels/order/active-voice/solo after a rerun through correspondence.** Replace the
   raw-id `reconcileVoiceOrderAfterReassign` carry-forward with a correspondence-driven remap, so a
   rerun that reallocates voice ids keeps labels/solo/active-voice stable. Guarded by the existing
-  rerun and diff-summary suites plus new correspondence-reconciliation tests. *(Sequenced last
-  because it changes existing rerun behavior; can ship independently if split UI is prioritized.)*
+  rerun and diff-summary suites plus new correspondence-reconciliation tests. _(Sequenced last
+  because it changes existing rerun behavior; can ship independently if split UI is prioritized.)_
 
 ---
 
 ## 6. Contracts consumed, and where each is satisfied
 
-| Contract | Satisfied by |
-|----------|--------------|
-| M9 maximum-weight correspondence | A1, A2; reused by A3, D4, E1 |
-| M10 presentation keys | A3, A4 (render); timbre consumption deferred to Feature 5 |
-| M11 one workspace projection | C1, C2, D1 |
-| M13 controlled/side-qualified panes | B1, D1–D4 |
-| M8 side-scoped identity | consumed (already landed in Feature 2) |
-| M12 dual playback | out of scope (Feature 5) |
-| M15 lane parity | out of scope (Feature 6) |
-| M16 note content matching | out of scope; linked selection uses shared ids (Feature 7) |
+| Contract                            | Satisfied by                                               |
+| ----------------------------------- | ---------------------------------------------------------- |
+| M9 maximum-weight correspondence    | A1, A2; reused by A3, D4, E1                               |
+| M10 presentation keys               | A3, A4 (render); timbre consumption deferred to Feature 5  |
+| M11 one workspace projection        | C1, C2, D1                                                 |
+| M13 controlled/side-qualified panes | B1, D1–D4                                                  |
+| M8 side-scoped identity             | consumed (already landed in Feature 2)                     |
+| M12 dual playback                   | out of scope (Feature 5)                                   |
+| M15 lane parity                     | out of scope (Feature 6)                                   |
+| M16 note content matching           | out of scope; linked selection uses shared ids (Feature 7) |
 
 ---
 

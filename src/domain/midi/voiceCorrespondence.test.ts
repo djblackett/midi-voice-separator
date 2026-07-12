@@ -131,8 +131,14 @@ describe("correspondVoices", () => {
     const a = side({ n1: "voice-1", n2: "voice-1", n3: "voice-2", n4: "voice-3" });
     const b = side({ n1: "voice-5", n2: "voice-6", n3: "voice-7", n4: "voice-7" });
     const result = correspondVoices(a, b);
-    expect(result.splits).toContainEqual({ aVoiceId: "voice-1", bVoiceIds: ["voice-5", "voice-6"] });
-    expect(result.merges).toContainEqual({ bVoiceId: "voice-7", aVoiceIds: ["voice-2", "voice-3"] });
+    expect(result.splits).toContainEqual({
+      aVoiceId: "voice-1",
+      bVoiceIds: ["voice-5", "voice-6"],
+    });
+    expect(result.merges).toContainEqual({
+      bVoiceId: "voice-7",
+      aVoiceIds: ["voice-2", "voice-3"],
+    });
   });
 
   it("corresponds percussion by role and keeps it out of the weight problem", () => {

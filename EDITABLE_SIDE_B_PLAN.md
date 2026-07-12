@@ -13,8 +13,8 @@ gate is met — 12 Rust evaluator tests (incl. dense real-fixture determinism/in
 
 ## 1. Purpose and scope
 
-The master plan states: *"The editor/branch foundation is not a separate product feature. It
-is the required first part of the editable-B plan."* This document is that combined plan.
+The master plan states: _"The editor/branch foundation is not a separate product feature. It
+is the required first part of the editable-B plan."_ This document is that combined plan.
 
 **In scope**
 
@@ -32,7 +32,7 @@ is the required first part of the editable-B plan."* This document is that combi
 - **Split screen / simultaneous rendering of A and B** — master-plan Feature 3. Therefore the
   split-pane UI state contract **M13 is out of scope here.**
 - **A/B playback of two sides** — Feature 5. The transport still plays exactly one materialized
-  project at a time; we only make *which* project that is follow the active branch (a small
+  project at a time; we only make _which_ project that is follow the active branch (a small
   slice of M11/M12, not the full transport rework).
 - **Keyboard side switching** — Feature 4. B is selected by the existing on-canvas toggle, not a
   shortcut, so we do not build the full command registry (M14) — but see §7 for the one M14
@@ -52,7 +52,7 @@ blocking the unambiguous foundation work in Phases A–B.
 Relevant to this feature, the code already has:
 
 - **`EditorSnapshot`** (`src/app/editorHistory.ts`): `{ project, voiceOverrides, voiceOrder,
-  voiceLabels, rangeAssignedNoteIds }`. This is exactly the five-field atomic value M1 wants to
+voiceLabels, rangeAssignedNoteIds }`. This is exactly the five-field atomic value M1 wants to
   promote — it just lacks identity, revision, and provenance.
 - **`editorHistory.ts`**: pure, capped (50) full-snapshot `past`/`future` stacks —
   `createEditorHistory`, `pushHistory`, `undoHistory`, `redoHistory`. One implicit branch.
@@ -60,10 +60,10 @@ Relevant to this feature, the code already has:
   overrides-applied, voice-list-rebuilt projection every renderer/comparison/evaluator consumes.
   This is the M4/M11 "materialized side" building block, already centralized.
 - **`CompareState`** (`src/app/editorCompare.ts`): `{ baselineSnapshotId, targetSnapshotId,
-  viewing }` — **references only, no copied projects**, already satisfying M4's storage rule.
+viewing }` — **references only, no copied projects**, already satisfying M4's storage rule.
   `buildComparePreview` derives the projection (materialized target + `matchVoices` result).
 - **`NamedSnapshot`** wraps `EditorSnapshot` + metadata and is treated as immutable (C1).
-- **`matchVoices`** (`src/domain/midi/assignmentDiff.ts`): a *greedy* largest-overlap-first voice
+- **`matchVoices`** (`src/domain/midi/assignmentDiff.ts`): a _greedy_ largest-overlap-first voice
   matcher. M9 wants this replaced by deterministic maximum-weight bipartite matching.
 - The `reassign_voices` IPC returns a bare `MidiProject` with **no provenance metadata**; the
   frontend labels snapshots and the diff with live dropdown values (the M6 bug).
@@ -90,7 +90,7 @@ into `bProject`/`bOverrides`/… is exactly the master plan's top **rejected** d
   a programmatic or non-focus rename is silently non-undoable. Number-key reassignment
   (`applyNoteReassignment`) duplicates assignment bookkeeping already expressed elsewhere.
 - **M6** — `currentRerunSettings` is built from the live Strategy/Search/Max-voices selectors and
-  is used both as the diff's "how this assignment was produced" side *and* stamped onto
+  is used both as the diff's "how this assignment was produced" side _and_ stamped onto
   before/after-rerun snapshots. Dropdown state is not provenance.
 - **M7** — `handleReassign` awaits `reassign_voices` over IPC and then mutates editor state with
   no revision guard; a keyboard or canvas edit landing during the await is clobbered, and
@@ -110,7 +110,7 @@ export type DocumentId = string;
 
 export interface EditorDocument {
   readonly documentId: DocumentId;
-  readonly revision: number;                 // bumped by every committed transaction
+  readonly revision: number; // bumped by every committed transaction
   readonly project: MidiProject | null;
   readonly voiceOverrides: VoiceOverrides;
   readonly voiceOrder: readonly string[];
@@ -136,8 +136,12 @@ export type EditorCommand =
   | { kind: "reorderVoice"; voiceId: string; direction: -1 | 1 }
   | { kind: "applyRangeAssignments"; assignments: ReadonlyMap<string, string> }
   | { kind: "paintNotes"; noteIds: readonly string[]; voiceId: string }
-  | { kind: "replaceProject"; project: MidiProject; provenance: AssignmentProvenance;
-      voiceOrder: readonly string[] }   // rerun / restore result application
+  | {
+      kind: "replaceProject";
+      project: MidiProject;
+      provenance: AssignmentProvenance;
+      voiceOrder: readonly string[];
+    } // rerun / restore result application
   | { kind: "restoreDocument"; document: EditorDocument };
 
 // The entire editor boundary, pure and total:
@@ -145,7 +149,7 @@ export function applyEditorCommand(doc: EditorDocument, cmd: EditorCommand): Edi
 ```
 
 Every button, canvas gesture, review action, smart fix, snapshot restore, and rerun result goes
-through `applyEditorCommand`. It is the *only* function that mutates the five fields. It returns a
+through `applyEditorCommand`. It is the _only_ function that mutates the five fields. It returns a
 new document with `revision + 1`. Non-mutating actions (selection, solo, tool) never enter it.
 
 This closes the M3 inconsistencies structurally: rename becomes a normal command (always
@@ -160,18 +164,18 @@ export type BranchId = "A" | "B";
 export interface EditorBranch {
   readonly branchId: BranchId;
   readonly present: EditorDocument;
-  readonly history: EditorHistoryState;   // reuses existing editorHistory.ts, retyped to EditorDocument
+  readonly history: EditorHistoryState; // reuses existing editorHistory.ts, retyped to EditorDocument
   readonly forkedFrom: SnapshotRef | null; // A = null (or import), B = the snapshot it forked
 }
 
 // history-wrapping transition used by the app for every mutation:
-export function commit(branch: EditorBranch, cmd: EditorCommand): EditorBranch;   // push present, apply, replace
+export function commit(branch: EditorBranch, cmd: EditorCommand): EditorBranch; // push present, apply, replace
 export function undo(branch: EditorBranch): EditorBranch;
 export function redo(branch: EditorBranch): EditorBranch;
 ```
 
 `editorHistory.ts` is retyped from `EditorSnapshot` to `EditorDocument` (same shape of logic;
-the stacks now carry identity+revision+provenance too). Both A and B use the *same* `commit`,
+the stacks now carry identity+revision+provenance too). Both A and B use the _same_ `commit`,
 the same `applyEditorCommand`, the same materializer, diagnostics, and rerun pipeline. No
 B-specific fields or handlers (M2 / rejected-design guard).
 
@@ -180,16 +184,21 @@ B-specific fields or handlers (M2 / rejected-design guard).
 ```ts
 // src/domain/midi/assignmentProvenance.ts
 export type AssignmentProvenance =
-  | { kind: "imported"; algorithmVersion: number }         // generic import: actually Balanced+Greedy
-  | { kind: "appExportedVoiceTracks" }                     // non-heuristic: tracks already carried voices
-  | { kind: "reassigned"; strategy: SeparationStrategy; mode: AssignmentMode;
-      maxVoiceCount: number | null; algorithmVersion: number };
+  | { kind: "imported"; algorithmVersion: number } // generic import: actually Balanced+Greedy
+  | { kind: "appExportedVoiceTracks" } // non-heuristic: tracks already carried voices
+  | {
+      kind: "reassigned";
+      strategy: SeparationStrategy;
+      mode: AssignmentMode;
+      maxVoiceCount: number | null;
+      algorithmVersion: number;
+    };
 ```
 
 - `AssignmentProvenance` is **produced by the backend** as part of the import/reassign result and
   carried on the document. Manual corrections (the override layer) do not rewrite it.
 - `RerunPreset` = the current `separationStrategy`/`assignmentMode`/`maxVoiceCountInput` UI atoms;
-  they describe the *next* requested rerun only.
+  they describe the _next_ requested rerun only.
 - `EvaluationProfile` = the existing `GENERAL_PURPOSE` profile from Feature 1; already separate.
 
 The diff and snapshot labels stop reading dropdown state and read `document.assignmentProvenance`
@@ -203,9 +212,9 @@ kept reference-only:
 ```ts
 // src/app/editor/comparisonWorkspace.ts
 export interface ComparisonWorkspace {
-  sideA: BranchId;          // "A"
-  sideB: BranchRef | null;  // a live B branch OR a snapshot ref not yet forked
-  activeSide: BranchId;     // which branch edits + inspectors bind to
+  sideA: BranchId; // "A"
+  sideB: BranchRef | null; // a live B branch OR a snapshot ref not yet forked
+  activeSide: BranchId; // which branch edits + inspectors bind to
   viewing: "A" | "B" | "diff"; // which side the single canvas shows (single-view: monitor == viewing)
 }
 ```
@@ -221,7 +230,7 @@ projection when split screen (Feature 3) and A/B playback (Feature 5) land.
 
 Single-view editable B works correctly with **only** M8 (side-scoped identifiers) and the minimal
 M11 resolver above. M9 (maximum-weight bipartite voice correspondence) and M10 (presentation
-keys) change *visible* behavior — a matched voice keeping its color/timbre across the A/B toggle —
+keys) change _visible_ behavior — a matched voice keeping its color/timbre across the A/B toggle —
 and only become **correctness-critical** when both sides are on screen or audible at once
 (Features 3 and 5).
 
@@ -231,9 +240,9 @@ Three options:
    the existing greedy `matchVoices` for the toggle's solo/label mapping (as the shipped compare
    already does). Defer the M9 bipartite upgrade and M10 presentation-key indirection to Feature 3,
    where simultaneous rendering makes globally-optimal matching and stable color/timbre actually
-   observable and testable. *Rationale:* keeps this feature's slices behavior-preserving and
+   observable and testable. _Rationale:_ keeps this feature's slices behavior-preserving and
    smaller; avoids building presentation-key plumbing with no on-screen consumer to validate it.
-2. **Full M8–M11 now**, as the master plan's literal "land M1–M11" reading. *Cost:* builds the
+2. **Full M8–M11 now**, as the master plan's literal "land M1–M11" reading. _Cost:_ builds the
    bipartite matcher and presentation-key layer before any UI renders two sides at once, so their
    correctness is only unit-testable, not observable — higher risk of building the wrong seam.
 3. **M8–M10 now, M11 projection deferred.** Middle option; least coherent (correspondence without
@@ -249,14 +258,14 @@ recorded here per the master plan's rule that a contract-scope change needs expl
 
 ## 5. Migration strategy
 
-The refactor must never present a half-migrated editor. The safe order is *introduce the pure
-core behind the existing state, then flip callers, then delete the old fan-out*:
+The refactor must never present a half-migrated editor. The safe order is _introduce the pure
+core behind the existing state, then flip callers, then delete the old fan-out_:
 
 1. Build `applyEditorCommand` + `EditorDocument` as **pure modules with their own unit tests**,
    not yet wired to `App.tsx`.
 2. Introduce a single `useEditorBranch` hook that owns one `EditorBranch` for A and exposes
    `dispatch(cmd)`, `undo`, `redo`, and the materialized project. Internally it can still back
-   onto the existing `useState` atoms during transition, or replace them — but the *external*
+   onto the existing `useState` atoms during transition, or replace them — but the _external_
    surface is the dispatch API.
 3. Convert handlers one family at a time (assignment, voice management, range, paint, rerun,
    restore) from fan-out setters to `dispatch(command)`. Each conversion is one commit and is
@@ -279,16 +288,16 @@ changes) before commit. `git status --short` at the start of each.
 
 - **A1. Introduce `EditorDocument` + `applyEditorCommand` (pure, unwired).** New
   `src/app/editor/` modules and a thorough reducer test suite covering each command and the
-  `rangeAssignedNoteIds ⊆ overrides` invariant. No `App.tsx` change yet. *Tests:* new
+  `rangeAssignedNoteIds ⊆ overrides` invariant. No `App.tsx` change yet. _Tests:_ new
   `editorCommand.test.ts`.
 - **A2. Retype `editorHistory.ts` to `EditorDocument`; add `commit/undo/redo`.** Update
   `editorHistory.test.ts`. Still unwired.
 - **A3. Add `useEditorBranch` hook and route the assignment + paint handlers through it.**
-  `applyNoteReassignment`, number-key path, and `onPaintNotes` become `dispatch({kind:"assignNotes"|"paintNotes"})`. Delete their fan-out. *Regression:* existing
+  `applyNoteReassignment`, number-key path, and `onPaintNotes` become `dispatch({kind:"assignNotes"|"paintNotes"})`. Delete their fan-out. _Regression:_ existing
   selection/paint Playwright specs.
 - **A4. Route voice-management handlers** (`createVoice`, `renameVoice`, `mergeVoice`,
   `reorderVoice`) through dispatch. **Fixes the M3 rename-history bug** — rename is now a normal
-  undoable command; drop the `onFocus` snapshot hack. *Tests:* add a Vitest/Playwright case that
+  undoable command; drop the `onFocus` snapshot hack. _Tests:_ add a Vitest/Playwright case that
   rename is undoable.
 - **A5. Route range-assignment + snapshot restore + undo/redo** through the branch. Undo/redo
   stop being six-setter fan-outs and become `undo(branch)`/`redo(branch)`.
@@ -296,35 +305,35 @@ changes) before commit. `git status --short` at the start of each.
   `useState` atoms** now that the branch owns them. This is the "scaling risk" reduction; App.tsx
   editor state collapses to one branch object. Pure cleanup commit.
 
-*Phase A verified boundary:* every editor mutation flows through `applyEditorCommand`; all
+_Phase A verified boundary:_ every editor mutation flows through `applyEditorCommand`; all
 existing tests green; rename is undoable; no behavior change otherwise.
 
 ### Phase B — Provenance, revision guard (behavior-correcting foundations)
 
 - **B1. Backend `AssignmentProvenance` on import/reassign.** `reassign_voices` and `import_midi`
   return provenance (Rust DTO + TS type). Generic import reports `imported`/app-exported reports
-  `appExportedVoiceTracks`/rerun reports the actual `reassigned{…}`. *Tests:* Rust command tests;
+  `appExportedVoiceTracks`/rerun reports the actual `reassigned{…}`. _Tests:_ Rust command tests;
   `commands.ts` typing.
 - **B2. Carry provenance on the document; diff + snapshot labels read it, not dropdowns.**
-  Removes the M6 bug. `toDiffSide` takes provenance. *Tests:* `assignmentDiff`/`editorCompare`
+  Removes the M6 bug. `toDiffSide` takes provenance. _Tests:_ `assignmentDiff`/`editorCompare`
   tests updated to assert provenance-sourced labels; a regression test that changing a dropdown
   without rerunning does not change the diff's provenance.
 - **B3. Revision-guarded async rerun (M7).** `handleReassign` captures `{branchId, revision,
-  requestId}` before the await and applies the `replaceProject` command only if the branch is
+requestId}` before the await and applies the `replaceProject` command only if the branch is
   still at that revision; otherwise it discards into an explicit "your edit during rerun was
-  kept; rerun result dropped — rerun again" path. *Tests:* a Vitest test driving a stale result;
+  kept; rerun result dropped — rerun again" path. _Tests:_ a Vitest test driving a stale result;
   a Playwright test editing during a slow faked rerun.
 
-*Phase B verified boundary:* dropdown state is provably not provenance; a stale rerun cannot
+_Phase B verified boundary:_ dropdown state is provably not provenance; a stale rerun cannot
 overwrite a newer edit (mandatory regression scenario satisfied).
 
-### Phase C — Side-scoped identity + correspondence *(scope per §4 decision)*
+### Phase C — Side-scoped identity + correspondence _(scope per §4 decision)_
 
 - **C1. Side-scoped identifiers (M8).** Introduce `NoteRef`/`VoiceRef` types; keep parser note
   IDs as local addresses. No behavior change; this is the typing seam later features consume.
 - **C2. (Option-1 default: deferred to Feature 3.)** Maximum-weight bipartite voice
-  correspondence (M9) replacing greedy `matchVoices`, and presentation keys (M10). *Written here
-  as a ready sub-plan but not implemented unless §10 sign-off promotes it.*
+  correspondence (M9) replacing greedy `matchVoices`, and presentation keys (M10). _Written here
+  as a ready sub-plan but not implemented unless §10 sign-off promotes it._
 
 ### Phase D — The B branch and editable-B lifecycle
 
@@ -336,38 +345,38 @@ overwrite a newer edit (mandatory regression scenario satisfied).
   now means "viewing a side you are not the active editor of," not "any B/diff."
 - **D3. Independent A/B editing + undo, bound to `activeSide` (M2/M11).** All inspectors and
   editor commands target the active branch. **Undo/redo authorized against the active side —
-  closes the M14 read-only-compare undo leak** (the one M14 invariant we honor now). *Tests:*
+  closes the M14 read-only-compare undo leak** (the one M14 invariant we honor now). _Tests:_
   Playwright — edit A, switch to B, edit B, undo only affects B; neither mutates the other or the
   source snapshot.
 - **D4. Lifecycle: `Use B` / `Keep A` / `Save B as snapshot` / safe exit (M5).** `Use B` promotes
   B to the primary result and preserves A as a snapshot; `Keep A` discards B only after an
   explicit confirm when B is dirty; exiting comparison never silently loses B. Export identifies
-  the exported branch explicitly (not "whatever rendered last"). *Tests:* Playwright lifecycle
+  the exported branch explicitly (not "whatever rendered last"). _Tests:_ Playwright lifecycle
   matrix.
 
-*Phase D verified boundary (feature exit gate, per master plan):* A and B edit and undo
+_Phase D verified boundary (feature exit gate, per master plan):_ A and B edit and undo
 independently; neither mutates the other or the source snapshot; stale reruns cannot land.
 
 ---
 
 ## 7. Contracts consumed, and where each is satisfied
 
-| Contract | Satisfied by | Notes |
-|----------|--------------|-------|
-| M1 atomic document | A1, A6 | provenance field added in B1/B2 |
-| M2 one branch type/command | A2–A6, D1 | |
-| M3 pure transaction | A1, A3–A5 | fixes rename-history + number-key duplication |
-| M4 references-only comparison | D1 | already largely true today |
-| M5 branch lifecycle | D2, D4 | |
-| M6 provenance separation | B1, B2 | fixes dropdown-as-provenance |
-| M7 revision-guarded async | B3 | |
-| M8 side-scoped IDs | C1 | |
-| M9 correspondence | C2 | **deferred by default — §4/§10** |
-| M10 presentation keys | C2 | **deferred by default — §4/§10** |
-| M11 workspace projection | D1, D3 (minimal) | full projection at Feature 3 |
-| M14 (undo authorization only) | D3 | full command registry is Feature 4 |
-| M13 split panes | — | out of scope (Feature 3) |
-| M12 dual-source playback | — | out of scope (Feature 5); here transport just follows active side |
+| Contract                      | Satisfied by     | Notes                                                             |
+| ----------------------------- | ---------------- | ----------------------------------------------------------------- |
+| M1 atomic document            | A1, A6           | provenance field added in B1/B2                                   |
+| M2 one branch type/command    | A2–A6, D1        |                                                                   |
+| M3 pure transaction           | A1, A3–A5        | fixes rename-history + number-key duplication                     |
+| M4 references-only comparison | D1               | already largely true today                                        |
+| M5 branch lifecycle           | D2, D4           |                                                                   |
+| M6 provenance separation      | B1, B2           | fixes dropdown-as-provenance                                      |
+| M7 revision-guarded async     | B3               |                                                                   |
+| M8 side-scoped IDs            | C1               |                                                                   |
+| M9 correspondence             | C2               | **deferred by default — §4/§10**                                  |
+| M10 presentation keys         | C2               | **deferred by default — §4/§10**                                  |
+| M11 workspace projection      | D1, D3 (minimal) | full projection at Feature 3                                      |
+| M14 (undo authorization only) | D3               | full command registry is Feature 4                                |
+| M13 split panes               | —                | out of scope (Feature 3)                                          |
+| M12 dual-source playback      | —                | out of scope (Feature 5); here transport just follows active side |
 
 ---
 
