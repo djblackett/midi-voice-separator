@@ -52,3 +52,31 @@ test("split view shows both sides and clicking a pane sets the active side", asy
   await page.getByRole("button", { name: "Single view" }).click();
   await expect(page.locator(".editor-split")).toHaveCount(0);
 });
+
+test("split offers an explicit linked/independent pitch-scroll toggle", async ({ page }) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "a" ? { ...entry, voiceId: "voice-2" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+  await page.getByRole("button", { name: "Split view" }).click();
+
+  // Pitch scroll is independent by default (time is always linked) and flips to
+  // linked on click.
+  await expect(page.getByRole("button", { name: "Pitch: independent" })).toBeVisible();
+  await page.getByRole("button", { name: "Pitch: independent" }).click();
+  await expect(page.getByRole("button", { name: "Pitch: linked" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // The toggle is a split-only control -- leaving split hides it.
+  await page.getByRole("button", { name: "Single view" }).click();
+  await expect(page.getByRole("button", { name: /^Pitch:/ })).toHaveCount(0);
+});

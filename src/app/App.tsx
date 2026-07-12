@@ -88,6 +88,11 @@ import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
 import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
 import { useComparisonEditor } from "./editor/useComparisonEditor";
+import { defaultViewportWindow, type ViewportWindow } from "../features/piano-roll/viewportWindow";
+import {
+  defaultPitchViewportWindow,
+  type PitchViewportWindow,
+} from "../features/piano-roll/pitchViewportWindow";
 import {
   appendSnapshot,
   createNamedSnapshot,
@@ -196,6 +201,13 @@ export default function App() {
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<ComparisonWorkspace | null>(null);
   const [pendingCompareExit, setPendingCompareExit] = useState(false);
+  // Split panes share one time viewport so they stay aligned in musical time.
+  // Pitch scroll is independent by default; `linkPitchScroll` shares it too.
+  const [splitTimeViewport, setSplitTimeViewport] = useState<ViewportWindow>(defaultViewportWindow);
+  const [splitPitchViewport, setSplitPitchViewport] = useState<PitchViewportWindow>(
+    defaultPitchViewportWindow,
+  );
+  const [linkPitchScroll, setLinkPitchScroll] = useState(false);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
   const {
     branch: editorBranch,
@@ -1097,6 +1109,10 @@ export default function App() {
           onSeek={playback.seek}
           readOnly={!editable}
           viewMode={pianoRollViewMode}
+          timeViewport={splitTimeViewport}
+          onTimeViewportChange={setSplitTimeViewport}
+          pitchViewport={linkPitchScroll ? splitPitchViewport : undefined}
+          onPitchViewportChange={linkPitchScroll ? setSplitPitchViewport : undefined}
         />
       </div>
     );
@@ -2420,6 +2436,17 @@ export default function App() {
                 >
                   {isSplitLayout ? "Single view" : "Split view"}
                 </button>
+                {isSplitLayout ? (
+                  <button
+                    type="button"
+                    className={linkPitchScroll ? "secondary-button active" : "secondary-button"}
+                    onClick={() => setLinkPitchScroll((current) => !current)}
+                    aria-pressed={linkPitchScroll ? "true" : "false"}
+                    title="Scroll and zoom both panes' pitch axis together"
+                  >
+                    {linkPitchScroll ? "Pitch: linked" : "Pitch: independent"}
+                  </button>
+                ) : null}
                 {pendingCompareExit ? (
                   <span className="compare-exit-confirm" role="alert">
                     Discard side B&rsquo;s unsaved edits?
