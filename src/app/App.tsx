@@ -85,6 +85,7 @@ import {
 import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
 import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
+import { resolveKeyboardCommand, type KeyboardCommandId } from "./keyboard/keyboardCommands";
 import { useComparisonEditor } from "./editor/useComparisonEditor";
 import { defaultViewportWindow, type ViewportWindow } from "../features/piano-roll/viewportWindow";
 import {
@@ -513,123 +514,125 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Command implementations. The registry (`resolveKeyboardCommand`) has
+    // already applied the focus guard and the project/editable permission
+    // gates; each case only re-checks the finer, command-specific applicability
+    // (a flagged note exists, paint mode is active, a selection is present),
+    // no-oping and skipping preventDefault when unmet -- as the handlers did
+    // before the registry.
+    function runKeyboardCommand(command: KeyboardCommandId, event: KeyboardEvent) {
+      switch (command) {
+        case "undo":
+          event.preventDefault();
+          handleUndo();
+          return;
+        case "redo":
+          event.preventDefault();
+          handleRedo();
+          return;
+        case "clearSelectionOrExitPaint":
+          if (interactionMode === "paint") {
+            setInteractionMode("select");
+          } else {
+            setSelectedNoteIds(new Set());
+          }
+          return;
+        case "stepFlaggedForward":
+        case "stepFlaggedBackward": {
+          if (flaggedNotes.length === 0) {
+            return;
+          }
+          event.preventDefault();
+          const currentStartTick = selectedNote ? selectedNote.startTick : null;
+          const nextId = findNextFlaggedNoteId(
+            flaggedNotes,
+            currentStartTick,
+            command === "stepFlaggedBackward" ? -1 : 1,
+          );
+          if (nextId) {
+            setSelectedNoteIds(new Set([nextId]));
+          }
+          return;
+        }
+        case "toolPencil":
+        case "toolBrush":
+        case "toolLasso":
+        case "toolWand": {
+          event.preventDefault();
+          const tool: PaintTool =
+            command === "toolPencil"
+              ? "pencil"
+              : command === "toolBrush"
+                ? "brush"
+                : command === "toolLasso"
+                  ? "lasso"
+                  : "wand";
+          if (interactionMode === "paint" && paintTool === tool) {
+            setInteractionMode("select");
+          } else {
+            setPaintTool(tool);
+            setInteractionMode("paint");
+          }
+          return;
+        }
+        case "brushSmaller":
+        case "brushLarger": {
+          if (interactionMode !== "paint" || paintTool !== "brush") {
+            return;
+          }
+          event.preventDefault();
+          setBrushRadius((radius) => stepBrushRadius(radius, command === "brushLarger" ? 1 : -1));
+          return;
+        }
+        case "toggleConfidenceHeat":
+          event.preventDefault();
+          setIsConfidenceHeatOn((current) => !current);
+          return;
+        default: {
+          // assignVoice1-9
+          const voiceNumber = Number(command.slice("assignVoice".length));
+          if (!displayedProject) {
+            return;
+          }
+          const targetVoiceId = voiceIdForNumber(displayedProject, voiceNumber);
+          if (!targetVoiceId) {
+            return;
+          }
+          event.preventDefault();
+          if (interactionMode === "paint") {
+            setActiveVoiceId(targetVoiceId);
+            return;
+          }
+          if (selectedNoteIds.size === 0) {
+            return;
+          }
+          dispatchEditorCommand({
+            kind: "assignNotes",
+            noteIds: Array.from(selectedNoteIds),
+            voiceId: targetVoiceId,
+          });
+          setExportResult(null);
+        }
+      }
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target;
-      if (
+      const focusInEditableField =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
-        return;
-      }
-
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        if (event.shiftKey) {
-          handleRedo();
-        } else {
-          handleUndo();
-        }
-        return;
-      }
-
-      if (event.key === "Escape") {
-        if (interactionMode === "paint") {
-          setInteractionMode("select");
-        } else {
-          setSelectedNoteIds(new Set());
-        }
-        return;
-      }
-
-      if (isCompareReadOnly) {
-        return;
-      }
-
-      if (event.key === "Tab" && flaggedNotes.length > 0) {
-        event.preventDefault();
-        const currentStartTick = selectedNote ? selectedNote.startTick : null;
-        const nextId = findNextFlaggedNoteId(
-          flaggedNotes,
-          currentStartTick,
-          event.shiftKey ? -1 : 1,
-        );
-        if (nextId) {
-          setSelectedNoteIds(new Set([nextId]));
-        }
-        return;
-      }
-
-      // Paint-tool shortcuts, Photoshop-style: P(encil)/B(rush)/L(asso)/
-      // W(and) switch tools (entering paint mode if needed); pressing the
-      // active tool's key again exits back to select mode.
-      const paintToolForKey: Record<string, PaintTool> = {
-        p: "pencil",
-        b: "brush",
-        l: "lasso",
-        w: "wand",
-      };
-      const shortcutTool = paintToolForKey[event.key.toLowerCase()];
-      if (displayedProject && shortcutTool && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        if (interactionMode === "paint" && paintTool === shortcutTool) {
-          setInteractionMode("select");
-        } else {
-          setPaintTool(shortcutTool);
-          setInteractionMode("paint");
-        }
-        return;
-      }
-
-      if (
-        interactionMode === "paint" &&
-        paintTool === "brush" &&
-        (event.key === "[" || event.key === "]")
-      ) {
-        event.preventDefault();
-        setBrushRadius((radius) => stepBrushRadius(radius, event.key === "]" ? 1 : -1));
-        return;
-      }
-
-      if (
-        displayedProject &&
-        event.key.toLowerCase() === "h" &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey
-      ) {
-        event.preventDefault();
-        setIsConfidenceHeatOn((current) => !current);
-        return;
-      }
-
-      if (!displayedProject || !/^[1-9]$/.test(event.key)) {
-        return;
-      }
-
-      const targetVoiceId = voiceIdForNumber(displayedProject, Number(event.key));
-      if (!targetVoiceId) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (interactionMode === "paint") {
-        setActiveVoiceId(targetVoiceId);
-        return;
-      }
-
-      if (selectedNoteIds.size === 0) {
-        return;
-      }
-
-      dispatchEditorCommand({
-        kind: "assignNotes",
-        noteIds: Array.from(selectedNoteIds),
-        voiceId: targetVoiceId,
+        (target instanceof HTMLElement && target.isContentEditable);
+      const command = resolveKeyboardCommand(event, {
+        focusInEditableField,
+        hasProject: displayedProject !== null,
+        activeSideEditable: !isCompareReadOnly,
+        busy: isReassigning,
+        comparisonOpen: compareState !== null,
       });
-      setExportResult(null);
+      if (command) {
+        runKeyboardCommand(command, event);
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -646,6 +649,8 @@ export default function App() {
     voiceOrder,
     voiceLabels,
     isCompareReadOnly,
+    isReassigning,
+    compareState,
     dispatchEditorCommand,
   ]);
 
