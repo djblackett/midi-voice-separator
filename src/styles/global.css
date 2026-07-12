@@ -1384,6 +1384,36 @@ kbd {
   padding: 16px 24px 20px;
 }
 
+.editor-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.editor-pane {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 0;
+}
+
+.editor-pane-active {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8;
+}
+
+.editor-pane-label {
+  margin-bottom: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.editor-pane-active .editor-pane-label {
+  color: #7dd3fc;
+}
+
 .piano-roll-shell {
   position: relative;
   width: 100%;

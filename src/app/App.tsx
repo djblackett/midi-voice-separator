@@ -86,6 +86,7 @@ import {
 } from "../domain/midi/rangeRules";
 import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
+import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
 import { useComparisonEditor } from "./editor/useComparisonEditor";
 import {
   appendSnapshot,
@@ -408,10 +409,22 @@ export default function App() {
   // empty at fork and gains an entry per committed edit (undoing back to the
   // fork empties it again).
   const isSideBDirty = editorBranchB !== null && editorBranchB.history.past.length > 0;
+  // The one workspace projection (M11): it decides what renders, what edits,
+  // and how each side's voices map to presentation. In single layout it yields
+  // one visible side; in split it yields both, with correspondence-derived
+  // presentation keys so a matched B voice takes its A partner's color.
+  const comparisonProjection = useMemo(
+    () =>
+      resolveComparisonProjection(
+        { activeSide: editorActiveSide, A: editorBranchA, B: editorBranchB },
+        compareState,
+      ),
+    [editorActiveSide, editorBranchA, editorBranchB, compareState],
+  );
+  const isSplitLayout = comparisonProjection.visibleSides.length === 2;
   // The canvas always renders the active side's own materialized document:
   // switching the A/B toggle switches the active branch, so `displayedProject`
-  // already is the viewed side. Cross-side voice correspondence (matched
-  // colors/labels/solo) is deferred to the split-screen feature (M9/M10).
+  // already is the viewed side.
   const pianoRollProject = displayedProject;
   const pianoRollSoloVoiceId = soloVoiceId;
   const flaggedNoteIdSet = useMemo(
@@ -1022,6 +1035,71 @@ export default function App() {
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
+  }
+
+  // Toggle between the single A/B/Diff canvas and the two-pane split. Leaving
+  // split forces the diff-free single canvas onto the active side.
+  function handleToggleSplitLayout() {
+    setCompareState((current) =>
+      current
+        ? { ...current, layout: current.layout === "split" ? "single" : "split", viewing: "A" }
+        : current,
+    );
+    setEditorActiveSide("A");
+    setInteractionMode("select");
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
+  }
+
+  // Split panes: clicking a pane makes its side the active (editable) one.
+  function handleActivateSide(side: "A" | "B") {
+    setEditorActiveSide(side);
+  }
+
+  // One split pane, driven entirely by its projection. Only the active side is
+  // editable; clicking any pane activates it. Both panes share the global
+  // selection, so selecting a note highlights it in both (shared note ids).
+  function renderComparisonPane(sideProjection: SideProjection) {
+    const { side, editable } = sideProjection;
+    return (
+      <div
+        key={side}
+        role="group"
+        aria-label={`Side ${side} piano roll${editable ? " (editing)" : ""}`}
+        className={editable ? "editor-pane editor-pane-active" : "editor-pane"}
+        onPointerDownCapture={() => handleActivateSide(side)}
+      >
+        <div className="editor-pane-label">
+          Side {side}
+          {side === "A" ? " · Current" : " · Draft"}
+          {editable ? " · editing" : ""}
+        </div>
+        <PianoRoll
+          project={sideProjection.project}
+          presentationKeyByVoiceId={sideProjection.presentationKeyByVoiceId}
+          selectedNoteIds={selectedNoteIds}
+          onSelectionChange={editable ? setSelectedNoteIds : () => {}}
+          soloVoiceId={soloVoiceId}
+          interactionMode={interactionMode}
+          activeVoiceId={activeVoiceId}
+          onPaintNotes={handlePaintNotes}
+          paintTool={paintTool}
+          brushRadius={brushRadius}
+          onBrushRadiusChange={setBrushRadius}
+          wandReach={wandReach}
+          onAssignNotes={handleAssignNotesToVoice}
+          onAuditionNotes={handleAuditionNotes}
+          confidenceHeatmap={isConfidenceHeatOn}
+          pitchMarkers={pitchMarkers}
+          onPitchMarkersChange={setPitchMarkers}
+          currentPlaybackTick={playback.currentTick}
+          isPlaying={playback.isPlaying}
+          onSeek={playback.seek}
+          readOnly={!editable}
+          viewMode={pianoRollViewMode}
+        />
+      </div>
+    );
   }
 
   function snapshotStateOfDocument(document: EditorDocument) {
@@ -2308,22 +2386,40 @@ export default function App() {
             {compareState ? (
               <div className="compare-toolbar-group" aria-label="A/B compare preview controls">
                 <div className="compare-view-toggle" role="group" aria-label="Compare view">
-                  {(["A", "B", "diff"] as const).map((viewing) => (
-                    <button
-                      key={viewing}
-                      type="button"
-                      className={
-                        compareState.viewing === viewing
-                          ? "secondary-button active"
-                          : "secondary-button"
-                      }
-                      onClick={() => handleSetCompareViewing(viewing)}
-                      aria-pressed={compareState.viewing === viewing ? "true" : "false"}
-                    >
-                      {viewing === "A" ? "A: Current" : viewing === "B" ? "B: Draft" : "Diff"}
-                    </button>
-                  ))}
+                  {(isSplitLayout ? (["A", "B"] as const) : (["A", "B", "diff"] as const)).map(
+                    (viewing) => {
+                      // In split, the A/B buttons pick the active (editable) side;
+                      // in single they pick which side the one canvas shows.
+                      const isActive = isSplitLayout
+                        ? editorActiveSide === viewing
+                        : compareState.viewing === viewing;
+                      return (
+                        <button
+                          key={viewing}
+                          type="button"
+                          className={isActive ? "secondary-button active" : "secondary-button"}
+                          onClick={() =>
+                            isSplitLayout && viewing !== "diff"
+                              ? handleActivateSide(viewing)
+                              : handleSetCompareViewing(viewing)
+                          }
+                          aria-pressed={isActive ? "true" : "false"}
+                        >
+                          {viewing === "A" ? "A: Current" : viewing === "B" ? "B: Draft" : "Diff"}
+                        </button>
+                      );
+                    },
+                  )}
                 </div>
+                <button
+                  type="button"
+                  className={isSplitLayout ? "secondary-button active" : "secondary-button"}
+                  onClick={handleToggleSplitLayout}
+                  aria-pressed={isSplitLayout ? "true" : "false"}
+                  title="Show sides A and B side by side"
+                >
+                  {isSplitLayout ? "Single view" : "Split view"}
+                </button>
                 {pendingCompareExit ? (
                   <span className="compare-exit-confirm" role="alert">
                     Discard side B&rsquo;s unsaved edits?
@@ -2696,34 +2792,41 @@ export default function App() {
         ) : null}
 
         <section className="editor-grid">
-          <PianoRoll
-            project={pianoRollProject}
-            selectedNoteIds={selectedNoteIds}
-            onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
-            soloVoiceId={pianoRollSoloVoiceId}
-            interactionMode={interactionMode}
-            activeVoiceId={activeVoiceId}
-            onPaintNotes={handlePaintNotes}
-            paintTool={paintTool}
-            brushRadius={brushRadius}
-            onBrushRadiusChange={setBrushRadius}
-            wandReach={wandReach}
-            onAssignNotes={handleAssignNotesToVoice}
-            onAuditionNotes={handleAuditionNotes}
-            confidenceHeatmap={isConfidenceHeatOn}
-            pitchMarkers={pitchMarkers}
-            onPitchMarkersChange={setPitchMarkers}
-            currentPlaybackTick={playback.currentTick}
-            isPlaying={playback.isPlaying}
-            onSeek={playback.seek}
-            changedNoteIds={pianoRollChangedNoteIds}
-            previousVoiceId={changedNotePreviousVoiceId}
-            onlyChangedNotes={pianoRollOnlyChangedNotes}
-            readOnly={isCompareReadOnly}
-            voiceDescriptions={pianoRollVoiceDescriptions}
-            conflictNoteIds={pianoRollConflictNoteIds}
-            viewMode={pianoRollViewMode}
-          />
+          {isSplitLayout && comparisonProjection.sideB ? (
+            <div className="editor-split" aria-label="Split comparison of sides A and B">
+              {renderComparisonPane(comparisonProjection.sideA)}
+              {renderComparisonPane(comparisonProjection.sideB)}
+            </div>
+          ) : (
+            <PianoRoll
+              project={pianoRollProject}
+              selectedNoteIds={selectedNoteIds}
+              onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
+              soloVoiceId={pianoRollSoloVoiceId}
+              interactionMode={interactionMode}
+              activeVoiceId={activeVoiceId}
+              onPaintNotes={handlePaintNotes}
+              paintTool={paintTool}
+              brushRadius={brushRadius}
+              onBrushRadiusChange={setBrushRadius}
+              wandReach={wandReach}
+              onAssignNotes={handleAssignNotesToVoice}
+              onAuditionNotes={handleAuditionNotes}
+              confidenceHeatmap={isConfidenceHeatOn}
+              pitchMarkers={pitchMarkers}
+              onPitchMarkersChange={setPitchMarkers}
+              currentPlaybackTick={playback.currentTick}
+              isPlaying={playback.isPlaying}
+              onSeek={playback.seek}
+              changedNoteIds={pianoRollChangedNoteIds}
+              previousVoiceId={changedNotePreviousVoiceId}
+              onlyChangedNotes={pianoRollOnlyChangedNotes}
+              readOnly={isCompareReadOnly}
+              voiceDescriptions={pianoRollVoiceDescriptions}
+              conflictNoteIds={pianoRollConflictNoteIds}
+              viewMode={pianoRollViewMode}
+            />
+          )}
         </section>
       </section>
 
