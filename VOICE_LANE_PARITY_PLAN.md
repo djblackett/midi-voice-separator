@@ -152,6 +152,10 @@ Generic helpers operate only on `ViewGeometry.noteRect`:
 - `notesInBrushStampForView`;
 - `notesInLassoPathForView`.
 
+They receive the permitted `readonly MidiNote[]` query set explicitly. Geometry owns layout, not
+interaction authorization: filtered modes such as "only changed notes" can render the full project
+while ensuring hidden notes never become selectable or paintable.
+
 The deterministic overlap rule remains the current rule: shortest duration first, then latest
 start, then highest pitch, then stable note id. A rectangle completely hidden behind the active
 gutter is not interactive. Rendering, hit testing, brush, and lasso must agree on that rule.
@@ -280,7 +284,8 @@ a manual-test pause point.
 ## 4. Migration strategy
 
 1. Introduce pure geometry and capability contracts with both adapters, initially unwired.
-2. Migrate existing piano drawing/hit/paint/ruler math to the geometry without changing behavior.
+2. Migrate existing piano drawing/hit/paint/ruler math to the geometry without changing intended
+   editor behavior; explicitly correct the current gutter overdraw/edge-hit inconsistency.
 3. Add and wire pure lane viewport math before enabling gestures that could target clipped rows.
 4. Route existing lane click/hover and new marquee/context gestures through the same controller.
 5. Enable paint tools through generic geometry only after preview placement is stable.
@@ -296,7 +301,7 @@ Each slice is one focused commit. At the start of every slice run `git status --
 commit run the focused tests plus `pnpm test`, `pnpm lint`, targeted Prettier, and `pnpm build`.
 No Rust checks are required unless a later slice unexpectedly changes `src-tauri`.
 
-### Phase A - M15 geometry seam (behavior-preserving)
+### Phase A - M15 geometry seam (behavior-preserving except canonical gutter clipping)
 
 - **A1. Pure `ViewGeometry` contract and adapters (unwired).** Add canonical piano and current
   lane note rectangles, common point/rectangle/brush/lasso queries, capability data, lane rows,
@@ -304,8 +309,10 @@ No Rust checks are required unless a later slice unexpectedly changes `src-tauri
   inverted rectangles, fast brush sweeps, lasso intersections, and reveal semantics.
 - **A2. Migrate piano drawing and compatibility wrappers.** Route `drawPianoRoll`, `hitTest.ts`,
   `paintBrush.ts`, ruler tick conversion, zoom anchors, and pan width through the canonical piano
-  geometry. Delete duplicated rectangle math. Existing pixel/math and Playwright behavior stays
-  unchanged.
+  geometry. Make the legacy `PIANO_ROLL_LABEL_WIDTH` export an alias of the canonical gutter during
+  migration, then remove the duplicate authority. Delete duplicated rectangle math. Existing
+  pixel/math and Playwright behavior stays unchanged apart from the explicit rule that notes cannot
+  draw or hit-test behind the active gutter.
 - **A3. Bind `PianoRoll` to one geometry resolver.** Existing hover/click behavior in both views
   uses the same point-query path. Route `drawTimeRuler`, ruler seek conversion, Ctrl/Cmd zoom
   anchors, and horizontal pan-width math through the active geometry's `gutterWidth`; add a 96 px
@@ -419,7 +426,8 @@ No Rust checks are required unless a later slice unexpectedly changes `src-tauri
 - Changing voice assignment during a paint preview does not move the hit target before commit.
 - A/B lane navigation never relates voices by raw id or raw row offset.
 - Time ruler, seek, minimap, playhead, and horizontal zoom use the active view's gutter.
-- Existing piano behavior remains unchanged during the geometry migration.
+- Existing piano behavior remains unchanged during the geometry migration apart from canonical
+  clipping that prevents notes drawing or hit-testing behind the active gutter.
 
 ---
 
