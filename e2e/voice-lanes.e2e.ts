@@ -80,6 +80,12 @@ async function importFixture(page: Page) {
   await page.waitForSelector(".piano-roll-toolbar");
 }
 
+function voiceRow(page: Page, label: string) {
+  return page
+    .locator(".voice-legend li")
+    .filter({ has: page.getByLabel(`Select notes in ${label}`, { exact: true }) });
+}
+
 function laneNoteCenter(
   target: LaneFixtureNote,
   canvasBox: { width: number; height: number },
@@ -377,4 +383,60 @@ test.describe("voice lane view", () => {
     await expect.poll(async () => Number(await slider.inputValue())).toBeGreaterThan(0);
     await expect(page.locator(".selection-details dl")).toContainText("dense-voice-16");
   });
+
+  const undoableEditScenarios = [
+    {
+      name: "number-key reassignment",
+      apply: async (page: Page) => {
+        await clickNoteInLaneView(page, leadNote);
+        await page.keyboard.press("1");
+      },
+    },
+    {
+      name: "context reassignment",
+      apply: async (page: Page) => {
+        const canvas = page.getByLabel("Piano roll note visualization");
+        const box = await canvas.boundingBox();
+        if (!box) {
+          throw new Error("Piano roll canvas has no bounding box");
+        }
+        const local = laneNoteCenter(
+          leadNote,
+          box,
+          laneProject.durationTicks,
+          laneProject.voices.length,
+        );
+        await canvas.click({ position: local, button: "right" });
+        await page.getByRole("menuitem", { name: "Assign to Bass" }).click();
+      },
+    },
+  ];
+
+  for (const scenario of undoableEditScenarios) {
+    test(`${scenario.name} creates exactly one undoable edit in voice lanes`, async ({ page }) => {
+      await installFakeTauri(page, { importedProject: laneProject });
+      await page.goto("/");
+      await importFixture(page);
+      await switchToVoiceLanes(page);
+
+      const undo = page.getByRole("button", { name: "Undo" });
+      const redo = page.getByRole("button", { name: "Redo" });
+      await expect(undo).toBeDisabled();
+
+      await scenario.apply(page);
+      await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+      await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+      await expect(undo).toBeEnabled();
+
+      await undo.click();
+      await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+      await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+      await expect(undo).toBeDisabled();
+      await expect(redo).toBeEnabled();
+
+      await redo.click();
+      await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+      await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+    });
+  }
 });

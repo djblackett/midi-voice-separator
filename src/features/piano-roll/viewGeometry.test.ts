@@ -16,6 +16,7 @@ import {
   type ViewGeometry,
 } from "./viewGeometry";
 import { VOICE_LANE_LABEL_WIDTH } from "./voiceLanes";
+import { resolveContextAssignmentTargets, resolveSelection } from "./selection";
 
 function voice(overrides: Partial<MidiVoice> = {}): MidiVoice {
   return {
@@ -378,6 +379,73 @@ describe("generic point and rectangle queries", () => {
       ).toEqual([]);
     });
   }
+
+  function exercisePhaseCContract(geometry: ViewGeometry) {
+    const rect = geometry.noteRect(shortNote);
+    expect(rect).not.toBeNull();
+    if (!rect) {
+      throw new Error("Phase C contract target has no rectangle");
+    }
+
+    const center = { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+    const pointHit = hitTestNoteAtPoint(center, project.notes, geometry);
+    const rectangleHits = hitTestNotesInRect(
+      { x0: rect.left + 1, y0: rect.top + 1, x1: rect.right - 1, y1: rect.bottom - 1 },
+      project.notes,
+      geometry,
+    );
+    const selectionPayloads: string[][] = [];
+    const auditionPayloads: string[][] = [];
+    const assignmentPayloads: Array<{ noteIds: string[]; voiceId: string }> = [];
+    const onSelectionChange = (selection: ReadonlySet<string>) =>
+      selectionPayloads.push([...selection]);
+    const onAuditionNotes = (notes: readonly MidiNote[]) =>
+      auditionPayloads.push(notes.map((candidate) => candidate.id));
+    const onAssignNotes = (noteIds: string[], voiceId: string) =>
+      assignmentPayloads.push({ noteIds, voiceId });
+
+    onSelectionChange(
+      resolveSelection(new Set(), {
+        type: "click",
+        noteId: pointHit?.id ?? null,
+        additive: false,
+      }),
+    );
+    onSelectionChange(
+      resolveSelection(new Set([longNote.id]), {
+        type: "marquee",
+        noteIds: rectangleHits.map((candidate) => candidate.id),
+        additive: true,
+      }),
+    );
+    if (pointHit) {
+      onAuditionNotes([pointHit]);
+    }
+    onAssignNotes(
+      resolveContextAssignmentTargets(
+        pointHit?.id ?? null,
+        new Set([longNote.id]),
+        project.notes.map((candidate) => candidate.id),
+      ),
+      "voice-2",
+    );
+
+    return { selectionPayloads, auditionPayloads, assignmentPayloads };
+  }
+
+  it("produces identical Phase C callback payloads for piano and voice-lane geometry", () => {
+    const piano = exercisePhaseCContract(createPianoViewGeometry(project, pianoViewport));
+    const lanes = exercisePhaseCContract(createVoiceLaneViewGeometry(project, laneViewport));
+    const expected = {
+      selectionPayloads: [[shortNote.id], [longNote.id, shortNote.id]],
+      auditionPayloads: [[shortNote.id]],
+      assignmentPayloads: [{ noteIds: [shortNote.id], voiceId: "voice-2" }],
+    };
+
+    expect(piano).toEqual(expected);
+    expect(lanes).toEqual(expected);
+    expect(lanes).toEqual(piano);
+  });
 
   it("applies duration, start, pitch, and stable-id point-hit priority without mutation", () => {
     const sharedRect = { left: 20, top: 20, right: 80, bottom: 80 };
