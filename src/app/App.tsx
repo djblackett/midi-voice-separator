@@ -128,7 +128,7 @@ import {
 } from "../domain/midi/smartFixSuggestions";
 import { formatPlaybackTime } from "../features/playback/formatPlaybackTime";
 import type { Instrument } from "../features/playback/playbackEngine";
-import { usePlaybackEngine } from "../features/playback/usePlaybackEngine";
+import { usePlaybackEngine, type PlaybackSource } from "../features/playback/usePlaybackEngine";
 import type { PlaybackScope } from "../features/playback/scheduledNotes";
 import { AssignmentMetricPanel } from "../features/assignment-metric/AssignmentMetricPanel";
 import { useAssignmentMetricComparison } from "../features/assignment-metric/useAssignmentMetricComparison";
@@ -160,6 +160,9 @@ function toAppCommandError(commandError: unknown): AppCommandError {
 type PlaybackScopeMode = "all" | "selected" | "voice" | "changed" | "flagged";
 
 const FLAGGED_PLAYBACK_WINDOW_TICKS = 960;
+
+/** Identity presentation map (single side plays with its own per-voice timbre). */
+const EMPTY_PRESENTATION_KEYS: ReadonlyMap<string, string> = new Map();
 
 function parseMaxVoiceCount(input: string): number | undefined {
   const parsed = Number.parseInt(input, 10);
@@ -483,7 +486,26 @@ export default function App() {
   // read-only B preview's voice matching. With B now a live editable branch,
   // rich correspondence-based labels move to the split-screen feature (M9/M10).
   const pianoRollVoiceDescriptions = useMemo(() => new Map<string, string>(), []);
-  const playback = usePlaybackEngine(displayedProject, soloVoiceId, instrument, playbackScope);
+  // The transport plays one source at a time (M12). For now it follows the
+  // active side; a monitored-side switch is a later slice. `sourceId` carries
+  // the side + revision so the transport can tell a real change from a rerender.
+  const playbackSource = useMemo<PlaybackSource | null>(() => {
+    if (!displayedProject) {
+      return null;
+    }
+    return {
+      sourceId: `${editorActiveSide}:${editorDocument.revision}`,
+      lineageId: displayedProject.fileName,
+      notes: displayedProject.notes,
+      ppq: displayedProject.ppq,
+      tempoChanges: displayedProject.tempoChanges,
+      durationTicks: displayedProject.durationTicks,
+      soloVoiceId,
+      scope: playbackScope,
+      presentationKeyByVoiceId: EMPTY_PRESENTATION_KEYS,
+    };
+  }, [displayedProject, editorActiveSide, editorDocument.revision, soloVoiceId, playbackScope]);
+  const playback = usePlaybackEngine(playbackSource, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
     [displayedProject],

@@ -28,11 +28,29 @@ export interface PlaybackControls {
   blockedReason: string | null;
 }
 
+/**
+ * One transport, one replaceable source (M12). Everything the transport needs
+ * travels inside the source, so it never reaches back into per-side state.
+ * `sourceId` is the side + branch-revision identity used to decide when to
+ * reschedule; `lineageId` is the imported-file identity used to decide when to
+ * reset (a genuinely new piece), so switching between same-lineage sides never
+ * resets the playhead.
+ */
+export interface PlaybackSource {
+  readonly sourceId: string;
+  readonly lineageId: string;
+  readonly notes: MidiProject["notes"];
+  readonly ppq: number;
+  readonly tempoChanges: MidiProject["tempoChanges"];
+  readonly durationTicks: number;
+  readonly soloVoiceId: string | null;
+  readonly scope: PlaybackScope;
+  readonly presentationKeyByVoiceId: ReadonlyMap<string, string>;
+}
+
 export function usePlaybackEngine(
-  project: MidiProject | null,
-  soloVoiceId: string | null,
+  source: PlaybackSource | null,
   instrument: Instrument = "chiptune",
-  playbackScope: PlaybackScope = { type: "all" },
 ): PlaybackControls {
   const engineRef = useRef<PlaybackEngine | null>(null);
   const tempoMapRef = useRef<TempoMap | null>(null);
@@ -59,11 +77,11 @@ export function usePlaybackEngine(
   }
 
   async function startFrom(tick: number) {
-    if (!project) {
+    if (!source) {
       return;
     }
 
-    const tempoMap = buildTempoMap(project.tempoChanges, project.ppq);
+    const tempoMap = buildTempoMap(source.tempoChanges, source.ppq);
     tempoMapRef.current = tempoMap;
     const engine = getEngine();
     engine.stop();
@@ -84,10 +102,10 @@ export function usePlaybackEngine(
     }
 
     const scopeResult = filterNotesForPlaybackScope(
-      project.notes,
+      source.notes,
       tick,
-      soloVoiceId,
-      playbackScope,
+      source.soloVoiceId,
+      source.scope,
     );
     if (scopeResult.emptyReason) {
       setBlockedReason(scopeResult.emptyReason);
@@ -95,11 +113,12 @@ export function usePlaybackEngine(
       return;
     }
     const scheduledNotes = buildScheduledNotes(
-      project.notes,
+      source.notes,
       tempoMap,
       tick,
-      soloVoiceId,
-      playbackScope,
+      source.soloVoiceId,
+      source.scope,
+      source.presentationKeyByVoiceId,
     );
     setBlockedReason(null);
     engine.play(scheduledNotes, instrument);
@@ -109,7 +128,7 @@ export function usePlaybackEngine(
     setCurrentTick(tick);
     setIsPlaying(true);
 
-    const durationSeconds = tickToSeconds(tempoMap, project.durationTicks);
+    const durationSeconds = tickToSeconds(tempoMap, source.durationTicks);
     stopTickPolling();
     intervalRef.current = setInterval(() => {
       const elapsed = engine.getCurrentTime() - playStartedAtAudioTimeRef.current;
@@ -120,7 +139,7 @@ export function usePlaybackEngine(
         engine.stop();
         stopTickPolling();
         setIsPlaying(false);
-        setCurrentTick(project.durationTicks);
+        setCurrentTick(source.durationTicks);
         return;
       }
 
@@ -129,7 +148,7 @@ export function usePlaybackEngine(
   }
 
   function play() {
-    void startFrom(currentTick >= (project?.durationTicks ?? 0) ? 0 : currentTick);
+    void startFrom(currentTick >= (source?.durationTicks ?? 0) ? 0 : currentTick);
   }
 
   function pause() {
@@ -150,7 +169,7 @@ export function usePlaybackEngine(
   }
 
   function seek(tick: number) {
-    const clamped = Math.max(0, Math.min(project?.durationTicks ?? 0, tick));
+    const clamped = Math.max(0, Math.min(source?.durationTicks ?? 0, tick));
     if (isPlaying) {
       void startFrom(clamped);
     } else {
@@ -165,13 +184,18 @@ export function usePlaybackEngine(
     if (isPlaying || notes.length === 0) {
       return;
     }
-    getEngine().play(buildAuditionNotes(notes), instrument);
+    getEngine().play(
+      buildAuditionNotes(notes, source?.presentationKeyByVoiceId ?? new Map()),
+      instrument,
+    );
   }
 
   useEffect(() => {
     setBlockedReason(null);
-  }, [playbackScope, soloVoiceId]);
-  // Reset to a stopped state whenever a new project is loaded.
+  }, [source?.scope, source?.soloVoiceId]);
+  // Reset to a stopped state whenever a genuinely new piece is loaded (a new
+  // lineage). Switching between same-lineage sides keeps the same timeline, so
+  // it must not reset the playhead here.
   useEffect(() => {
     playRequestIdRef.current++;
     getEngine().stop();
@@ -179,7 +203,7 @@ export function usePlaybackEngine(
     setIsPlaying(false);
     setBlockedReason(null);
     setCurrentTick(0);
-  }, [project?.fileName, project?.durationTicks]);
+  }, [source?.lineageId, source?.durationTicks]);
 
   // Warm the sample cache as soon as piano is selected, so the first Play
   // afterwards doesn't stall on a network fetch + decode.
