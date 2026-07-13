@@ -51,6 +51,30 @@ describe("buildScheduledNotes", () => {
     expect(scheduled[0].pitch).toBe(60);
   });
 
+  it("derives the waveform from a voice's presentation key when given", () => {
+    // voice-5 alone sounds as triangle; mapped to A's voice-1 it sounds as square.
+    const mapped = buildScheduledNotes(
+      [note({ voiceId: "voice-5" })],
+      tempoMap,
+      0,
+      null,
+      { type: "all" },
+      new Map([["voice-5", "voice-1"]]),
+    );
+    expect(mapped[0].waveform).toBe(waveformForVoice("voice-1"));
+
+    const unmapped = buildScheduledNotes([note({ voiceId: "voice-5" })], tempoMap, 0, null);
+    expect(unmapped[0].waveform).toBe(waveformForVoice("voice-5"));
+  });
+
+  it("audition blips also honor the presentation key", () => {
+    const blips = buildAuditionNotes(
+      [note({ voiceId: "voice-5" })],
+      new Map([["voice-5", "voice-1"]]),
+    );
+    expect(blips[0].waveform).toBe(waveformForVoice("voice-1"));
+  });
+
   it("excludes a note that ends at or before the resume point", () => {
     const scheduled = buildScheduledNotes(
       [note({ startTick: 0, endTick: 480 })],

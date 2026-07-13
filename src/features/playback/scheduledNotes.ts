@@ -44,12 +44,28 @@ export function waveformForVoice(voiceId: string): Waveform {
 }
 
 /**
+ * The waveform a note should sound as, resolved through its voice's presentation
+ * key (M10): a matched B voice shares its A partner's key, so it sounds -- like
+ * it looks -- the same. An empty map is identity, i.e. today's per-voice-id
+ * waveform.
+ */
+function waveformForNote(
+  voiceId: string,
+  presentationKeyByVoiceId: ReadonlyMap<string, string>,
+): Waveform {
+  return waveformForVoice(presentationKeyByVoiceId.get(voiceId) ?? voiceId);
+}
+
+/**
  * Short preview blips for painting/clicking notes (DAW-style audition):
  * every note starts immediately, plays briefly and quietly, and keeps its
  * voice's waveform so a note sounds the way its voice sounds in real
  * playback. Capped so double-clicking a dense chord can't blast.
  */
-export function buildAuditionNotes(notes: readonly MidiNote[]): ScheduledNote[] {
+export function buildAuditionNotes(
+  notes: readonly MidiNote[],
+  presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
+): ScheduledNote[] {
   return notes.slice(0, MAX_AUDITION_NOTES).map((note) => ({
     id: `audition-${note.id}`,
     startSeconds: 0,
@@ -57,7 +73,7 @@ export function buildAuditionNotes(notes: readonly MidiNote[]): ScheduledNote[] 
     pitch: note.pitch,
     frequency: midiPitchToFrequency(note.pitch),
     gain: AUDITION_GAIN,
-    waveform: waveformForVoice(note.voiceId),
+    waveform: waveformForNote(note.voiceId, presentationKeyByVoiceId),
   }));
 }
 
@@ -126,6 +142,7 @@ export function buildScheduledNotes(
   startTick: number,
   soloVoiceId: string | null,
   scope: PlaybackScope = { type: "all" },
+  presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
 ): ScheduledNote[] {
   const scheduled: ScheduledNote[] = [];
   const { notes: scopedNotes } = filterNotesForPlaybackScope(notes, startTick, soloVoiceId, scope);
@@ -144,7 +161,7 @@ export function buildScheduledNotes(
       pitch: note.pitch,
       frequency: midiPitchToFrequency(note.pitch),
       gain: NOTE_GAIN,
-      waveform: waveformForVoice(note.voiceId),
+      waveform: waveformForNote(note.voiceId, presentationKeyByVoiceId),
     });
   }
 
