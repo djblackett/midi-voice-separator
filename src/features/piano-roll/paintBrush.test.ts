@@ -9,7 +9,38 @@ import {
   notesInLassoPath,
   pointInPolygon,
   stepBrushRadius,
+  supportsPaintTool,
 } from "./paintBrush";
+import {
+  PIANO_VIEW_CAPABILITIES,
+  VOICE_LANE_VIEW_CAPABILITIES,
+  type ViewCapabilities,
+} from "./viewGeometry";
+
+describe("supportsPaintTool", () => {
+  it.each(["pencil", "brush", "lasso", "wand"] as const)(
+    "enables %s in both target view matrices",
+    (tool) => {
+      expect(supportsPaintTool(PIANO_VIEW_CAPABILITIES, tool)).toBe(true);
+      expect(supportsPaintTool(VOICE_LANE_VIEW_CAPABILITIES, tool)).toBe(true);
+    },
+  );
+
+  it("reads the matching capability instead of treating paint as one all-or-nothing flag", () => {
+    const mixed: ViewCapabilities = {
+      ...PIANO_VIEW_CAPABILITIES,
+      pencil: true,
+      brush: false,
+      lasso: true,
+      wand: false,
+    };
+
+    expect(supportsPaintTool(mixed, "pencil")).toBe(true);
+    expect(supportsPaintTool(mixed, "brush")).toBe(false);
+    expect(supportsPaintTool(mixed, "lasso")).toBe(true);
+    expect(supportsPaintTool(mixed, "wand")).toBe(false);
+  });
+});
 
 // Same fixture geometry as hitTest.test.ts: 1000px roll after the 56px
 // label gutter, 5 pitch rows of 52px each.

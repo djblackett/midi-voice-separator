@@ -30,8 +30,10 @@ import {
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   stepBrushRadius,
+  supportsPaintTool,
   type PaintTool,
 } from "../features/piano-roll/paintBrush";
+import { resolveViewCapabilities } from "../features/piano-roll/viewGeometry";
 import { getVoiceFillColor } from "../features/piano-roll/drawPianoRoll";
 import {
   clampWandReach,
@@ -211,6 +213,11 @@ function parseMaxVoiceCount(input: string): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+const RANGE_BLOCKS_VOICE_LANES_HINT_ID = "range-blocks-voice-lanes-hint";
+const VOICE_LANES_BLOCK_RANGE_HINT_ID = "voice-lanes-block-range-hint";
+const RANGE_BLOCKS_VOICE_LANES_MESSAGE = "Exit Range markers before switching to Voice lanes.";
+const VOICE_LANES_BLOCK_RANGE_MESSAGE = "Switch to Piano roll before enabling Range markers.";
+
 export default function App() {
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
@@ -231,6 +238,7 @@ export default function App() {
   const [isAuditionEnabled, setIsAuditionEnabled] = useState(true);
   const [isConfidenceHeatOn, setIsConfidenceHeatOn] = useState(false);
   const [pianoRollViewMode, setPianoRollViewMode] = useState<PianoRollViewMode>("piano");
+  const currentViewCapabilities = resolveViewCapabilities(pianoRollViewMode);
   const [pitchMarkers, setPitchMarkers] = useState<PitchMarker[]>([]);
   const [maxVoiceCountInput, setMaxVoiceCountInput] = useState("");
   const [separationStrategy, setSeparationStrategy] = useState<SeparationStrategy>("BALANCED");
@@ -691,7 +699,6 @@ export default function App() {
         case "toolBrush":
         case "toolLasso":
         case "toolWand": {
-          event.preventDefault();
           const tool: PaintTool =
             command === "toolPencil"
               ? "pencil"
@@ -701,16 +708,25 @@ export default function App() {
                   ? "lasso"
                   : "wand";
           if (interactionMode === "paint" && paintTool === tool) {
+            event.preventDefault();
             setInteractionMode("select");
-          } else {
-            setPaintTool(tool);
-            setInteractionMode("paint");
+            return;
           }
+          if (!supportsPaintTool(currentViewCapabilities, tool)) {
+            return;
+          }
+          event.preventDefault();
+          setPaintTool(tool);
+          setInteractionMode("paint");
           return;
         }
         case "brushSmaller":
         case "brushLarger": {
-          if (interactionMode !== "paint" || paintTool !== "brush") {
+          if (
+            interactionMode !== "paint" ||
+            paintTool !== "brush" ||
+            !supportsPaintTool(currentViewCapabilities, "brush")
+          ) {
             return;
           }
           event.preventDefault();
@@ -799,6 +815,7 @@ export default function App() {
     compareState,
     isSplitLayout,
     dispatchEditorCommand,
+    currentViewCapabilities,
   ]);
 
   useEffect(() => {
@@ -1697,13 +1714,43 @@ export default function App() {
     setExportResult(null);
   }
   function handleTogglePaintMode() {
-    setPianoRollViewMode("piano");
-    setInteractionMode((mode) => (mode === "paint" ? "select" : "paint"));
+    if (interactionMode === "paint") {
+      setInteractionMode("select");
+      return;
+    }
+    if (!supportsPaintTool(currentViewCapabilities, paintTool)) {
+      return;
+    }
+    setInteractionMode("paint");
+  }
+
+  function handleSelectPaintTool(tool: PaintTool) {
+    if (!supportsPaintTool(currentViewCapabilities, tool)) {
+      return;
+    }
+    setPaintTool(tool);
   }
 
   function handleToggleRangeMode() {
-    setPianoRollViewMode("piano");
-    setInteractionMode((mode) => (mode === "range" ? "select" : "range"));
+    if (interactionMode === "range") {
+      setInteractionMode("select");
+      return;
+    }
+    if (!currentViewCapabilities.pitchRangeMarkers) {
+      return;
+    }
+    setInteractionMode("range");
+  }
+
+  function handleSetPianoRollViewMode(nextViewMode: PianoRollViewMode) {
+    const targetCapabilities = resolveViewCapabilities(nextViewMode);
+    if (interactionMode === "range" && !targetCapabilities.pitchRangeMarkers) {
+      return;
+    }
+    if (interactionMode === "paint" && !supportsPaintTool(targetCapabilities, paintTool)) {
+      return;
+    }
+    setPianoRollViewMode(nextViewMode);
   }
 
   function handleAcceptCurrentReviewNote() {
@@ -2799,7 +2846,7 @@ export default function App() {
               className={
                 pianoRollViewMode === "piano" ? "secondary-button active" : "secondary-button"
               }
-              onClick={() => setPianoRollViewMode("piano")}
+              onClick={() => handleSetPianoRollViewMode("piano")}
               aria-pressed={pianoRollViewMode === "piano" ? "true" : "false"}
             >
               Piano roll
@@ -2809,11 +2856,13 @@ export default function App() {
               className={
                 pianoRollViewMode === "voice-lanes" ? "secondary-button active" : "secondary-button"
               }
-              onClick={() => {
-                setPianoRollViewMode("voice-lanes");
-                setInteractionMode("select");
-              }}
+              onClick={() => handleSetPianoRollViewMode("voice-lanes")}
               aria-pressed={pianoRollViewMode === "voice-lanes" ? "true" : "false"}
+              disabled={interactionMode === "range"}
+              title={interactionMode === "range" ? RANGE_BLOCKS_VOICE_LANES_MESSAGE : undefined}
+              aria-describedby={
+                interactionMode === "range" ? RANGE_BLOCKS_VOICE_LANES_HINT_ID : undefined
+              }
             >
               Voice lanes
             </button>
@@ -2919,7 +2968,11 @@ export default function App() {
               }
               onClick={handleTogglePaintMode}
               aria-pressed={interactionMode === "paint" ? "true" : "false"}
-              disabled={isCompareReadOnly}
+              disabled={
+                isCompareReadOnly ||
+                (interactionMode !== "paint" &&
+                  !supportsPaintTool(currentViewCapabilities, paintTool))
+              }
             >
               {interactionMode === "paint" ? "Paint mode: on" : "Paint mode: off"}
             </button>
@@ -2931,8 +2984,11 @@ export default function App() {
                     className={
                       paintTool === "pencil" ? "paint-tool-button active" : "paint-tool-button"
                     }
-                    onClick={() => setPaintTool("pencil")}
+                    onClick={() => handleSelectPaintTool("pencil")}
                     aria-pressed={paintTool === "pencil" ? "true" : "false"}
+                    disabled={
+                      isCompareReadOnly || !supportsPaintTool(currentViewCapabilities, "pencil")
+                    }
                     title="Pencil — paint exactly the note under the cursor (P)"
                   >
                     <svg
@@ -2953,8 +3009,11 @@ export default function App() {
                     className={
                       paintTool === "brush" ? "paint-tool-button active" : "paint-tool-button"
                     }
-                    onClick={() => setPaintTool("brush")}
+                    onClick={() => handleSelectPaintTool("brush")}
                     aria-pressed={paintTool === "brush" ? "true" : "false"}
+                    disabled={
+                      isCompareReadOnly || !supportsPaintTool(currentViewCapabilities, "brush")
+                    }
                     title="Brush — paint every note inside the round brush (B)"
                   >
                     <svg
@@ -2982,8 +3041,11 @@ export default function App() {
                     className={
                       paintTool === "lasso" ? "paint-tool-button active" : "paint-tool-button"
                     }
-                    onClick={() => setPaintTool("lasso")}
+                    onClick={() => handleSelectPaintTool("lasso")}
                     aria-pressed={paintTool === "lasso" ? "true" : "false"}
+                    disabled={
+                      isCompareReadOnly || !supportsPaintTool(currentViewCapabilities, "lasso")
+                    }
                     title="Lasso — draw a loop and paint every enclosed note (L)"
                   >
                     <svg
@@ -3008,8 +3070,11 @@ export default function App() {
                     className={
                       paintTool === "wand" ? "paint-tool-button active" : "paint-tool-button"
                     }
-                    onClick={() => setPaintTool("wand")}
+                    onClick={() => handleSelectPaintTool("wand")}
                     aria-pressed={paintTool === "wand" ? "true" : "false"}
+                    disabled={
+                      isCompareReadOnly || !supportsPaintTool(currentViewCapabilities, "wand")
+                    }
                     title="Wand — click a note to paint its whole connected phrase (W)"
                   >
                     <svg
@@ -3087,7 +3152,16 @@ export default function App() {
               }
               onClick={handleToggleRangeMode}
               aria-pressed={interactionMode === "range" ? "true" : "false"}
-              disabled={isCompareReadOnly}
+              disabled={
+                isCompareReadOnly ||
+                (interactionMode !== "range" && !currentViewCapabilities.pitchRangeMarkers)
+              }
+              title={
+                pianoRollViewMode === "voice-lanes" ? VOICE_LANES_BLOCK_RANGE_MESSAGE : undefined
+              }
+              aria-describedby={
+                pianoRollViewMode === "voice-lanes" ? VOICE_LANES_BLOCK_RANGE_HINT_ID : undefined
+              }
             >
               {interactionMode === "range" ? "Range markers: on" : "Range markers: off"}
             </button>
@@ -3105,6 +3179,16 @@ export default function App() {
                 <span aria-hidden="true">uncertain</span>
                 <span className="confidence-heat-gradient" aria-hidden="true" />
                 <span aria-hidden="true">certain</span>
+              </span>
+            ) : null}
+            {interactionMode === "range" ? (
+              <span id={RANGE_BLOCKS_VOICE_LANES_HINT_ID} className="piano-roll-toolbar-hint">
+                {RANGE_BLOCKS_VOICE_LANES_MESSAGE}
+              </span>
+            ) : null}
+            {pianoRollViewMode === "voice-lanes" ? (
+              <span id={VOICE_LANES_BLOCK_RANGE_HINT_ID} className="piano-roll-toolbar-hint">
+                {VOICE_LANES_BLOCK_RANGE_MESSAGE}
               </span>
             ) : null}
             {interactionMode === "paint" ? (

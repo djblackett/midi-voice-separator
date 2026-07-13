@@ -34,7 +34,13 @@ import {
   type LaneViewportWindow,
 } from "./laneViewport";
 import { resolvePencilPaintAnchor, resolveWandPaintTarget, shouldPaintNote } from "./paint";
-import { DEFAULT_BRUSH_RADIUS, stepBrushRadius, type PaintTool, type Point } from "./paintBrush";
+import {
+  DEFAULT_BRUSH_RADIUS,
+  stepBrushRadius,
+  supportsPaintTool,
+  type PaintTool,
+  type Point,
+} from "./paintBrush";
 import { drawPaintOverlay } from "./paintOverlay";
 import {
   chordToleranceTicks,
@@ -272,7 +278,6 @@ export function PianoRoll({
   const onBrushRadiusChangeRef = useRef(onBrushRadiusChange);
   onBrushRadiusChangeRef.current = onBrushRadiusChange;
 
-  const isPaintCursorActive = viewMode === "piano" && interactionMode === "paint" && !readOnly;
   const canvasSize = useMemo(
     () => ({ width: size.width, height: Math.max(1, size.height - TIME_RULER_HEIGHT) }),
     [size],
@@ -441,6 +446,10 @@ export function PianoRoll({
   );
   const viewGeometryRef = useRef(viewGeometry);
   viewGeometryRef.current = viewGeometry;
+  const isPaintCursorActive =
+    interactionMode === "paint" &&
+    !readOnly &&
+    supportsPaintTool(viewGeometry.capabilities, paintTool);
   const isPitchRangeGestureActive =
     viewGeometry.capabilities.pitchRangeMarkers && interactionMode === "range" && !readOnly;
 

@@ -1,10 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { buildFixtureProject, installFakeTauri, note, voice } from "./fixtures/tauriMock";
 
 const VOICE_LANE_LABEL_WIDTH = 96;
 const LANE_PADDING_Y = 6;
 const MIN_NOTE_HEIGHT = 5;
 const MAX_NOTE_HEIGHT = 12;
+const EXIT_RANGE_BEFORE_LANES_HELP = "Exit Range markers before switching to Voice lanes.";
+const SWITCH_TO_PIANO_FOR_RANGE_HELP = "Switch to Piano roll before enabling Range markers.";
 
 interface LaneFixtureNote {
   pitch: number;
@@ -15,10 +17,26 @@ interface LaneFixtureNote {
   highestPitch: number;
 }
 
+interface LaneNoteScreenRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 const leadNote: LaneFixtureNote = {
   pitch: 72,
   startTick: 480,
   endTick: 720,
+  voiceIndex: 1,
+  lowestPitch: 72,
+  highestPitch: 76,
+};
+
+const leadHighNote: LaneFixtureNote = {
+  pitch: 76,
+  startTick: 760,
+  endTick: 900,
   voiceIndex: 1,
   lowestPitch: 72,
   highestPitch: 76,
@@ -40,7 +58,10 @@ const laneProject = buildFixtureProject(
       endTick: leadNote.endTick,
       durationTicks: leadNote.endTick - leadNote.startTick,
     }),
-    note("lead-high", "voice-2", 76, 760, { endTick: 900, durationTicks: 140 }),
+    note("lead-high", "voice-2", leadHighNote.pitch, leadHighNote.startTick, {
+      endTick: leadHighNote.endTick,
+      durationTicks: leadHighNote.endTick - leadHighNote.startTick,
+    }),
     note("kick", "percussion", percussionNote.pitch, percussionNote.startTick, {
       endTick: percussionNote.endTick,
       durationTicks: percussionNote.endTick - percussionNote.startTick,
@@ -86,13 +107,13 @@ function voiceRow(page: Page, label: string) {
     .filter({ has: page.getByLabel(`Select notes in ${label}`, { exact: true }) });
 }
 
-function laneNoteCenter(
+function laneNoteRect(
   target: LaneFixtureNote,
   canvasBox: { width: number; height: number },
   durationTicks: number,
   voiceCount: number,
   scrollTopPx = 0,
-) {
+): LaneNoteScreenRect {
   const laneHeight = Math.max(36, canvasBox.height / voiceCount);
   const laneY = target.voiceIndex * laneHeight - scrollTopPx;
   const innerHeight = Math.max(1, laneHeight - LANE_PADDING_Y * 2);
@@ -101,11 +122,40 @@ function laneNoteCenter(
   const pitchOffset =
     ((target.highestPitch - target.pitch) / pitchSpan) * Math.max(1, innerHeight - noteHeight);
   const rollWidth = canvasBox.width - VOICE_LANE_LABEL_WIDTH;
-  const x = VOICE_LANE_LABEL_WIDTH + (target.startTick / durationTicks) * rollWidth;
-  const endX = VOICE_LANE_LABEL_WIDTH + (target.endTick / durationTicks) * rollWidth;
-  const y = laneY + LANE_PADDING_Y + pitchOffset;
+  const left = VOICE_LANE_LABEL_WIDTH + (target.startTick / durationTicks) * rollWidth;
+  const rawRight = VOICE_LANE_LABEL_WIDTH + (target.endTick / durationTicks) * rollWidth;
+  const top = laneY + LANE_PADDING_Y + pitchOffset;
 
-  return { x: (x + endX) / 2, y: y + noteHeight / 2 };
+  return {
+    left,
+    top,
+    right: left + Math.max(2, rawRight - left),
+    bottom: top + noteHeight,
+  };
+}
+
+function laneNoteCenter(
+  target: LaneFixtureNote,
+  canvasBox: { width: number; height: number },
+  durationTicks: number,
+  voiceCount: number,
+  scrollTopPx = 0,
+) {
+  const rect = laneNoteRect(target, canvasBox, durationTicks, voiceCount, scrollTopPx);
+  return { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+}
+
+async function interactiveLaneCanvas(page: Page) {
+  // The accessible name targets the interactive roll; the paint overlay is
+  // intentionally aria-hidden and pointer-transparent. Raw page.mouse
+  // gestures do not auto-scroll, so always resolve a fresh visible box.
+  const canvas = page.getByLabel("Piano roll note visualization");
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  if (!box) {
+    throw new Error("Piano roll canvas has no bounding box");
+  }
+  return { canvas, box };
 }
 
 async function clickNoteInLaneView(
@@ -115,13 +165,7 @@ async function clickNoteInLaneView(
   scrollTopPx = 0,
   additive = false,
 ) {
-  // The accessible name targets the interactive roll; the paint overlay is
-  // intentionally aria-hidden and pointer-transparent.
-  const canvas = page.getByLabel("Piano roll note visualization");
-  const box = await canvas.boundingBox();
-  if (!box) {
-    throw new Error("Piano roll canvas has no bounding box");
-  }
+  const { canvas, box } = await interactiveLaneCanvas(page);
   const local = laneNoteCenter(
     target,
     box,
@@ -135,6 +179,12 @@ async function clickNoteInLaneView(
   });
 }
 
+async function rightClickNoteInLaneView(page: Page, target: LaneFixtureNote) {
+  const { canvas, box } = await interactiveLaneCanvas(page);
+  const local = laneNoteCenter(target, box, laneProject.durationTicks, laneProject.voices.length);
+  await canvas.click({ position: local, button: "right" });
+}
+
 async function dragLaneMarquee(
   page: Page,
   startTick: number,
@@ -143,11 +193,7 @@ async function dragLaneMarquee(
   lastVoiceIndex: number,
   additive = false,
 ) {
-  const canvas = page.getByLabel("Piano roll note visualization");
-  const box = await canvas.boundingBox();
-  if (!box) {
-    throw new Error("Piano roll canvas has no bounding box");
-  }
+  const { box } = await interactiveLaneCanvas(page);
 
   const rollWidth = box.width - VOICE_LANE_LABEL_WIDTH;
   const laneHeight = Math.max(36, box.height / laneProject.voices.length);
@@ -170,6 +216,52 @@ async function dragLaneMarquee(
   if (additive) {
     await page.keyboard.up("Shift");
   }
+}
+
+async function dragLaneBrush(page: Page, fromTarget: LaneFixtureNote, toTarget: LaneFixtureNote) {
+  const { box } = await interactiveLaneCanvas(page);
+  const from = laneNoteCenter(
+    fromTarget,
+    box,
+    laneProject.durationTicks,
+    laneProject.voices.length,
+  );
+  const to = laneNoteCenter(toTarget, box, laneProject.durationTicks, laneProject.voices.length);
+
+  await page.mouse.move(box.x + from.x, box.y + from.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + to.x, box.y + to.y, { steps: 8 });
+  await page.mouse.up();
+}
+
+async function lassoLaneNote(page: Page, target: LaneFixtureNote) {
+  const { box } = await interactiveLaneCanvas(page);
+  const rect = laneNoteRect(target, box, laneProject.durationTicks, laneProject.voices.length);
+  const margin = 4;
+  const points = [
+    { x: rect.left - margin, y: rect.top - margin },
+    { x: rect.right + margin, y: rect.top - margin },
+    { x: rect.right + margin, y: rect.bottom + margin },
+    { x: rect.left - margin, y: rect.bottom + margin },
+    { x: rect.left - margin, y: rect.top - margin },
+  ];
+
+  await page.mouse.move(box.x + points[0].x, box.y + points[0].y);
+  await page.mouse.down();
+  for (const point of points.slice(1)) {
+    await page.mouse.move(box.x + point.x, box.y + point.y, { steps: 4 });
+  }
+  await page.mouse.up();
+}
+
+async function expectDisabledWithExplanation(page: Page, control: Locator, explanation: string) {
+  await expect(control).toBeDisabled();
+  await expect(control).toHaveAttribute("title", explanation);
+  const describedBy = await control.getAttribute("aria-describedby");
+  if (!describedBy) {
+    throw new Error("Disabled control is missing aria-describedby for: " + explanation);
+  }
+  await expect(page.locator("#" + describedBy)).toHaveText(explanation);
 }
 
 async function switchToVoiceLanes(page: Page) {
@@ -214,24 +306,65 @@ async function dragLaneRulerRange(page: Page, startTick: number, endTick: number
 }
 
 test.describe("voice lane view", () => {
-  test("the view toggle switches to read-only voice lanes and back", async ({ page }) => {
+  test("paint toolbar controls stay active across piano and voice-lane views", async ({ page }) => {
     await installFakeTauri(page, { importedProject: laneProject });
     await page.goto("/");
     await importFixture(page);
 
     const pianoButton = page.getByRole("button", { name: "Piano roll" });
     const lanesButton = page.getByRole("button", { name: "Voice lanes" });
+    const paintButton = page.getByRole("button", { name: /Paint mode:/ });
     await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
-
-    await page.getByRole("button", { name: "Paint mode: off" }).click();
-    await expect(page.getByRole("button", { name: "Paint mode: on" })).toBeVisible();
 
     await lanesButton.click();
     await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("button", { name: "Paint mode: off" })).toBeVisible();
+    await paintButton.click();
+    await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+    await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+
+    for (const toolName of ["Pencil", "Brush", "Lasso", "Wand"]) {
+      const toolButton = page.getByRole("button", { name: toolName });
+      await expect(toolButton).toBeEnabled();
+      await toolButton.click();
+      await expect(toolButton).toHaveAttribute("aria-pressed", "true");
+      await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+    }
 
     await pianoButton.click();
     await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
+    await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+
+    await lanesButton.click();
+    await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+    await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("Range and Voice lanes expose symmetric disabled explanations", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: laneProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    const pianoButton = page.getByRole("button", { name: "Piano roll" });
+    const lanesButton = page.getByRole("button", { name: "Voice lanes" });
+    const rangeButton = page.getByRole("button", { name: /Range markers:/ });
+
+    await expect(rangeButton).toBeEnabled();
+    await rangeButton.click();
+    await expect(rangeButton).toHaveAttribute("aria-pressed", "true");
+    await expectDisabledWithExplanation(page, lanesButton, EXIT_RANGE_BEFORE_LANES_HELP);
+    await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
+
+    await rangeButton.click();
+    await expect(rangeButton).toHaveAttribute("aria-pressed", "false");
+    await expect(lanesButton).toBeEnabled();
+    await lanesButton.click();
+    await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+    await expectDisabledWithExplanation(page, rangeButton, SWITCH_TO_PIANO_FOR_RANGE_HELP);
+
+    await pianoButton.click();
+    await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
+    await expect(rangeButton).toBeEnabled();
+    await expect(rangeButton).not.toHaveAttribute("title", SWITCH_TO_PIANO_FOR_RANGE_HELP);
   });
 
   test("clicking a note in voice lanes selects it", async ({ page }) => {
@@ -395,18 +528,7 @@ test.describe("voice lane view", () => {
     {
       name: "context reassignment",
       apply: async (page: Page) => {
-        const canvas = page.getByLabel("Piano roll note visualization");
-        const box = await canvas.boundingBox();
-        if (!box) {
-          throw new Error("Piano roll canvas has no bounding box");
-        }
-        const local = laneNoteCenter(
-          leadNote,
-          box,
-          laneProject.durationTicks,
-          laneProject.voices.length,
-        );
-        await canvas.click({ position: local, button: "right" });
+        await rightClickNoteInLaneView(page, leadNote);
         await page.getByRole("menuitem", { name: "Assign to Bass" }).click();
       },
     },
@@ -438,5 +560,76 @@ test.describe("voice lane view", () => {
       await expect(voiceRow(page, "Bass")).toContainText("2 notes");
       await expect(voiceRow(page, "Lead")).toContainText("1 notes");
     });
+  }
+
+  const lanePaintScenarios = [
+    {
+      toolName: "Pencil",
+      shortcut: "p",
+      expectedBassNotes: 2,
+      expectedLeadNotes: 1,
+      apply: (page: Page) => clickNoteInLaneView(page, leadNote),
+    },
+    {
+      toolName: "Brush",
+      shortcut: "b",
+      expectedBassNotes: 3,
+      expectedLeadNotes: 0,
+      apply: (page: Page) => dragLaneBrush(page, leadNote, leadHighNote),
+    },
+    {
+      toolName: "Lasso",
+      shortcut: "l",
+      expectedBassNotes: 2,
+      expectedLeadNotes: 1,
+      apply: (page: Page) => lassoLaneNote(page, leadNote),
+    },
+    {
+      toolName: "Wand",
+      shortcut: "w",
+      expectedBassNotes: 3,
+      expectedLeadNotes: 0,
+      apply: (page: Page) => clickNoteInLaneView(page, leadNote),
+    },
+  ];
+
+  for (const scenario of lanePaintScenarios) {
+    test(
+      scenario.toolName + " shortcut paints voice lanes as one undoable edit",
+      async ({ page }) => {
+        await installFakeTauri(page, { importedProject: laneProject });
+        await page.goto("/");
+        await importFixture(page);
+        await switchToVoiceLanes(page);
+        await page.getByLabel("Select notes in Bass", { exact: true }).click();
+
+        const lanesButton = page.getByRole("button", { name: "Voice lanes" });
+        const paintButton = page.getByRole("button", { name: /Paint mode:/ });
+        const toolButton = page.getByRole("button", { name: scenario.toolName });
+        const undo = page.getByRole("button", { name: "Undo" });
+        const redo = page.getByRole("button", { name: "Redo" });
+        await expect(undo).toBeDisabled();
+
+        await page.keyboard.press(scenario.shortcut);
+        await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+        await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+        await expect(toolButton).toHaveAttribute("aria-pressed", "true");
+
+        await scenario.apply(page);
+        await expect(voiceRow(page, "Bass")).toContainText(
+          String(scenario.expectedBassNotes) + " notes",
+        );
+        await expect(voiceRow(page, "Lead")).toContainText(
+          String(scenario.expectedLeadNotes) + " notes",
+        );
+        await expect(undo).toBeEnabled();
+
+        await undo.click();
+        await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+        await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+        await expect(undo).toBeDisabled();
+        await expect(redo).toBeEnabled();
+      },
+    );
   }
 });

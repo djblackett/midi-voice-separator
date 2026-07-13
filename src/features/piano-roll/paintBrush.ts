@@ -1,5 +1,6 @@
 import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
+import type { ViewCapabilities } from "./viewGeometry";
 import {
   createPianoViewGeometry,
   notesInBrushStampForView,
@@ -17,6 +18,10 @@ export { pointInPolygon } from "./viewGeometry";
  * `smartSelect.ts`'s `selectPhrase`).
  */
 export type PaintTool = "pencil" | "brush" | "lasso" | "wand";
+
+export function supportsPaintTool(capabilities: ViewCapabilities, tool: PaintTool): boolean {
+  return capabilities[tool];
+}
 
 export interface Point {
   x: number;
