@@ -133,6 +133,8 @@ interface PianoRollProps {
   /** Note ids involved in a same-voice overlap conflict. */
   conflictNoteIds?: ReadonlySet<string>;
   viewMode?: PianoRollViewMode;
+  /** Optional split-pane prefix such as "Side A" for the note canvas name. */
+  accessibleLabelPrefix?: string;
   /** voiceId -> presentation key (M10), so matched voices render in a shared color. */
   presentationKeyByVoiceId?: ReadonlyMap<string, string>;
   /** Controlled horizontal (tick) viewport (M13). Omit for internal, uncontrolled state. */
@@ -177,6 +179,7 @@ export function PianoRoll({
   voiceDescriptions = new Map(),
   conflictNoteIds = new Set(),
   viewMode = "piano",
+  accessibleLabelPrefix,
   presentationKeyByVoiceId = new Map(),
   timeViewport,
   onTimeViewportChange,
@@ -187,6 +190,11 @@ export function PianoRoll({
   onLaneNavigationAnchor,
   linkedLaneReveal = null,
 }: PianoRollProps) {
+  const noteCanvasLabel = accessibleLabelPrefix
+    ? `${accessibleLabelPrefix} ${viewMode === "voice-lanes" ? "voice lane" : "piano roll"} note visualization`
+    : viewMode === "voice-lanes"
+      ? "Voice lane note visualization"
+      : "Piano roll note visualization";
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rulerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1457,7 +1465,7 @@ export function PianoRoll({
       />{" "}
       <canvas
         ref={canvasRef}
-        aria-label="Piano roll note visualization"
+        aria-label={noteCanvasLabel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

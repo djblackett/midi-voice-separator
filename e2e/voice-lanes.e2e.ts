@@ -149,11 +149,11 @@ async function interactiveLaneCanvas(page: Page) {
   // The accessible name targets the interactive roll; the paint overlay is
   // intentionally aria-hidden and pointer-transparent. Raw page.mouse
   // gestures do not auto-scroll, so always resolve a fresh visible box.
-  const canvas = page.getByLabel("Piano roll note visualization");
+  const canvas = page.getByLabel("Voice lane note visualization", { exact: true });
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {
-    throw new Error("Piano roll canvas has no bounding box");
+    throw new Error("Voice lane canvas has no bounding box");
   }
   return { canvas, box };
 }
@@ -314,10 +314,16 @@ test.describe("voice lane view", () => {
     const pianoButton = page.getByRole("button", { name: "Piano roll" });
     const lanesButton = page.getByRole("button", { name: "Voice lanes" });
     const paintButton = page.getByRole("button", { name: /Paint mode:/ });
+    const pianoCanvas = page.getByLabel("Piano roll note visualization", { exact: true });
+    const laneCanvas = page.getByLabel("Voice lane note visualization", { exact: true });
     await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
+    await expect(pianoCanvas).toHaveCount(1);
+    await expect(laneCanvas).toHaveCount(0);
 
     await lanesButton.click();
     await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
+    await expect(pianoCanvas).toHaveCount(0);
+    await expect(laneCanvas).toHaveCount(1);
     await paintButton.click();
     await expect(paintButton).toHaveAttribute("aria-pressed", "true");
     await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
@@ -333,10 +339,14 @@ test.describe("voice lane view", () => {
     await pianoButton.click();
     await expect(pianoButton).toHaveAttribute("aria-pressed", "true");
     await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+    await expect(pianoCanvas).toHaveCount(1);
+    await expect(laneCanvas).toHaveCount(0);
 
     await lanesButton.click();
     await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
     await expect(paintButton).toHaveAttribute("aria-pressed", "true");
+    await expect(pianoCanvas).toHaveCount(0);
+    await expect(laneCanvas).toHaveCount(1);
   });
 
   test("Range and Voice lanes expose symmetric disabled explanations", async ({ page }) => {
@@ -431,7 +441,7 @@ test.describe("voice lane view", () => {
       `${VOICE_LANE_LABEL_WIDTH}px`,
     );
 
-    const canvas = page.getByLabel("Piano roll note visualization");
+    const canvas = page.getByLabel("Voice lane note visualization", { exact: true });
     await canvas.evaluate((element, gutterWidth) => {
       const target = element as HTMLCanvasElement;
       const bounds = target.getBoundingClientRect();
@@ -476,10 +486,11 @@ test.describe("voice lane view", () => {
     await expect(slider).toBeEnabled();
     await expect(slider).toHaveAttribute("min", "0");
     await expect(slider).toHaveAttribute("aria-valuetext", /lane 1 of 16 at top/);
+    await expect(slider).toHaveValue("0");
     const maxScrollTopPx = Number(await slider.getAttribute("max"));
     expect(maxScrollTopPx).toBeGreaterThan(0);
 
-    const canvas = page.getByLabel("Piano roll note visualization");
+    const canvas = page.getByLabel("Voice lane note visualization", { exact: true });
     await canvas.evaluate((element) => {
       const target = element as HTMLCanvasElement;
       const bounds = target.getBoundingClientRect();
@@ -504,6 +515,11 @@ test.describe("voice lane view", () => {
     await slider.press("Home");
     await slider.press("End");
     await expect(slider).toHaveValue(String(maxScrollTopPx));
+    const expectedTopLane = Math.floor(maxScrollTopPx / 36) + 1;
+    await expect(slider).toHaveAttribute(
+      "aria-valuetext",
+      `Dense voice ${expectedTopLane}, lane ${expectedTopLane} of 16 at top`,
+    );
 
     const finalScrollTopPx = Number(await slider.inputValue());
     await clickNoteInLaneView(page, denseFinalNote, denseLaneProject, finalScrollTopPx);

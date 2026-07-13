@@ -107,8 +107,8 @@ async function importFixture(page: Page) {
 // any intervening locator click (voice swatch, Undo, menu item) may
 // auto-scroll the page and shift the canvas, and raw page.mouse events
 // use absolute viewport coordinates.
-async function canvasBox(page: Page) {
-  const canvas = page.getByLabel("Piano roll note visualization");
+async function canvasBox(page: Page, label = "Piano roll note visualization") {
+  const canvas = page.getByLabel(label, { exact: true });
   await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) {
@@ -138,8 +138,9 @@ async function laneNotePoint(
   lowestVoicePitch: number,
   highestVoicePitch: number,
 ) {
-  const canvas = page.getByLabel("Piano roll note visualization");
-  const box = await canvasBox(page);
+  const label = "Voice lane note visualization";
+  const canvas = page.getByLabel(label, { exact: true });
+  const box = await canvasBox(page, label);
   return {
     canvas,
     point: laneNoteScreenCenter(target, box, voiceIndex, lowestVoicePitch, highestVoicePitch),

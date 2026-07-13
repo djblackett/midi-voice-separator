@@ -106,15 +106,36 @@ test("split view shows both sides and clicking a pane sets the active side", asy
 
   // Both sides render as side-qualified panes.
   await expect(page.locator(".editor-pane")).toHaveCount(2);
-  await expect(page.getByRole("group", { name: /Side A piano roll/ })).toBeVisible();
-  await expect(page.getByRole("group", { name: /Side B piano roll/ })).toBeVisible();
+  const sideAEditing = page.getByRole("group", {
+    name: "Side A piano roll (editing)",
+    exact: true,
+  });
+  const sideB = page.getByRole("group", { name: "Side B piano roll", exact: true });
+  await expect(sideAEditing).toBeVisible();
+  await expect(sideB).toBeVisible();
+  await expect(
+    sideAEditing.getByLabel("Side A piano roll note visualization", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sideB.getByLabel("Side B piano roll note visualization", { exact: true }),
+  ).toBeVisible();
 
   // Side A is the active (editable) side by default.
   await expect(page.locator(".editor-pane-active")).toContainText("Side A");
 
   // Clicking the Side B pane makes B the active side.
-  await page.getByRole("group", { name: /Side B piano roll/ }).click();
+  await sideB.click();
   await expect(page.locator(".editor-pane-active")).toContainText("Side B");
+  await expect(page.getByRole("group", { name: "Side A piano roll", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Side B piano roll (editing)", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Side A piano roll note visualization", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Side B piano roll note visualization", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "B: Draft" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -324,8 +345,17 @@ test("split lane navigation stays independent or links by strict voice correspon
   await page.getByRole("button", { name: "Split view" }).click();
   await page.getByRole("button", { name: "Voice lanes" }).click();
 
-  const sideA = page.getByRole("group", { name: /Side A piano roll/ });
-  const sideB = page.getByRole("group", { name: /Side B piano roll/ });
+  const sideA = page.getByRole("group", {
+    name: "Side A voice lane (editing)",
+    exact: true,
+  });
+  const sideB = page.getByRole("group", { name: "Side B voice lane", exact: true });
+  await expect(
+    sideA.getByLabel("Side A voice lane note visualization", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sideB.getByLabel("Side B voice lane note visualization", { exact: true }),
+  ).toBeVisible();
   const sideASlider = sideA.getByRole("slider", {
     name: "Voice lane vertical scroll",
   });

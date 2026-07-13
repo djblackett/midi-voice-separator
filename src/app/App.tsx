@@ -1340,6 +1340,7 @@ export default function App() {
   // selection, so selecting a note highlights it in both (shared note ids).
   function renderComparisonPane(sideProjection: SideProjection) {
     const { side, editable } = sideProjection;
+    const viewLabel = pianoRollViewMode === "voice-lanes" ? "voice lane" : "piano roll";
     const paneSoloVoiceId = mapVoiceIdAcrossSides(
       soloVoiceId,
       editorActiveSide,
@@ -1350,7 +1351,7 @@ export default function App() {
       <div
         key={side}
         role="group"
-        aria-label={`Side ${side} piano roll${editable ? " (editing)" : ""}`}
+        aria-label={`Side ${side} ${viewLabel}${editable ? " (editing)" : ""}`}
         className={editable ? "editor-pane editor-pane-active" : "editor-pane"}
         onPointerDownCapture={() => handleActivateSide(side)}
       >
@@ -1382,6 +1383,7 @@ export default function App() {
           onSeek={playback.seek}
           readOnly={!editable}
           viewMode={pianoRollViewMode}
+          accessibleLabelPrefix={`Side ${side}`}
           timeViewport={splitTimeViewport}
           onTimeViewportChange={setSplitTimeViewport}
           pitchViewport={
