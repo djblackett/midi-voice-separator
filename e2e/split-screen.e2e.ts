@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { buildFixtureProject, installFakeTauri, note, voice } from "./fixtures/tauriMock";
 
 const project = buildFixtureProject(
@@ -6,6 +6,40 @@ const project = buildFixtureProject(
   [voice("voice-1", "Lead", 2, 60, 62), voice("voice-2", "Bass", 1, 64, 64)],
   { durationTicks: 3840 },
 );
+
+const denseSplitVoiceCount = 32;
+const denseSplitVoices = Array.from({ length: denseSplitVoiceCount }, (_, index) =>
+  voice(`import-${index + 1}`, `Import voice ${index + 1}`, 1, 48 + index, 48 + index),
+);
+const denseSplitProject = buildFixtureProject(
+  denseSplitVoices.map((candidate, index) =>
+    note(`dense-${index + 1}`, candidate.id, 48 + index, index * 48),
+  ),
+  denseSplitVoices,
+  { fileName: "dense-split.mid", durationTicks: 3840 },
+);
+
+function denseRerunProject(current: typeof denseSplitProject) {
+  const notes = current.notes
+    .filter((entry) => entry.id !== "dense-3")
+    .map((entry) => {
+      const number = Number.parseInt(entry.id.replace("dense-", ""), 10);
+      return { ...entry, voiceId: `rerun-${number}` };
+    });
+  const voices = notes.map((entry) => {
+    const number = Number.parseInt(entry.id.replace("dense-", ""), 10);
+    return voice(entry.voiceId, `Rerun voice ${number}`, 1, entry.pitch, entry.pitch);
+  });
+  return {
+    ...current,
+    notes,
+    voices,
+    separationSummary: {
+      ...current.separationSummary,
+      voiceCount: voices.length,
+    },
+  };
+}
 
 function voiceRow(page: Page, label: string) {
   return page
@@ -27,6 +61,32 @@ async function startCompare(page: Page) {
     .getAttribute("value");
   await page.locator(".diff-target-select").selectOption(importValue ?? "");
   await page.getByRole("button", { name: "Start A/B compare" }).click();
+}
+
+async function startDenseCompare(page: Page) {
+  await page.getByRole("button", { name: "Import MIDI" }).click();
+  await page.waitForSelector(".diff-summary");
+  await page.getByRole("button", { name: "Re-run separation" }).click();
+
+  // Reconciliation preserves import order, so deliberately move A's voice 31
+  // near the top while the immutable import snapshot on B keeps it near the
+  // bottom. Linked navigation must use correspondence, not pixels or raw ids.
+  const moveVoice31Up = page.getByLabel("Move Import voice 31 up", {
+    exact: true,
+  });
+  for (let move = 0; move < 28; move += 1) {
+    await moveVoice31Up.click();
+  }
+
+  const importValue = await page
+    .locator(".diff-target-select option", { hasText: "Import" })
+    .getAttribute("value");
+  await page.locator(".diff-target-select").selectOption(importValue ?? "");
+  await page.getByRole("button", { name: "Start A/B compare" }).click();
+}
+
+async function setRangeValue(slider: Locator, value: number) {
+  await slider.fill(String(value));
 }
 
 test("split view shows both sides and clicking a pane sets the active side", async ({ page }) => {
@@ -230,9 +290,16 @@ test("split offers an explicit linked/independent pitch-scroll toggle", async ({
   await page.getByRole("button", { name: "Split view" }).click();
 
   // Pitch scroll is independent by default (time is always linked) and flips to
-  // linked on click.
+  // a view-aware lane label without changing the preference.
   await expect(page.getByRole("button", { name: "Pitch: independent" })).toBeVisible();
-  await page.getByRole("button", { name: "Pitch: independent" }).click();
+  await page.getByRole("button", { name: "Voice lanes" }).click();
+  await expect(page.getByRole("button", { name: "Lanes: independent" })).toBeVisible();
+  await page.getByRole("button", { name: "Lanes: independent" }).click();
+  await expect(page.getByRole("button", { name: "Lanes: linked" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByRole("button", { name: "Piano roll" }).click();
   await expect(page.getByRole("button", { name: "Pitch: linked" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -240,7 +307,67 @@ test("split offers an explicit linked/independent pitch-scroll toggle", async ({
 
   // The toggle is a split-only control -- leaving split hides it.
   await page.getByRole("button", { name: "Single view" }).click();
-  await expect(page.getByRole("button", { name: /^Pitch:/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(Pitch|Lanes):/ })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Playback monitor" })).toHaveCount(0);
   await expect(page.getByText("Sounding: A (Current)")).toBeVisible();
+});
+
+test("split lane navigation stays independent or links by strict voice correspondence", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: denseSplitProject,
+    reassign: ({ project: current }) => denseRerunProject(current),
+  });
+  await page.goto("/");
+  await startDenseCompare(page);
+  await page.getByRole("button", { name: "Split view" }).click();
+  await page.getByRole("button", { name: "Voice lanes" }).click();
+
+  const sideA = page.getByRole("group", { name: /Side A piano roll/ });
+  const sideB = page.getByRole("group", { name: /Side B piano roll/ });
+  const sideASlider = sideA.getByRole("slider", {
+    name: "Voice lane vertical scroll",
+  });
+  const sideBSlider = sideB.getByRole("slider", {
+    name: "Voice lane vertical scroll",
+  });
+  await expect(sideASlider).toBeEnabled();
+  await expect(sideBSlider).toBeEnabled();
+  await expect.poll(async () => Number(await sideASlider.getAttribute("max"))).toBeGreaterThan(0);
+  await expect.poll(async () => Number(await sideBSlider.getAttribute("max"))).toBeGreaterThan(0);
+  await expect(page.locator(".editor-pane-active")).toContainText("Side A");
+
+  // Independent is the default: moving A does not copy its pixels into B.
+  await setRangeValue(sideASlider, 36);
+  await expect(sideASlider).toHaveValue("36");
+  await expect(sideBSlider).toHaveValue("0");
+
+  await page.getByRole("button", { name: "Lanes: independent" }).click();
+  await setRangeValue(sideASlider, 37);
+  await expect(sideASlider).toHaveValue("37");
+  await expect.poll(async () => Number(await sideBSlider.inputValue())).toBeGreaterThan(0);
+  expect(Number(await sideBSlider.inputValue())).not.toBe(37);
+
+  // Import voice 3 has no A-side counterpart. Navigating the still-read-only
+  // B scrollbar leaves A untouched and reports the explicit fallback.
+  await setRangeValue(sideBSlider, 72);
+  await expect(sideBSlider).toHaveValue("72");
+  await expect(sideASlider).toHaveValue("37");
+  await expect(
+    page.getByText("No matched lane on side A; that pane stayed independent."),
+  ).toBeVisible();
+  await expect(page.locator(".editor-pane-active")).toContainText("Side A");
+
+  // A matched B anchor links back to A without activating the read-only pane.
+  await sideBSlider.focus();
+  await sideBSlider.press("Home");
+  await expect(sideBSlider).toHaveValue("0");
+  await expect(sideASlider).toHaveValue("0");
+  await expect(page.locator(".lane-link-status")).toHaveCount(0);
+  await expect(page.locator(".editor-pane-active")).toContainText("Side A");
+
+  // A new request id lets the same semantic target be revealed again.
+  await setRangeValue(sideASlider, 36);
+  await expect.poll(async () => Number(await sideBSlider.inputValue())).toBeGreaterThan(0);
 });

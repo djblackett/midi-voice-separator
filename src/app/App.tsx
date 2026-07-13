@@ -17,8 +17,13 @@ import { selectAndExportMidi } from "../features/midi-export/exportMidi";
 import {
   PianoRoll,
   type InteractionMode,
+  type LinkedLaneRevealRequest,
   type PianoRollViewMode,
 } from "../features/piano-roll/PianoRoll";
+import {
+  defaultLaneViewportWindow,
+  type LaneViewportWindow,
+} from "../features/piano-roll/laneViewport";
 import {
   clampBrushRadius,
   DEFAULT_BRUSH_RADIUS,
@@ -86,6 +91,7 @@ import {
 import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
 import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
+import { resolveLinkedLaneTarget } from "./editor/laneViewportLink";
 import { resolveKeyboardCommand, type KeyboardCommandId } from "./keyboard/keyboardCommands";
 import { useComparisonEditor } from "./editor/useComparisonEditor";
 import { defaultViewportWindow, type ViewportWindow } from "../features/piano-roll/viewportWindow";
@@ -161,6 +167,17 @@ function toAppCommandError(commandError: unknown): AppCommandError {
 type PlaybackScopeMode = "all" | "selected" | "voice" | "changed" | "flagged";
 type CompareSide = "A" | "B";
 
+interface SplitLinkedLaneReveal extends LinkedLaneRevealRequest {
+  readonly targetSide: CompareSide;
+}
+
+function defaultSplitLaneViewports(): Record<CompareSide, LaneViewportWindow> {
+  return {
+    A: defaultLaneViewportWindow(),
+    B: defaultLaneViewportWindow(),
+  };
+}
+
 const FLAGGED_PLAYBACK_WINDOW_TICKS = 960;
 
 /** Identity presentation map (single side plays with its own per-voice timbre). */
@@ -233,13 +250,27 @@ export default function App() {
   // other.
   const [monitorOverride, setMonitorOverride] = useState<"A" | "B" | null>(null);
   // Split panes share one time viewport so they stay aligned in musical time.
-  // Pitch scroll is independent by default; `linkPitchScroll` shares it too.
+  // Vertical navigation is independent by default. Piano mode can share pitch
+  // directly; lane mode links semantic voice anchors while retaining two
+  // independent pixel windows.
   const [splitTimeViewport, setSplitTimeViewport] = useState<ViewportWindow>(defaultViewportWindow);
   const [splitPitchViewport, setSplitPitchViewport] = useState<PitchViewportWindow>(
     defaultPitchViewportWindow,
   );
-  const [linkPitchScroll, setLinkPitchScroll] = useState(false);
+  const [splitLaneViewports, setSplitLaneViewports] = useState(defaultSplitLaneViewports);
+  const [linkVerticalNavigation, setLinkVerticalNavigation] = useState(false);
+  const [linkedLaneReveal, setLinkedLaneReveal] = useState<SplitLinkedLaneReveal | null>(null);
+  const [laneLinkStatus, setLaneLinkStatus] = useState<string | null>(null);
+  const linkedLaneRequestSequence = useRef(0);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (pianoRollViewMode !== "voice-lanes") {
+      setLinkedLaneReveal(null);
+      setLaneLinkStatus(null);
+    }
+  }, [pianoRollViewMode]);
+
   const {
     branch: editorBranch,
     document: editorDocument,
@@ -465,6 +496,11 @@ export default function App() {
     [editorActiveSide, editorBranchA, editorBranchB, compareState],
   );
   const isSplitLayout = comparisonProjection.visibleSides.length === 2;
+  const verticalNavigationAxisLabel = pianoRollViewMode === "voice-lanes" ? "Lanes" : "Pitch";
+  const verticalNavigationTitle =
+    pianoRollViewMode === "voice-lanes"
+      ? "Reveal matched voice lanes in the other pane; unmatched lanes stay independent"
+      : "Scroll and zoom both panes' pitch axis together";
   // Outside split view, playback always follows the active/rendered side. In
   // split, an explicit override can pin either side while the other is edited.
   const monitoredSide: CompareSide =
@@ -851,6 +887,7 @@ export default function App() {
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
     setCompareState(null);
+    resetSplitNavigation();
   }
 
   async function handleImport() {
@@ -1108,6 +1145,7 @@ export default function App() {
     setExportResult(null);
     setCompareState(null);
     setMonitorOverride(null);
+    resetSplitNavigation();
   }
 
   function handleRenameSnapshot(id: string, name: string) {
@@ -1124,6 +1162,7 @@ export default function App() {
       setOnlyChangedNotes(false);
       setCompareState(null);
       setMonitorOverride(null);
+      resetSplitNavigation();
     }
   }
 
@@ -1146,6 +1185,7 @@ export default function App() {
     setOnlyChangedNotes(false);
     setCompareState(null);
     setMonitorOverride(null);
+    resetSplitNavigation();
   }
 
   function handleStartCompare() {
@@ -1171,6 +1211,7 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
     setOnlyChangedNotes(false);
+    resetSplitNavigation();
   }
 
   // The A/B toggle doubles as the active-side switch: viewing A or B makes that
@@ -1186,6 +1227,64 @@ export default function App() {
     setMonitorOverride(null);
   }
 
+  function resetSplitNavigation() {
+    setSplitTimeViewport(defaultViewportWindow());
+    setSplitPitchViewport(defaultPitchViewportWindow());
+    setSplitLaneViewports(defaultSplitLaneViewports());
+    setLinkVerticalNavigation(false);
+    setLinkedLaneReveal(null);
+    setLaneLinkStatus(null);
+  }
+
+  function handleSplitLaneViewportChange(side: CompareSide, next: LaneViewportWindow) {
+    setSplitLaneViewports((current) =>
+      current[side].scrollTopPx === next.scrollTopPx ? current : { ...current, [side]: next },
+    );
+  }
+
+  function handleSplitLaneNavigationAnchor(sourceSide: CompareSide, sourceVoiceId: string | null) {
+    if (
+      !isSplitLayout ||
+      !linkVerticalNavigation ||
+      pianoRollViewMode !== "voice-lanes" ||
+      sourceVoiceId === null
+    ) {
+      return;
+    }
+
+    const resolution = resolveLinkedLaneTarget(
+      sourceSide,
+      sourceVoiceId,
+      comparisonProjection.correspondence,
+    );
+    if (resolution.kind === "unresolved") {
+      setLinkedLaneReveal(null);
+      setLaneLinkStatus(
+        resolution.reason === "ambiguous"
+          ? `Lane match on side ${resolution.targetSide} is ambiguous; that pane stayed independent.`
+          : `No matched lane on side ${resolution.targetSide}; that pane stayed independent.`,
+      );
+      return;
+    }
+
+    linkedLaneRequestSequence.current += 1;
+    setLinkedLaneReveal({
+      targetSide: resolution.targetSide,
+      requestId: linkedLaneRequestSequence.current,
+      voiceId: resolution.targetVoiceId,
+    });
+    setLaneLinkStatus(null);
+  }
+
+  function handleToggleVerticalNavigation() {
+    const next = !linkVerticalNavigation;
+    setLinkVerticalNavigation(next);
+    if (!next) {
+      setLinkedLaneReveal(null);
+      setLaneLinkStatus(null);
+    }
+  }
+
   // Toggle between the single A/B/Diff canvas and the two-pane split. Leaving
   // split forces the diff-free single canvas onto the active side.
   function handleToggleSplitLayout() {
@@ -1199,6 +1298,10 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
     setMonitorOverride(null);
+    if (isSplitLayout) {
+      setLinkedLaneReveal(null);
+      setLaneLinkStatus(null);
+    }
   }
 
   // Split panes: clicking a pane makes its side the active (editable) one.
@@ -1264,8 +1367,18 @@ export default function App() {
           viewMode={pianoRollViewMode}
           timeViewport={splitTimeViewport}
           onTimeViewportChange={setSplitTimeViewport}
-          pitchViewport={linkPitchScroll ? splitPitchViewport : undefined}
-          onPitchViewportChange={linkPitchScroll ? setSplitPitchViewport : undefined}
+          pitchViewport={
+            linkVerticalNavigation && pianoRollViewMode === "piano" ? splitPitchViewport : undefined
+          }
+          onPitchViewportChange={
+            linkVerticalNavigation && pianoRollViewMode === "piano"
+              ? setSplitPitchViewport
+              : undefined
+          }
+          laneViewport={splitLaneViewports[side]}
+          onLaneViewportChange={(next) => handleSplitLaneViewportChange(side, next)}
+          onLaneNavigationAnchor={(voiceId) => handleSplitLaneNavigationAnchor(side, voiceId)}
+          linkedLaneReveal={linkedLaneReveal?.targetSide === side ? linkedLaneReveal : null}
         />
       </div>
     );
@@ -1326,6 +1439,7 @@ export default function App() {
     setSoloVoiceId(null);
     setMonitorOverride(null);
     setExportResult(null);
+    resetSplitNavigation();
   }
 
   // Exiting keeps A and drops B. Unsaved B edits are confirmed first so they
@@ -1341,6 +1455,7 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
     setMonitorOverride(null);
+    resetSplitNavigation();
   }
 
   function handleCancelExitCompare() {
@@ -2623,13 +2738,21 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      className={linkPitchScroll ? "secondary-button active" : "secondary-button"}
-                      onClick={() => setLinkPitchScroll((current) => !current)}
-                      aria-pressed={linkPitchScroll ? "true" : "false"}
-                      title="Scroll and zoom both panes' pitch axis together"
+                      className={
+                        linkVerticalNavigation ? "secondary-button active" : "secondary-button"
+                      }
+                      onClick={handleToggleVerticalNavigation}
+                      aria-pressed={linkVerticalNavigation ? "true" : "false"}
+                      title={verticalNavigationTitle}
                     >
-                      {linkPitchScroll ? "Pitch: linked" : "Pitch: independent"}
+                      {verticalNavigationAxisLabel}:{" "}
+                      {linkVerticalNavigation ? "linked" : "independent"}
                     </button>
+                    {pianoRollViewMode === "voice-lanes" && laneLinkStatus ? (
+                      <span className="lane-link-status" role="status" aria-live="polite">
+                        {laneLinkStatus}
+                      </span>
+                    ) : null}
                   </>
                 ) : null}
                 {pendingCompareExit ? (

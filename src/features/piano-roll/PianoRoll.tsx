@@ -23,6 +23,7 @@ import {
 } from "./drawPianoRoll";
 import { hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
 import {
+  clampLaneViewport,
   defaultLaneViewportWindow,
   laneViewportAnchor,
   panLaneViewportBy,
@@ -30,6 +31,7 @@ import {
   resolveLaneViewport,
   revealLaneVoices,
   type LaneViewportContext,
+  type LaneViewportWindow,
 } from "./laneViewport";
 import { shouldPaintNote } from "./paint";
 import {
@@ -80,6 +82,11 @@ const MARKER_HIT_RADIUS_PX = 14;
 export type InteractionMode = "select" | "paint" | "range";
 export type PianoRollViewMode = "piano" | "voice-lanes";
 
+export interface LinkedLaneRevealRequest {
+  readonly requestId: number;
+  readonly voiceId: string;
+}
+
 interface PianoRollProps {
   project: MidiProject | null;
   selectedNoteIds: ReadonlySet<string>;
@@ -128,6 +135,13 @@ interface PianoRollProps {
   /** Controlled vertical (pitch) viewport (M13). Omit for internal, uncontrolled state. */
   pitchViewport?: PitchViewportWindow;
   onPitchViewportChange?: (next: PitchViewportWindow) => void;
+  /** Controlled vertical lane viewport. Omit for internal, single-pane state. */
+  laneViewport?: LaneViewportWindow;
+  onLaneViewportChange?: (next: LaneViewportWindow) => void;
+  /** User-origin lane navigation anchor for correspondence-aware split linking. */
+  onLaneNavigationAnchor?: (voiceId: string | null) => void;
+  /** Semantic target sent by the other pane; never copies a pixel offset. */
+  linkedLaneReveal?: LinkedLaneRevealRequest | null;
 }
 
 export function PianoRoll({
@@ -162,6 +176,10 @@ export function PianoRoll({
   onTimeViewportChange,
   pitchViewport,
   onPitchViewportChange,
+  laneViewport,
+  onLaneViewportChange,
+  onLaneNavigationAnchor,
+  linkedLaneReveal = null,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rulerCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -193,6 +211,15 @@ export function PianoRoll({
   const [internalLaneViewport, setInternalLaneViewport] = useState(defaultLaneViewportWindow);
   const viewportWindow = timeViewport ?? internalTimeViewport;
   const pitchViewportWindow = pitchViewport ?? internalPitchViewport;
+  const laneViewportWindow = laneViewport ?? internalLaneViewport;
+  const laneViewportWindowRef = useRef(laneViewportWindow);
+  laneViewportWindowRef.current = laneViewportWindow;
+  const laneViewportControlledRef = useRef(laneViewport !== undefined);
+  laneViewportControlledRef.current = laneViewport !== undefined;
+  const onLaneViewportChangeRef = useRef(onLaneViewportChange);
+  onLaneViewportChangeRef.current = onLaneViewportChange;
+  const onLaneNavigationAnchorRef = useRef(onLaneNavigationAnchor);
+  onLaneNavigationAnchorRef.current = onLaneNavigationAnchor;
   const setViewportWindow = useCallback(
     (update: ViewportWindow | ((current: ViewportWindow) => ViewportWindow)) => {
       if (timeViewport !== undefined) {
@@ -228,6 +255,7 @@ export function PianoRoll({
     projectKey: string | null;
     context: LaneViewportContext;
   } | null>(null);
+  const lastHandledLaneRevealRequestIdRef = useRef<number | null>(null);
   // Paint-cursor overlay state. All refs, not React state: the cursor and
   // an in-progress stroke update every pointer move, and the overlay
   // canvas is redrawn by its own requestAnimationFrame loop instead of
@@ -252,14 +280,41 @@ export function PianoRoll({
     }),
     [project?.voices, canvasSize.height],
   );
+  const laneViewportContextRef = useRef(laneViewportContext);
+  laneViewportContextRef.current = laneViewportContext;
+  const commitLaneViewport = useCallback(
+    (
+      update: LaneViewportWindow | ((current: LaneViewportWindow) => LaneViewportWindow),
+      origin: "silent" | "user" = "silent",
+    ) => {
+      const current = laneViewportWindowRef.current;
+      const context = laneViewportContextRef.current;
+      const requested = typeof update === "function" ? update(current) : update;
+      const next = clampLaneViewport(requested, context.voiceIds.length, context.viewportHeight);
+      if (next.scrollTopPx === current.scrollTopPx) {
+        return;
+      }
+
+      laneViewportWindowRef.current = next;
+      if (laneViewportControlledRef.current) {
+        onLaneViewportChangeRef.current?.(next);
+      } else {
+        setInternalLaneViewport(next);
+      }
+      if (origin === "user") {
+        onLaneNavigationAnchorRef.current?.(laneViewportAnchor(next, context));
+      }
+    },
+    [],
+  );
   const resolvedLaneViewport = useMemo(
     () =>
       resolveLaneViewport(
-        internalLaneViewport,
+        laneViewportWindow,
         laneViewportContext.voiceIds.length,
         laneViewportContext.viewportHeight,
       ),
-    [internalLaneViewport, laneViewportContext],
+    [laneViewportWindow, laneViewportContext],
   );
   const laneProjectKey = project
     ? [project.fileName, project.durationTicks, project.ppq, project.trackCount].join("\u0000")
@@ -319,13 +374,29 @@ export function PianoRoll({
       projectKey: laneProjectKey,
       context: laneViewportContext,
     };
-    setInternalLaneViewport((current) => {
+    commitLaneViewport((current) => {
       if (!previous || previous.projectKey !== laneProjectKey) {
         return current.scrollTopPx === 0 ? current : defaultLaneViewportWindow();
       }
       return reconcileLaneViewport(current, previous.context, laneViewportContext);
     });
-  }, [laneProjectKey, laneViewportContext]);
+  }, [laneProjectKey, laneViewportContext, commitLaneViewport]);
+
+  useEffect(() => {
+    if (
+      viewMode !== "voice-lanes" ||
+      !linkedLaneReveal ||
+      lastHandledLaneRevealRequestIdRef.current === linkedLaneReveal.requestId ||
+      !laneViewportContext.voiceIds.includes(linkedLaneReveal.voiceId)
+    ) {
+      return;
+    }
+
+    lastHandledLaneRevealRequestIdRef.current = linkedLaneReveal.requestId;
+    commitLaneViewport((current) =>
+      revealLaneVoices(current, [linkedLaneReveal.voiceId], laneViewportContext),
+    );
+  }, [linkedLaneReveal, viewMode, laneViewportContext, commitLaneViewport]);
 
   const interactionProject = useMemo(() => {
     if (!project || !onlyChangedNotes) {
@@ -388,11 +459,11 @@ export function PianoRoll({
     if (verticalTarget.kind === "pitch") {
       setPitchViewportWindow((current) => panPitchToReveal(current, fullPitchSpan, verticalTarget));
     } else {
-      setInternalLaneViewport((current) =>
+      commitLaneViewport((current) =>
         revealLaneVoices(current, verticalTarget.voiceIds, laneViewportContext),
       );
     }
-  }, [selectedNoteIds, project, fullPitchSpan, viewMode, laneViewportContext]);
+  }, [selectedNoteIds, project, fullPitchSpan, viewMode, laneViewportContext, commitLaneViewport]);
 
   // Page-follow the playhead during playback, panning only — never
   // changes zoom, and only while actually playing (a paused/stopped
@@ -1183,8 +1254,9 @@ export function PianoRoll({
 
       if (event.shiftKey && viewGeometry.capabilities.verticalAxis === "lanes") {
         const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
-        setInternalLaneViewport((current) =>
-          panLaneViewportBy(current, delta, laneViewportContext),
+        commitLaneViewport(
+          (current) => panLaneViewportBy(current, delta, laneViewportContext),
+          "user",
         );
         return;
       }
@@ -1254,12 +1326,13 @@ export function PianoRoll({
     brushRadius,
     viewGeometry,
     laneViewportContext,
+    commitLaneViewport,
   ]);
 
   function handleResetView() {
     setViewportWindow(defaultViewportWindow());
     setPitchViewportWindow(defaultPitchViewportWindow());
-    setInternalLaneViewport(defaultLaneViewportWindow());
+    commitLaneViewport(defaultLaneViewportWindow(), "user");
   }
 
   const isHorizontallyZoomed = viewportWindow.zoomLevel > 1;
@@ -1369,9 +1442,7 @@ export function PianoRoll({
           aria-orientation="vertical"
           aria-valuetext={laneScrollValueText}
           onChange={(event) =>
-            setInternalLaneViewport({
-              scrollTopPx: Number(event.currentTarget.value),
-            })
+            commitLaneViewport({ scrollTopPx: Number(event.currentTarget.value) }, "user")
           }
         />
       ) : null}
