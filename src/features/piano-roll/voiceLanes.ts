@@ -3,7 +3,7 @@ import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { tickToX } from "./coordinates";
 
 export const VOICE_LANE_LABEL_WIDTH = 96;
-const MIN_LANE_HEIGHT = 36;
+export const MIN_VOICE_LANE_HEIGHT = 36;
 const LANE_PADDING_Y = 6;
 const MIN_NOTE_HEIGHT = 5;
 const MAX_NOTE_HEIGHT = 12;
@@ -32,7 +32,7 @@ export function buildVoiceLaneLayout(
     return [];
   }
 
-  const laneHeight = Math.max(MIN_LANE_HEIGHT, viewportHeight / voices.length);
+  const laneHeight = Math.max(MIN_VOICE_LANE_HEIGHT, viewportHeight / voices.length);
   return voices.map((voice, index) => ({
     voiceId: voice.id,
     label: voice.label,
