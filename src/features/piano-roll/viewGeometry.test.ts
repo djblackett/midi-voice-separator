@@ -10,6 +10,8 @@ import {
   notesInLassoPathForView,
   PIANO_VIEW_CAPABILITIES,
   PIANO_VIEW_GUTTER_WIDTH,
+  resolveViewCapabilities,
+  VOICE_LANE_VIEW_CAPABILITIES,
   type ScreenRect,
   type ViewGeometry,
 } from "./viewGeometry";
@@ -125,6 +127,11 @@ function geometryWithRects(
 }
 
 describe("view geometry adapters", () => {
+  it("resolves the capability matrix from the view kind", () => {
+    expect(resolveViewCapabilities("piano")).toBe(PIANO_VIEW_CAPABILITIES);
+    expect(resolveViewCapabilities("voice-lanes")).toBe(VOICE_LANE_VIEW_CAPABILITIES);
+  });
+
   it("binds piano metadata and target capabilities", () => {
     const geometry = createPianoViewGeometry(project, pianoViewport);
 

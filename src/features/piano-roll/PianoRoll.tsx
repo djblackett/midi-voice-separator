@@ -21,12 +21,7 @@ import {
   type MarqueeRect,
   type TickWindow,
 } from "./drawPianoRoll";
-import {
-  hitTestPianoRollNote,
-  hitTestPianoRollNotesInRect,
-  hitTestVoiceLaneNote,
-  type PianoRollPoint,
-} from "./hitTest";
+import { hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
 import { shouldPaintNote } from "./paint";
 import {
   DEFAULT_BRUSH_RADIUS,
@@ -63,7 +58,11 @@ import {
   zoomAt,
   type ViewportWindow,
 } from "./viewportWindow";
-import { createPianoViewGeometry } from "./viewGeometry";
+import {
+  createPianoViewGeometry,
+  createVoiceLaneViewGeometry,
+  hitTestNoteAtPoint,
+} from "./viewGeometry";
 
 const MARQUEE_THRESHOLD_PX = 4;
 const ZOOM_FACTOR_PER_WHEEL_NOTCH = 1.2;
@@ -308,10 +307,15 @@ export function PianoRoll({
     () => buildViewport(project, canvasSize.width, canvasSize.height, tickRange, pitchRange),
     [project, canvasSize, tickRange, pitchRange],
   );
-  const pianoGeometry = useMemo(
-    () => createPianoViewGeometry(project, viewport),
-    [project, viewport],
+  const viewGeometry = useMemo(
+    () =>
+      viewMode === "voice-lanes"
+        ? createVoiceLaneViewGeometry(project, viewport)
+        : createPianoViewGeometry(project, viewport),
+    [viewMode, project, viewport],
   );
+  const isPitchRangeGestureActive =
+    viewGeometry.capabilities.pitchRangeMarkers && interactionMode === "range" && !readOnly;
 
   // Bring a selected note/group (review stepping, conflict jumps) into
   // view, panning only — the user's chosen zoom level is left alone.
@@ -373,6 +377,10 @@ export function PianoRoll({
       additive: dragStartRef.current.additive,
     });
   }, [marqueePreviewIds, selectedNoteIds]);
+
+  function hitTestActiveNote(point: PianoRollPoint): MidiNote | null {
+    return hitTestNoteAtPoint(point, interactionProject?.notes ?? [], viewGeometry);
+  }
 
   const contextNote = useMemo(() => {
     if (!contextMenu?.noteId || !interactionProject) {
@@ -502,7 +510,7 @@ export function PianoRoll({
     if (!activeVoiceId || !interactionProject) {
       return;
     }
-    const note = hitTestPianoRollNote(point, interactionProject, viewport);
+    const note = hitTestActiveNote(point);
     if (!note || paintedNoteIdsRef.current.has(note.id)) {
       return;
     }
@@ -651,7 +659,7 @@ export function PianoRoll({
           project?.ppq ?? 480,
           currentPlaybackTick,
           timeRangeDraft,
-          pianoGeometry.gutterWidth,
+          viewGeometry.gutterWidth,
         );
       }
     }
@@ -693,6 +701,7 @@ export function PianoRoll({
     conflictNoteIds,
     timeRangeDraft,
     viewMode,
+    viewGeometry,
   ]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -702,7 +711,7 @@ export function PianoRoll({
 
   function tickFromRulerEvent(event: ReactPointerEvent<HTMLCanvasElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const gutterWidth = pianoGeometry.gutterWidth;
+    const gutterWidth = viewGeometry.gutterWidth;
     const rollViewport = {
       ...viewport,
       width: Math.max(1, viewport.width - gutterWidth),
@@ -773,7 +782,7 @@ export function PianoRoll({
     }
   }
   function markerIdFromPoint(point: { x: number; y: number }): string | null {
-    if (point.x > pianoGeometry.gutterWidth || pitchMarkers.length === 0) {
+    if (point.x > viewGeometry.gutterWidth || pitchMarkers.length === 0) {
       return null;
     }
 
@@ -809,11 +818,11 @@ export function PianoRoll({
     setHoveredNote(null);
     setContextMenu(null);
 
-    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
+    if (isPitchRangeGestureActive) {
       const point = pointFromEvent(event);
       const markerId =
         markerIdFromPoint(point) ??
-        (point.x <= pianoGeometry.gutterWidth ? (pitchMarkers[0]?.id ?? null) : null);
+        (point.x <= viewGeometry.gutterWidth ? (pitchMarkers[0]?.id ?? null) : null);
       draggedMarkerIdRef.current = markerId;
       if (markerId) {
         updateMarkerPitch(markerId, point);
@@ -837,7 +846,7 @@ export function PianoRoll({
       } else if (paintTool === "wand") {
         stampWand(point);
       } else {
-        const note = hitTestPianoRollNote(point, interactionProject, viewport);
+        const note = hitTestActiveNote(point);
         if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
           paintedNoteIdsRef.current.set(note.id, activeVoiceId);
           redrawCanvas();
@@ -851,7 +860,7 @@ export function PianoRoll({
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
+    if (isPitchRangeGestureActive) {
       const markerId = draggedMarkerIdRef.current;
       if (markerId) {
         updateMarkerPitch(markerId, pointFromEvent(event));
@@ -879,7 +888,7 @@ export function PianoRoll({
           updateLassoPreview();
         }
       } else {
-        const note = hitTestPianoRollNote(point, interactionProject, viewport);
+        const note = hitTestActiveNote(point);
         if (
           note &&
           shouldPaintNote(note, activeVoiceId, new Set(paintedNoteIdsRef.current.keys()))
@@ -895,10 +904,7 @@ export function PianoRoll({
     const dragStart = dragStartRef.current;
     if (!dragStart) {
       const point = pointFromEvent(event);
-      const note =
-        viewMode === "voice-lanes"
-          ? hitTestVoiceLaneNote(point, interactionProject, viewport)
-          : hitTestPianoRollNote(point, interactionProject, viewport);
+      const note = hitTestActiveNote(point);
       setHoveredNote(note ? { note, point } : null);
       return;
     }
@@ -921,7 +927,7 @@ export function PianoRoll({
       return;
     }
 
-    if (viewMode === "piano" && interactionMode === "range" && !readOnly) {
+    if (isPitchRangeGestureActive) {
       draggedMarkerIdRef.current = null;
       return;
     }
@@ -954,7 +960,7 @@ export function PianoRoll({
     const point = pointFromEvent(event);
 
     if (viewMode === "voice-lanes") {
-      const note = hitTestVoiceLaneNote(point, interactionProject, viewport);
+      const note = hitTestActiveNote(point);
       if (note) {
         auditionThrottled([note]);
       }
@@ -984,7 +990,7 @@ export function PianoRoll({
         }),
       );
     } else {
-      const note = hitTestPianoRollNote(point, interactionProject, viewport);
+      const note = hitTestActiveNote(point);
       if (note) {
         auditionThrottled([note]);
       }
@@ -1014,7 +1020,7 @@ export function PianoRoll({
       return;
     }
     const point = pointFromMouseEvent(event);
-    const note = hitTestPianoRollNote(point, interactionProject, viewport);
+    const note = hitTestActiveNote(point);
     if (!note && selectedNoteIds.size === 0) {
       setContextMenu(null);
       return;
@@ -1027,7 +1033,7 @@ export function PianoRoll({
     if (viewMode !== "piano" || interactionMode !== "select" || !interactionProject) {
       return;
     }
-    const note = hitTestPianoRollNote(pointFromMouseEvent(event), interactionProject, viewport);
+    const note = hitTestActiveNote(pointFromMouseEvent(event));
     if (!note) {
       return;
     }
@@ -1136,7 +1142,7 @@ export function PianoRoll({
 
       if (isModified) {
         const bounds = targetCanvas.getBoundingClientRect();
-        const gutterWidth = pianoGeometry.gutterWidth;
+        const gutterWidth = viewGeometry.gutterWidth;
         const x = event.clientX - bounds.left - gutterWidth;
         const rollViewport = {
           ...viewport,
@@ -1169,7 +1175,7 @@ export function PianoRoll({
 
       const range = visibleTickRange(durationTicks, viewportWindow);
       const windowTicks = range.endTick - range.startTick;
-      const rollWidth = Math.max(1, viewport.width - pianoGeometry.gutterWidth);
+      const rollWidth = Math.max(1, viewport.width - viewGeometry.gutterWidth);
       const delta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
       const panDeltaTicks = (delta / rollWidth) * windowTicks;
       setViewportWindow((current) => panBy(current, panDeltaTicks));
@@ -1186,7 +1192,7 @@ export function PianoRoll({
     isPaintCursorActive,
     paintTool,
     brushRadius,
-    pianoGeometry,
+    viewGeometry,
   ]);
 
   function handleResetZoom() {
@@ -1233,7 +1239,7 @@ export function PianoRoll({
       {minimap ? (
         <div
           className="piano-roll-minimap"
-          style={{ left: pianoGeometry.gutterWidth }}
+          style={{ left: viewGeometry.gutterWidth }}
           onPointerDown={handleMinimapClick}
         >
           <div

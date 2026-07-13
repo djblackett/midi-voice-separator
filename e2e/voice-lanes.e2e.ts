@@ -101,6 +101,41 @@ async function switchToVoiceLanes(page: Page) {
   await expect(lanesButton).toHaveAttribute("aria-pressed", "true");
 }
 
+async function dragLaneRulerRange(page: Page, startTick: number, endTick: number) {
+  const ruler = page.locator(".piano-roll-time-ruler");
+  const box = await ruler.boundingBox();
+  if (!box) {
+    throw new Error("Time ruler has no bounding box");
+  }
+  const rollWidth = box.width - VOICE_LANE_LABEL_WIDTH;
+  const startX = VOICE_LANE_LABEL_WIDTH + (startTick / laneProject.durationTicks) * rollWidth;
+  const endX = VOICE_LANE_LABEL_WIDTH + (endTick / laneProject.durationTicks) * rollWidth;
+
+  await ruler.evaluate(
+    (element, payload) => {
+      const target = element as HTMLCanvasElement;
+      const bounds = target.getBoundingClientRect();
+      const y = bounds.height / 2;
+      const pointer = (type: string, x: number, buttons: number) =>
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            button: 0,
+            buttons,
+            pointerId: 1,
+            clientX: bounds.left + x,
+            clientY: bounds.top + y,
+          }),
+        );
+
+      pointer("pointerdown", payload.startX, 1);
+      pointer("pointermove", payload.endX, 1);
+      pointer("pointerup", payload.endX, 0);
+    },
+    { startX, endX },
+  );
+}
+
 test.describe("voice lane view", () => {
   test("the view toggle switches to read-only voice lanes and back", async ({ page }) => {
     await installFakeTauri(page, { importedProject: laneProject });
@@ -147,5 +182,49 @@ test.describe("voice lane view", () => {
     const details = page.locator(".selection-details dl");
     await expect(details).toContainText("36");
     await expect(details).toContainText("percussion");
+  });
+
+  test("ruler, zoom anchor, and minimap use the 96px lane gutter", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: laneProject });
+    await page.goto("/");
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+
+    await expect(page.locator(".piano-roll-minimap")).toHaveCSS(
+      "left",
+      `${VOICE_LANE_LABEL_WIDTH}px`,
+    );
+
+    const canvas = page.getByLabel("Piano roll note visualization");
+    await canvas.evaluate((element, gutterWidth) => {
+      const target = element as HTMLCanvasElement;
+      const bounds = target.getBoundingClientRect();
+      target.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          deltaY: -100,
+          clientX: bounds.left + gutterWidth,
+          clientY: bounds.top + bounds.height / 2,
+        }),
+      );
+    }, VOICE_LANE_LABEL_WIDTH);
+
+    await expect(page.getByRole("button", { name: /Reset zoom/ })).toBeVisible();
+    await expect
+      .poll(async () => {
+        return page
+          .locator(".piano-roll-minimap-window")
+          .evaluate((element) => Number.parseFloat((element as HTMLElement).style.left));
+      })
+      .toBeCloseTo(0, 5);
+
+    await page.getByRole("button", { name: /Reset zoom/ }).click();
+    await clickNoteInLaneView(page, leadNote);
+    await expect(page.locator(".selection-details dl")).toContainText("voice-2");
+
+    await dragLaneRulerRange(page, 450, 470);
+    await expect(page.locator(".selection-details")).toContainText("No note selected");
   });
 });

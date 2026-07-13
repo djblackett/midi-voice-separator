@@ -97,6 +97,10 @@ export const VOICE_LANE_VIEW_CAPABILITIES: ViewCapabilities = {
   verticalAxis: "lanes",
 };
 
+export function resolveViewCapabilities(kind: EditorViewKind): ViewCapabilities {
+  return kind === "voice-lanes" ? VOICE_LANE_VIEW_CAPABILITIES : PIANO_VIEW_CAPABILITIES;
+}
+
 function contentViewport(viewport: PianoRollViewport, gutterWidth: number): PianoRollViewport {
   return {
     ...viewport,
@@ -154,7 +158,7 @@ export function createPianoViewGeometry(
   return {
     kind: "piano",
     gutterWidth: PIANO_VIEW_GUTTER_WIDTH,
-    capabilities: PIANO_VIEW_CAPABILITIES,
+    capabilities: resolveViewCapabilities("piano"),
     laneRows: null,
     noteRect(note) {
       const left = PIANO_VIEW_GUTTER_WIDTH + tickToX(note.startTick, rollViewport);
@@ -203,7 +207,7 @@ export function createVoiceLaneViewGeometry(
   return {
     kind: "voice-lanes",
     gutterWidth: VOICE_LANE_LABEL_WIDTH,
-    capabilities: VOICE_LANE_VIEW_CAPABILITIES,
+    capabilities: resolveViewCapabilities("voice-lanes"),
     laneRows,
     noteRect(note) {
       const lane = findVoiceLane(laneRows, note.voiceId);
