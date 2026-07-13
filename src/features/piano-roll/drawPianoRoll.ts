@@ -6,13 +6,11 @@ import {
 import type { PitchMarker } from "../../domain/midi/rangeRules";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
-import { createPianoViewGeometry, PIANO_VIEW_GUTTER_WIDTH } from "./viewGeometry";
 import {
-  buildVoiceLaneLayout,
-  findVoiceLane,
-  voiceLaneNoteRect,
-  VOICE_LANE_LABEL_WIDTH,
-} from "./voiceLanes";
+  createPianoViewGeometry,
+  PIANO_VIEW_GUTTER_WIDTH,
+  type ViewGeometry,
+} from "./viewGeometry";
 
 /** @deprecated Prefer the active view geometry's `gutterWidth`. */
 export { PIANO_VIEW_GUTTER_WIDTH as PIANO_ROLL_LABEL_WIDTH } from "./viewGeometry";
@@ -508,6 +506,7 @@ export function drawVoiceLanes(
   context: CanvasRenderingContext2D,
   project: MidiProject | null,
   viewport: PianoRollViewport,
+  geometry: ViewGeometry,
   selectedNoteIds: ReadonlySet<string> = new Set(),
   soloVoiceId: string | null = null,
   paintPreview: ReadonlyMap<string, string> = new Map(),
@@ -518,6 +517,11 @@ export function drawVoiceLanes(
   confidenceHeatmap: boolean = false,
   presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
 ): void {
+  if (geometry.kind !== "voice-lanes" || geometry.laneRows === null) {
+    throw new Error("drawVoiceLanes requires voice-lane geometry");
+  }
+
+  const gutterWidth = geometry.gutterWidth;
   context.clearRect(0, 0, viewport.width, viewport.height);
   context.fillStyle = "#111827";
   context.fillRect(0, 0, viewport.width, viewport.height);
@@ -525,41 +529,49 @@ export function drawVoiceLanes(
   if (!project || project.notes.length === 0) {
     context.fillStyle = "#94a3b8";
     context.font = "14px system-ui";
-    context.fillText("No notes loaded", VOICE_LANE_LABEL_WIDTH + 24, 40);
+    context.fillText("No notes loaded", gutterWidth + 24, 40);
     return;
   }
 
-  const lanes = buildVoiceLaneLayout(project.voices, viewport.height);
+  const lanes = geometry.laneRows;
   const rollViewport = {
     ...viewport,
-    width: Math.max(1, viewport.width - VOICE_LANE_LABEL_WIDTH),
+    width: Math.max(1, viewport.width - gutterWidth),
   };
 
   context.fillStyle = "#0f172a";
-  context.fillRect(0, 0, VOICE_LANE_LABEL_WIDTH, viewport.height);
+  context.fillRect(0, 0, gutterWidth, viewport.height);
   context.strokeStyle = "#475569";
   context.beginPath();
-  context.moveTo(VOICE_LANE_LABEL_WIDTH, 0);
-  context.lineTo(VOICE_LANE_LABEL_WIDTH, viewport.height);
+  context.moveTo(gutterWidth, 0);
+  context.lineTo(gutterWidth, viewport.height);
   context.stroke();
 
   for (const lane of lanes) {
-    context.fillStyle = (lane.y / Math.max(1, lane.height)) % 2 === 0 ? "#111827" : "#0f172a";
-    context.fillRect(VOICE_LANE_LABEL_WIDTH, lane.y, rollViewport.width, lane.height);
-    context.strokeStyle = "#263244";
-    context.beginPath();
-    context.moveTo(0, lane.y);
-    context.lineTo(viewport.width, lane.y);
-    context.stroke();
-    context.fillStyle = "#cbd5e1";
-    context.font = "12px system-ui";
-    context.fillText(lane.label, 8, lane.y + Math.min(18, lane.height - 8));
+    const visibleTop = Math.max(0, lane.y);
+    const visibleBottom = Math.min(viewport.height, lane.y + lane.height);
+    const visibleHeight = visibleBottom - visibleTop;
+    context.fillStyle = lane.rowIndex % 2 === 0 ? "#111827" : "#0f172a";
+    context.fillRect(gutterWidth, visibleTop, rollViewport.width, visibleHeight);
+    if (lane.y >= 0) {
+      context.strokeStyle = "#263244";
+      context.beginPath();
+      context.moveTo(0, lane.y);
+      context.lineTo(viewport.width, lane.y);
+      context.stroke();
+    }
+    const labelBaseline = Math.min(visibleBottom - 4, visibleTop + 18);
+    if (labelBaseline >= visibleTop + 8) {
+      context.fillStyle = "#cbd5e1";
+      context.font = "12px system-ui";
+      context.fillText(lane.label, 8, labelBaseline);
+    }
   }
 
   const beatTicks = Math.max(1, project.ppq);
   const firstBeatTick = Math.floor(rollViewport.startTick / beatTicks) * beatTicks;
   for (let tick = firstBeatTick; tick <= rollViewport.endTick; tick += beatTicks) {
-    const x = VOICE_LANE_LABEL_WIDTH + tickToX(tick, rollViewport);
+    const x = gutterWidth + tickToX(tick, rollViewport);
     context.strokeStyle = tick % (beatTicks * 4) === 0 ? "#475569" : "#263244";
     context.beginPath();
     context.moveTo(x, 0);
@@ -571,11 +583,12 @@ export function drawVoiceLanes(
     .filter((note) => !onlyChangedNotes || changedNoteIds.has(note.id))
     .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
   for (const note of sortedNotes) {
-    const lane = findVoiceLane(lanes, note.voiceId);
-    if (!lane) {
+    const rect = geometry.noteRect(note);
+    if (!rect) {
       continue;
     }
-    const rect = voiceLaneNoteRect(note, lane, viewport);
+    const width = rect.right - rect.left;
+    const height = rect.bottom - rect.top;
     const style = resolveNoteRenderStyle(note, {
       selectedNoteIds,
       soloVoiceId,
@@ -588,30 +601,31 @@ export function drawVoiceLanes(
 
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
-    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+    context.fillRect(rect.left, rect.top, width, height);
     context.strokeStyle = style.strokeColor;
     context.lineWidth = style.isSelected ? 3 : 1;
     if (style.showLowConfidenceDash) {
       context.setLineDash([3, 2]);
     }
-    context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    context.strokeRect(rect.left, rect.top, width, height);
     context.setLineDash([]);
     context.lineWidth = 1;
 
     if (style.showChangedEdge) {
       context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
-      context.fillRect(rect.x, rect.y, Math.min(CHANGE_EDGE_WIDTH_PX, rect.width), rect.height);
+      context.fillRect(rect.left, rect.top, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
     }
 
     context.globalAlpha = 1;
   }
 
-  drawLanePlayhead(context, rollViewport, viewport.height, playheadTick);
+  drawLanePlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
 }
 
 function drawLanePlayhead(
   context: CanvasRenderingContext2D,
   rollViewport: PianoRollViewport,
+  gutterWidth: number,
   height: number,
   playheadTick: number | null,
 ): void {
@@ -623,7 +637,7 @@ function drawLanePlayhead(
     return;
   }
 
-  const x = VOICE_LANE_LABEL_WIDTH + tickToX(playheadTick, rollViewport);
+  const x = gutterWidth + tickToX(playheadTick, rollViewport);
   context.globalAlpha = 1;
   context.strokeStyle = "#f8fafc";
   context.lineWidth = 2;

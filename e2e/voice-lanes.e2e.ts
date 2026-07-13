@@ -55,6 +55,26 @@ const laneProject = buildFixtureProject(
   { durationTicks: 960 },
 );
 
+const denseVoiceCount = 16;
+const denseVoices = Array.from({ length: denseVoiceCount }, (_, index) =>
+  voice(`dense-voice-${index + 1}`, `Dense voice ${index + 1}`, 1, 48 + index, 48 + index),
+);
+const denseNotes = denseVoices.map((candidate, index) =>
+  note(`dense-note-${index + 1}`, candidate.id, 48 + index, 120 + index * 12),
+);
+const denseLaneProject = buildFixtureProject(denseNotes, denseVoices, {
+  fileName: "dense-lanes.mid",
+  durationTicks: 960,
+});
+const denseFinalNote: LaneFixtureNote = {
+  pitch: 48 + denseVoiceCount - 1,
+  startTick: 120 + (denseVoiceCount - 1) * 12,
+  endTick: 240 + (denseVoiceCount - 1) * 12,
+  voiceIndex: denseVoiceCount - 1,
+  lowestPitch: 48 + denseVoiceCount - 1,
+  highestPitch: 48 + denseVoiceCount - 1,
+};
+
 async function importFixture(page: Page) {
   await page.getByRole("button", { name: "Import MIDI" }).click();
   await page.waitForSelector(".piano-roll-toolbar");
@@ -65,9 +85,10 @@ function laneNoteCenter(
   canvasBox: { width: number; height: number },
   durationTicks: number,
   voiceCount: number,
+  scrollTopPx = 0,
 ) {
   const laneHeight = Math.max(36, canvasBox.height / voiceCount);
-  const laneY = target.voiceIndex * laneHeight;
+  const laneY = target.voiceIndex * laneHeight - scrollTopPx;
   const innerHeight = Math.max(1, laneHeight - LANE_PADDING_Y * 2);
   const pitchSpan = Math.max(1, target.highestPitch - target.lowestPitch + 1);
   const noteHeight = Math.min(MAX_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, innerHeight / pitchSpan));
@@ -81,7 +102,12 @@ function laneNoteCenter(
   return { x: (x + endX) / 2, y: y + noteHeight / 2 };
 }
 
-async function clickNoteInLaneView(page: Page, target: LaneFixtureNote) {
+async function clickNoteInLaneView(
+  page: Page,
+  target: LaneFixtureNote,
+  fixtureProject = laneProject,
+  scrollTopPx = 0,
+) {
   // .first(): the interactive roll canvas — the shell's second canvas is
   // the pointer-transparent paint-cursor overlay.
   const canvas = page.getByLabel("Piano roll note visualization");
@@ -89,7 +115,13 @@ async function clickNoteInLaneView(page: Page, target: LaneFixtureNote) {
   if (!box) {
     throw new Error("Piano roll canvas has no bounding box");
   }
-  const local = laneNoteCenter(target, box, laneProject.durationTicks, laneProject.voices.length);
+  const local = laneNoteCenter(
+    target,
+    box,
+    fixtureProject.durationTicks,
+    fixtureProject.voices.length,
+    scrollTopPx,
+  );
   await page.mouse.move(box.x + local.x, box.y + local.y);
   await page.mouse.down();
   await page.mouse.up();
@@ -226,5 +258,58 @@ test.describe("voice lane view", () => {
 
     await dragLaneRulerRange(page, 450, 470);
     await expect(page.locator(".selection-details")).toContainText("No note selected");
+  });
+
+  test("dense lanes scroll, reveal, and reset through pointer and keyboard navigation", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, { importedProject: denseLaneProject });
+    await page.goto("/");
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+
+    const slider = page.getByRole("slider", { name: "Voice lane vertical scroll" });
+    await expect(slider).toBeEnabled();
+    await expect(slider).toHaveAttribute("min", "0");
+    await expect(slider).toHaveAttribute("aria-valuetext", /lane 1 of 16 at top/);
+    const maxScrollTopPx = Number(await slider.getAttribute("max"));
+    expect(maxScrollTopPx).toBeGreaterThan(0);
+
+    const canvas = page.getByLabel("Piano roll note visualization");
+    await canvas.evaluate((element) => {
+      const target = element as HTMLCanvasElement;
+      const bounds = target.getBoundingClientRect();
+      target.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          shiftKey: true,
+          deltaY: 72,
+          clientX: bounds.left + bounds.width / 2,
+          clientY: bounds.top + bounds.height / 2,
+        }),
+      );
+    });
+    await expect.poll(async () => Number(await slider.inputValue())).toBeGreaterThan(0);
+
+    await slider.focus();
+    await slider.press("Home");
+    await expect(slider).toHaveValue("0");
+    await slider.press("ArrowRight");
+    await expect(slider).toHaveValue("1");
+    await slider.press("Home");
+    await slider.press("End");
+    await expect(slider).toHaveValue(String(maxScrollTopPx));
+
+    const finalScrollTopPx = Number(await slider.inputValue());
+    await clickNoteInLaneView(page, denseFinalNote, denseLaneProject, finalScrollTopPx);
+    await expect(page.locator(".selection-details dl")).toContainText("dense-voice-16");
+
+    await page.getByRole("button", { name: /Reset view/ }).click();
+    await expect(slider).toHaveValue("0");
+
+    await page.getByRole("button", { name: "Select notes in Dense voice 16", exact: true }).click();
+    await expect.poll(async () => Number(await slider.inputValue())).toBeGreaterThan(0);
+    await expect(page.locator(".selection-details dl")).toContainText("dense-voice-16");
   });
 });

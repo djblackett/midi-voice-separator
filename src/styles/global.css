@@ -1464,6 +1464,29 @@ kbd {
   pointer-events: none;
 }
 
+.voice-lane-scroll-control {
+  position: absolute;
+  top: 34px;
+  right: 5px;
+  bottom: 10px;
+  z-index: 2;
+  width: 16px;
+  height: calc(100% - 44px);
+  margin: 0;
+  accent-color: #38bdf8;
+  direction: ltr;
+  writing-mode: vertical-lr;
+}
+
+.voice-lane-scroll-control:disabled {
+  opacity: 0.35;
+}
+
+.piano-roll-shell.voice-lane-view .piano-roll-reset-zoom,
+.piano-roll-shell.voice-lane-view .piano-roll-legend {
+  right: 28px;
+}
+
 /* Full-viewport click-away layer under the context menu; also swallows
    scrolls so the menu can't drift away from the notes it targets. */
 .piano-roll-context-backdrop {

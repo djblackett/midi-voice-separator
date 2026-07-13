@@ -112,6 +112,41 @@ const laneViewport: PianoRollViewport = {
   highestPitch: 76,
 };
 
+function denseLaneProject(voiceCount = 6): MidiProject {
+  const voices = Array.from({ length: voiceCount }, (_, index) =>
+    voice({
+      id: `voice-${index + 1}`,
+      label: `Voice ${index + 1}`,
+      noteCount: 1,
+      lowestPitch: 60,
+      highestPitch: 60,
+    }),
+  );
+  const notes = voices.map((candidate, index) =>
+    note({
+      id: `dense-note-${index + 1}`,
+      voiceId: candidate.id,
+      pitch: 60,
+      startTick: 100,
+      endTick: 200,
+      durationTicks: 100,
+    }),
+  );
+  return {
+    ...project,
+    voices,
+    notes,
+    separationSummary: { ...project.separationSummary, voiceCount },
+  };
+}
+
+const denseLaneViewport: PianoRollViewport = {
+  ...laneViewport,
+  height: 72,
+  lowestPitch: 60,
+  highestPitch: 60,
+};
+
 function geometryWithRects(
   rectForNote: (candidate: MidiNote) => ScreenRect | null,
   gutterWidth = 10,
@@ -158,8 +193,8 @@ describe("view geometry adapters", () => {
     expect(geometry.kind).toBe("voice-lanes");
     expect(geometry.gutterWidth).toBe(96);
     expect(geometry.laneRows).toMatchObject([
-      { voiceId: "voice-1", y: 0, height: 100 },
-      { voiceId: "voice-2", y: 100, height: 100 },
+      { rowIndex: 0, voiceId: "voice-1", y: 0, height: 100 },
+      { rowIndex: 1, voiceId: "voice-2", y: 100, height: 100 },
     ]);
     expect(geometry.capabilities).toEqual({
       clickSelection: true,
@@ -175,14 +210,19 @@ describe("view geometry adapters", () => {
     });
   });
 
-  it("applies an optional lane scroll offset without changing row order", () => {
-    const geometry = createVoiceLaneViewGeometry(project, laneViewport, { scrollTopPx: 40 });
+  it("exposes only rows intersecting a resolved scrolled viewport", () => {
+    const denseProject = denseLaneProject();
+    const geometry = createVoiceLaneViewGeometry(denseProject, denseLaneViewport, {
+      laneHeight: 36,
+      scrollTopPx: 36,
+    });
 
     expect(geometry.laneRows).toMatchObject([
-      { voiceId: "voice-1", y: -40, height: 100 },
-      { voiceId: "voice-2", y: 60, height: 100 },
+      { rowIndex: 1, voiceId: "voice-2", y: 0, height: 36 },
+      { rowIndex: 2, voiceId: "voice-3", y: 36, height: 36 },
     ]);
-    expect(geometry.noteRect(highLaneNote)?.top).toBe(66);
+    expect(geometry.noteRect(denseProject.notes[0])).toBeNull();
+    expect(geometry.noteRect(denseProject.notes[1])?.top).toBe(6);
   });
 
   it("creates empty lane layout and query-safe adapters when no project is loaded", () => {
@@ -248,15 +288,30 @@ describe("canonical note rectangles", () => {
       lowestPitch: 64,
       highestPitch: 60,
     };
-    const rects = [
-      createPianoViewGeometry(project, degenerateViewport).noteRect(shortNote),
-      createVoiceLaneViewGeometry(project, degenerateViewport).noteRect(shortNote),
-    ];
+    const pianoRect = createPianoViewGeometry(project, degenerateViewport).noteRect(shortNote);
+    const laneRect = createVoiceLaneViewGeometry(project, degenerateViewport).noteRect(shortNote);
 
-    for (const rect of rects) {
-      expect(rect).not.toBeNull();
-      expect(Object.values(rect ?? {}).every(Number.isFinite)).toBe(true);
-    }
+    expect(pianoRect).not.toBeNull();
+    expect(Object.values(pianoRect ?? {}).every(Number.isFinite)).toBe(true);
+    expect(laneRect).toBeNull();
+  });
+
+  it("clips notes in partial top and bottom lane rows and rejects offscreen notes", () => {
+    const denseProject = denseLaneProject();
+    const geometry = createVoiceLaneViewGeometry(denseProject, denseLaneViewport, {
+      laneHeight: 36,
+      scrollTopPx: 10,
+    });
+
+    expect(geometry.laneRows?.map((lane) => lane.voiceId)).toEqual([
+      "voice-1",
+      "voice-2",
+      "voice-3",
+    ]);
+    expect(geometry.noteRect(denseProject.notes[0])).toMatchObject({ top: 0, bottom: 8 });
+    expect(geometry.noteRect(denseProject.notes[2])).toMatchObject({ top: 68, bottom: 72 });
+    expect(geometry.noteRect(denseProject.notes[3])).toBeNull();
+    expect(hitTestNoteAtPoint({ x: 200, y: 70 }, [denseProject.notes[3]], geometry)).toBeNull();
   });
 
   it("clips partially visible notes to each gutter and drops fully hidden notes", () => {
@@ -658,6 +713,23 @@ describe("view reveal targets", () => {
       startTick: 100,
       endTick: 200,
       vertical: { kind: "lanes", voiceIds: ["voice-1"] },
+    });
+  });
+
+  it("returns reveal targets for voices outside the visible lane rows", () => {
+    const denseProject = denseLaneProject();
+    const geometry = createVoiceLaneViewGeometry(denseProject, denseLaneViewport, {
+      laneHeight: 36,
+      scrollTopPx: 0,
+    });
+    const finalNote = denseProject.notes[denseProject.notes.length - 1];
+
+    expect(geometry.laneRows?.some((lane) => lane.voiceId === "voice-6")).toBe(false);
+    expect(finalNote).toBeDefined();
+    expect(geometry.revealTarget(finalNote ? [finalNote] : [])).toEqual({
+      startTick: 100,
+      endTick: 200,
+      vertical: { kind: "lanes", voiceIds: ["voice-6"] },
     });
   });
 

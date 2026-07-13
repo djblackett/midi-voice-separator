@@ -2,6 +2,11 @@ import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
 import {
+  defaultLaneViewportWindow,
+  resolveLaneViewport,
+  type ResolvedLaneViewport,
+} from "./laneViewport";
+import {
   buildVoiceLaneLayout,
   findVoiceLane,
   type VoiceLane,
@@ -69,10 +74,7 @@ export interface ViewGeometry {
   revealTarget(notes: readonly MidiNote[]): ViewRevealTarget | null;
 }
 
-export interface VoiceLaneGeometryViewport {
-  /** Callers must resolve and clamp this offset before constructing geometry. */
-  readonly scrollTopPx?: number;
-}
+export type VoiceLaneGeometryViewport = Pick<ResolvedLaneViewport, "laneHeight" | "scrollTopPx">;
 
 const COMMON_CAPABILITIES = {
   clickSelection: true,
@@ -125,6 +127,18 @@ function gutterClippedRect(
     top,
     right,
     bottom: top + height,
+  };
+}
+
+function verticallyClippedRect(rect: ScreenRect | null, viewportHeight: number): ScreenRect | null {
+  if (!rect || rect.bottom <= 0 || rect.top >= viewportHeight) {
+    return null;
+  }
+
+  return {
+    ...rect,
+    top: Math.max(0, rect.top),
+    bottom: Math.min(viewportHeight, rect.bottom),
   };
 }
 
@@ -196,13 +210,16 @@ export function createPianoViewGeometry(
 export function createVoiceLaneViewGeometry(
   project: MidiProject | null,
   viewport: PianoRollViewport,
-  laneViewport: VoiceLaneGeometryViewport = {},
+  laneViewport?: VoiceLaneGeometryViewport,
 ): ViewGeometry {
-  const scrollTopPx = laneViewport.scrollTopPx ?? 0;
-  const laneRows = buildVoiceLaneLayout(project?.voices ?? [], viewport.height).map((lane) => ({
-    ...lane,
-    y: lane.y - scrollTopPx,
-  }));
+  const voices = project?.voices ?? [];
+  const resolvedLaneViewport =
+    laneViewport ??
+    resolveLaneViewport(defaultLaneViewportWindow(), voices.length, viewport.height);
+  const allLaneRows = buildVoiceLaneLayout(voices, viewport.height, resolvedLaneViewport);
+  const laneRows = allLaneRows.filter(
+    (lane) => lane.y < viewport.height && lane.y + lane.height > 0,
+  );
 
   return {
     kind: "voice-lanes",
@@ -216,20 +233,23 @@ export function createVoiceLaneViewGeometry(
       }
 
       const rect = voiceLaneNoteRect(note, lane, viewport);
-      return gutterClippedRect(rect.x, rect.y, rect.width, rect.height, VOICE_LANE_LABEL_WIDTH);
+      return verticallyClippedRect(
+        gutterClippedRect(rect.x, rect.y, rect.width, rect.height, VOICE_LANE_LABEL_WIDTH),
+        viewport.height,
+      );
     },
     revealTarget(notes) {
       const selectedVoiceIds = new Set(notes.map((note) => note.voiceId));
-      const voiceIds = laneRows
+      const voiceIds = allLaneRows
         .filter((lane) => selectedVoiceIds.has(lane.voiceId))
         .map((lane) => lane.voiceId);
       if (voiceIds.length === 0) {
         return null;
       }
 
-      const visibleVoiceIds = new Set(voiceIds);
-      const visibleNotes = notes.filter((note) => visibleVoiceIds.has(note.voiceId));
-      const bounds = temporalBounds(visibleNotes);
+      const knownVoiceIds = new Set(voiceIds);
+      const knownVoiceNotes = notes.filter((note) => knownVoiceIds.has(note.voiceId));
+      const bounds = temporalBounds(knownVoiceNotes);
       if (!bounds) {
         return null;
       }

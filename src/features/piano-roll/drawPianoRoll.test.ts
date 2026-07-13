@@ -13,7 +13,11 @@ import {
   resolveNoteRenderStyle,
   type NoteRenderContext,
 } from "./drawPianoRoll";
-import { PIANO_VIEW_GUTTER_WIDTH } from "./viewGeometry";
+import {
+  createVoiceLaneViewGeometry,
+  PIANO_VIEW_GUTTER_WIDTH,
+  type ViewGeometry,
+} from "./viewGeometry";
 
 describe("voice colors", () => {
   it("maps voice IDs to stable palette colors", () => {
@@ -346,6 +350,30 @@ function project(overrides: Partial<MidiProject> = {}): MidiProject {
     strategySuggestion: { strategy: "BALANCED", reason: "test fixture" },
     ...overrides,
   };
+}
+
+interface DrawVoiceLaneArgs {
+  geometry?: ViewGeometry;
+  soloVoiceId?: string | null;
+  playheadTick?: number | null;
+}
+
+function callDrawVoiceLanes(
+  context: CanvasRenderingContext2D,
+  midiProject: MidiProject | null,
+  args: DrawVoiceLaneArgs = {},
+  drawViewport: PianoRollViewport = viewport,
+): void {
+  drawVoiceLanes(
+    context,
+    midiProject,
+    drawViewport,
+    args.geometry ?? createVoiceLaneViewGeometry(midiProject, drawViewport),
+    undefined,
+    args.soloVoiceId,
+    undefined,
+    args.playheadTick,
+  );
 }
 
 interface DrawPianoRollArgs {
@@ -706,7 +734,7 @@ describe("drawVoiceLanes", () => {
   it("shows a placeholder and draws no notes when the project has no notes", () => {
     const context = createMockCanvasContext();
 
-    drawVoiceLanes(context, project({ notes: [] }), viewport);
+    callDrawVoiceLanes(context, project({ notes: [] }));
 
     expect(
       context.styledCalls.some(
@@ -719,15 +747,60 @@ describe("drawVoiceLanes", () => {
   it("draws one strokeRect per visible note across its voice's lane", () => {
     const context = createMockCanvasContext();
 
-    drawVoiceLanes(context, project(), viewport);
+    callDrawVoiceLanes(context, project());
 
     expect(context.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws only canonical visible rows and notes after lane scrolling", () => {
+    const context = createMockCanvasContext();
+    const voices = Array.from({ length: 5 }, (_, index) => ({
+      id: `voice-${index + 1}`,
+      label: `Voice ${index + 1}`,
+      noteCount: 1,
+      lowestPitch: 60,
+      highestPitch: 60,
+    }));
+    const notes = voices.map((candidate, index) =>
+      note({ id: `note-${index + 1}`, voiceId: candidate.id }),
+    );
+    const midiProject = project({ voices, notes });
+    const drawViewport = { ...viewport, height: 72 };
+    const geometry = createVoiceLaneViewGeometry(midiProject, drawViewport, {
+      laneHeight: 36,
+      scrollTopPx: 36,
+    });
+
+    callDrawVoiceLanes(context, midiProject, { geometry }, drawViewport);
+
+    const labels = context.styledCalls
+      .filter((call) => call.method === "fillText")
+      .map((call) => call.args[0]);
+    expect(labels).toEqual(["Voice 2", "Voice 3"]);
+    expect(context.strokeRect).toHaveBeenCalledTimes(2);
+    const visibleRect = geometry.noteRect(notes[1]);
+    expect(visibleRect).not.toBeNull();
+    expect(context.strokeRect).toHaveBeenCalledWith(
+      visibleRect?.left,
+      visibleRect?.top,
+      (visibleRect?.right ?? 0) - (visibleRect?.left ?? 0),
+      (visibleRect?.bottom ?? 0) - (visibleRect?.top ?? 0),
+    );
+    expect(
+      context.styledCalls.some(
+        (call) =>
+          call.method === "fillRect" &&
+          call.args[0] === geometry.gutterWidth &&
+          call.args[1] === 0 &&
+          call.fillStyle === "#0f172a",
+      ),
+    ).toBe(true);
   });
 
   it("skips a note whose voice has no matching lane", () => {
     const context = createMockCanvasContext();
 
-    drawVoiceLanes(context, project({ notes: [note({ voiceId: "voice-missing" })] }), viewport);
+    callDrawVoiceLanes(context, project({ notes: [note({ voiceId: "voice-missing" })] }));
 
     expect(context.strokeRect).not.toHaveBeenCalled();
   });
@@ -735,7 +808,7 @@ describe("drawVoiceLanes", () => {
   it("dims a note whose voice does not match the soloed voice", () => {
     const context = createMockCanvasContext();
 
-    drawVoiceLanes(context, project(), viewport, undefined, "voice-2");
+    callDrawVoiceLanes(context, project(), { soloVoiceId: "voice-2" });
 
     const noteFill = context.styledCalls.find(
       (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
@@ -745,14 +818,13 @@ describe("drawVoiceLanes", () => {
 
   it("draws a playhead line only when the tick is within the visible window", () => {
     const inRange = createMockCanvasContext();
-    // signature: (context, project, viewport, selectedNoteIds, soloVoiceId, paintPreview, playheadTick)
-    drawVoiceLanes(inRange, project(), viewport, undefined, null, undefined, 100);
+    callDrawVoiceLanes(inRange, project(), { playheadTick: 100 });
     expect(
       inRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
     ).toBe(true);
 
     const outOfRange = createMockCanvasContext();
-    drawVoiceLanes(outOfRange, project(), viewport, undefined, null, undefined, 5000);
+    callDrawVoiceLanes(outOfRange, project(), { playheadTick: 5000 });
     expect(
       outOfRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
     ).toBe(false);

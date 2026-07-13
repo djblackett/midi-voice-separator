@@ -9,6 +9,7 @@ const MIN_NOTE_HEIGHT = 5;
 const MAX_NOTE_HEIGHT = 12;
 
 export interface VoiceLane {
+  rowIndex: number;
   voiceId: string;
   label: string;
   y: number;
@@ -27,16 +28,23 @@ export interface VoiceLaneNoteRect {
 export function buildVoiceLaneLayout(
   voices: readonly MidiVoice[],
   viewportHeight: number,
+  viewportWindow?: {
+    readonly laneHeight: number;
+    readonly scrollTopPx: number;
+  },
 ): VoiceLane[] {
   if (voices.length === 0) {
     return [];
   }
 
-  const laneHeight = Math.max(MIN_VOICE_LANE_HEIGHT, viewportHeight / voices.length);
+  const laneHeight =
+    viewportWindow?.laneHeight ?? Math.max(MIN_VOICE_LANE_HEIGHT, viewportHeight / voices.length);
+  const scrollTopPx = viewportWindow?.scrollTopPx ?? 0;
   return voices.map((voice, index) => ({
+    rowIndex: index,
     voiceId: voice.id,
     label: voice.label,
-    y: index * laneHeight,
+    y: index * laneHeight - scrollTopPx,
     height: laneHeight,
     lowestPitch: voice.lowestPitch,
     highestPitch: voice.highestPitch,

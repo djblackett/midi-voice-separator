@@ -22,6 +22,15 @@ import {
   type TickWindow,
 } from "./drawPianoRoll";
 import { hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
+import {
+  defaultLaneViewportWindow,
+  laneViewportAnchor,
+  panLaneViewportBy,
+  reconcileLaneViewport,
+  resolveLaneViewport,
+  revealLaneVoices,
+  type LaneViewportContext,
+} from "./laneViewport";
 import { shouldPaintNote } from "./paint";
 import {
   DEFAULT_BRUSH_RADIUS,
@@ -181,6 +190,7 @@ export function PianoRoll({
   const [internalPitchViewport, setInternalPitchViewport] = useState<PitchViewportWindow>(
     defaultPitchViewportWindow(),
   );
+  const [internalLaneViewport, setInternalLaneViewport] = useState(defaultLaneViewportWindow);
   const viewportWindow = timeViewport ?? internalTimeViewport;
   const pitchViewportWindow = pitchViewport ?? internalPitchViewport;
   const setViewportWindow = useCallback(
@@ -214,6 +224,10 @@ export function PianoRoll({
     moved: boolean;
   } | null>(null);
   const lastDurationTicksRef = useRef<number | null>(null);
+  const previousLaneContextRef = useRef<{
+    projectKey: string | null;
+    context: LaneViewportContext;
+  } | null>(null);
   // Paint-cursor overlay state. All refs, not React state: the cursor and
   // an in-progress stroke update every pointer move, and the overlay
   // canvas is redrawn by its own requestAnimationFrame loop instead of
@@ -231,6 +245,25 @@ export function PianoRoll({
     () => ({ width: size.width, height: Math.max(1, size.height - TIME_RULER_HEIGHT) }),
     [size],
   );
+  const laneViewportContext = useMemo<LaneViewportContext>(
+    () => ({
+      voiceIds: project?.voices.map((voice) => voice.id) ?? [],
+      viewportHeight: canvasSize.height,
+    }),
+    [project?.voices, canvasSize.height],
+  );
+  const resolvedLaneViewport = useMemo(
+    () =>
+      resolveLaneViewport(
+        internalLaneViewport,
+        laneViewportContext.voiceIds.length,
+        laneViewportContext.viewportHeight,
+      ),
+    [internalLaneViewport, laneViewportContext],
+  );
+  const laneProjectKey = project
+    ? [project.fileName, project.durationTicks, project.ppq, project.trackCount].join("\u0000")
+    : null;
 
   // A brush sweep can stamp several notes per pointer sample; auditioning
   // every one would machine-gun. One blip per ~70ms keeps a swept run
@@ -277,6 +310,23 @@ export function PianoRoll({
     }
   }, [project?.durationTicks]);
 
+  // Lane scroll is pane presentation state. A new import starts at the top;
+  // resize and voice-order changes preserve the top semantic voice where
+  // possible, then clamp so removed rows cannot leave a blank viewport.
+  useEffect(() => {
+    const previous = previousLaneContextRef.current;
+    previousLaneContextRef.current = {
+      projectKey: laneProjectKey,
+      context: laneViewportContext,
+    };
+    setInternalLaneViewport((current) => {
+      if (!previous || previous.projectKey !== laneProjectKey) {
+        return current.scrollTopPx === 0 ? current : defaultLaneViewportWindow();
+      }
+      return reconcileLaneViewport(current, previous.context, laneViewportContext);
+    });
+  }, [laneProjectKey, laneViewportContext]);
+
   const interactionProject = useMemo(() => {
     if (!project || !onlyChangedNotes) {
       return project;
@@ -310,10 +360,12 @@ export function PianoRoll({
   const viewGeometry = useMemo(
     () =>
       viewMode === "voice-lanes"
-        ? createVoiceLaneViewGeometry(project, viewport)
+        ? createVoiceLaneViewGeometry(project, viewport, resolvedLaneViewport)
         : createPianoViewGeometry(project, viewport),
-    [viewMode, project, viewport],
+    [viewMode, project, viewport, resolvedLaneViewport],
   );
+  const viewGeometryRef = useRef(viewGeometry);
+  viewGeometryRef.current = viewGeometry;
   const isPitchRangeGestureActive =
     viewGeometry.capabilities.pitchRangeMarkers && interactionMode === "range" && !readOnly;
 
@@ -327,21 +379,20 @@ export function PianoRoll({
     if (notes.length === 0) {
       return;
     }
-    setViewportWindow((current) =>
-      panToReveal(current, project.durationTicks, {
-        startTick: Math.min(...notes.map((note) => note.startTick)),
-        endTick: Math.max(...notes.map((note) => note.endTick)),
-      }),
-    );
-    if (viewMode === "piano") {
-      setPitchViewportWindow((current) =>
-        panPitchToReveal(current, fullPitchSpan, {
-          lowestPitch: Math.min(...notes.map((note) => note.pitch)),
-          highestPitch: Math.max(...notes.map((note) => note.pitch)),
-        }),
+    const revealTarget = viewGeometryRef.current.revealTarget(notes);
+    if (!revealTarget) {
+      return;
+    }
+    setViewportWindow((current) => panToReveal(current, project.durationTicks, revealTarget));
+    const verticalTarget = revealTarget.vertical;
+    if (verticalTarget.kind === "pitch") {
+      setPitchViewportWindow((current) => panPitchToReveal(current, fullPitchSpan, verticalTarget));
+    } else {
+      setInternalLaneViewport((current) =>
+        revealLaneVoices(current, verticalTarget.voiceIds, laneViewportContext),
       );
     }
-  }, [selectedNoteIds, project, fullPitchSpan, viewMode]);
+  }, [selectedNoteIds, project, fullPitchSpan, viewMode, laneViewportContext]);
 
   // Page-follow the playhead during playback, panning only — never
   // changes zoom, and only while actually playing (a paused/stopped
@@ -408,6 +459,7 @@ export function PianoRoll({
         context,
         project,
         viewport,
+        viewGeometry,
         effectiveSelection,
         soloVoiceId,
         paintedNoteIdsRef.current,
@@ -1129,6 +1181,14 @@ export function PianoRoll({
 
       const isModified = event.ctrlKey || event.metaKey;
 
+      if (event.shiftKey && viewGeometry.capabilities.verticalAxis === "lanes") {
+        const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+        setInternalLaneViewport((current) =>
+          panLaneViewportBy(current, delta, laneViewportContext),
+        );
+        return;
+      }
+
       if (isModified && event.shiftKey) {
         const bounds = targetCanvas.getBoundingClientRect();
         const anchorPitch = yToPitch(event.clientY - bounds.top, viewport);
@@ -1193,21 +1253,40 @@ export function PianoRoll({
     paintTool,
     brushRadius,
     viewGeometry,
+    laneViewportContext,
   ]);
 
-  function handleResetZoom() {
+  function handleResetView() {
     setViewportWindow(defaultViewportWindow());
     setPitchViewportWindow(defaultPitchViewportWindow());
+    setInternalLaneViewport(defaultLaneViewportWindow());
   }
 
   const isHorizontallyZoomed = viewportWindow.zoomLevel > 1;
   const isVerticallyZoomed = pitchViewportWindow.zoomLevel > 1;
+  const isLaneScrolled = viewMode === "voice-lanes" && resolvedLaneViewport.scrollTopPx > 0;
   const resetZoomLabel =
     isHorizontallyZoomed && isVerticallyZoomed
       ? `H ${viewportWindow.zoomLevel.toFixed(1)}x · V ${pitchViewportWindow.zoomLevel.toFixed(1)}x`
       : isVerticallyZoomed
         ? `${pitchViewportWindow.zoomLevel.toFixed(1)}x`
         : `${viewportWindow.zoomLevel.toFixed(1)}x`;
+  const resetViewLabel = isLaneScrolled
+    ? isHorizontallyZoomed || isVerticallyZoomed
+      ? `Reset view (${resetZoomLabel} · lanes)`
+      : "Reset view (lanes)"
+    : `Reset zoom (${resetZoomLabel})`;
+  const laneAnchorVoiceId = laneViewportAnchor(
+    { scrollTopPx: resolvedLaneViewport.scrollTopPx },
+    laneViewportContext,
+  );
+  const laneAnchorIndex = laneAnchorVoiceId
+    ? laneViewportContext.voiceIds.indexOf(laneAnchorVoiceId)
+    : -1;
+  const laneAnchorLabel = project?.voices.find((voice) => voice.id === laneAnchorVoiceId)?.label;
+  const laneScrollValueText = laneAnchorLabel
+    ? `${laneAnchorLabel}, lane ${laneAnchorIndex + 1} of ${laneViewportContext.voiceIds.length} at top`
+    : "No voice lanes";
 
   const minimap =
     project && tickRange
@@ -1233,7 +1312,13 @@ export function PianoRoll({
 
   return (
     <div
-      className={isPaintCursorActive ? "piano-roll-shell paint-cursor-active" : "piano-roll-shell"}
+      className={[
+        "piano-roll-shell",
+        isPaintCursorActive ? "paint-cursor-active" : "",
+        viewMode === "voice-lanes" ? "voice-lane-view" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       ref={containerRef}
     >
       {minimap ? (
@@ -1271,6 +1356,25 @@ export function PianoRoll({
         }}
       />
       <canvas ref={overlayCanvasRef} className="piano-roll-paint-overlay" aria-hidden="true" />
+      {viewMode === "voice-lanes" && project && project.voices.length > 0 ? (
+        <input
+          className="voice-lane-scroll-control"
+          type="range"
+          min={0}
+          max={resolvedLaneViewport.maxScrollTopPx}
+          step={1}
+          value={resolvedLaneViewport.scrollTopPx}
+          disabled={resolvedLaneViewport.maxScrollTopPx === 0}
+          aria-label="Voice lane vertical scroll"
+          aria-orientation="vertical"
+          aria-valuetext={laneScrollValueText}
+          onChange={(event) =>
+            setInternalLaneViewport({
+              scrollTopPx: Number(event.currentTarget.value),
+            })
+          }
+        />
+      ) : null}
       {hoveredNote && project ? (
         <div
           className="piano-roll-tooltip"
@@ -1347,9 +1451,9 @@ export function PianoRoll({
           </div>
         </>
       ) : null}
-      {viewportWindow.zoomLevel > 1 || pitchViewportWindow.zoomLevel > 1 ? (
-        <button type="button" className="piano-roll-reset-zoom" onClick={handleResetZoom}>
-          Reset zoom ({resetZoomLabel})
+      {viewportWindow.zoomLevel > 1 || pitchViewportWindow.zoomLevel > 1 || isLaneScrolled ? (
+        <button type="button" className="piano-roll-reset-zoom" onClick={handleResetView}>
+          {resetViewLabel}
         </button>
       ) : null}
       {project && project.voices.length > 0 ? (

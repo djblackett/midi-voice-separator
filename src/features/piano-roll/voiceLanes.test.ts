@@ -54,8 +54,8 @@ describe("buildVoiceLaneLayout", () => {
     );
 
     expect(lanes).toMatchObject([
-      { voiceId: "voice-1", label: "Lead", y: 0, height: 150 },
-      { voiceId: "percussion", label: "Percussion", y: 150, height: 150 },
+      { rowIndex: 0, voiceId: "voice-1", label: "Lead", y: 0, height: 150 },
+      { rowIndex: 1, voiceId: "percussion", label: "Percussion", y: 150, height: 150 },
     ]);
   });
 
@@ -67,6 +67,20 @@ describe("buildVoiceLaneLayout", () => {
 
     expect(lanes[0].height).toBe(36);
     expect(lanes[19].y).toBe(684);
+  });
+
+  it("uses a resolved lane height and scroll offset while retaining row indexes", () => {
+    const lanes = buildVoiceLaneLayout(
+      [voice({ id: "voice-1" }), voice({ id: "voice-2" }), voice({ id: "voice-3" })],
+      72,
+      { laneHeight: 36, scrollTopPx: 18 },
+    );
+
+    expect(lanes).toMatchObject([
+      { rowIndex: 0, voiceId: "voice-1", y: -18, height: 36 },
+      { rowIndex: 1, voiceId: "voice-2", y: 18, height: 36 },
+      { rowIndex: 2, voiceId: "voice-3", y: 54, height: 36 },
+    ]);
   });
 });
 
