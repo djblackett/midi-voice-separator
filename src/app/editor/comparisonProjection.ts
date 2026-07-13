@@ -54,11 +54,12 @@ export function resolveComparisonProjection(
 
   const isSplit = workspace?.layout === "split" && bDocument !== null;
 
-  // Correspondence and presentation keys only matter when both sides render at
-  // once; a single canvas shows one side in its own colors.
+  // Correspondence + presentation keys are resolved whenever B exists: split
+  // rendering consumes them for color, and monitored playback for timbre, so a
+  // matched B voice looks and sounds like its A partner even in single view.
   let correspondence: VoiceCorrespondence | null = null;
   let bPresentationKeyByVoiceId: ReadonlyMap<string, string> = new Map();
-  if (isSplit && aProject && bProject) {
+  if (bDocument !== null && aProject && bProject) {
     correspondence = correspondVoices(
       { voiceIds: aProject.voices.map((voice) => voice.id), assignments: assignmentsOf(aProject) },
       { voiceIds: bProject.voices.map((voice) => voice.id), assignments: assignmentsOf(bProject) },

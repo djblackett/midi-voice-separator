@@ -85,11 +85,13 @@ function workspace(layout: "single" | "split"): ComparisonWorkspace {
 }
 
 describe("resolveComparisonProjection", () => {
-  it("shows only the active side and no correspondence in single layout", () => {
+  it("renders only the active side in single layout but still resolves correspondence", () => {
     const projection = resolveComparisonProjection(branchesWithB("A"), workspace("single"));
     expect(projection.visibleSides).toEqual(["A"]);
-    expect(projection.correspondence).toBeNull();
-    expect(projection.sideB?.presentationKeyByVoiceId.size).toBe(0);
+    // Correspondence + B presentation keys are resolved whenever B exists, so
+    // monitored playback can give a matched B voice its A partner's timbre.
+    expect(projection.correspondence).not.toBeNull();
+    expect(projection.sideB?.presentationKeyByVoiceId.get("voice-5")).toBe("voice-1");
     expect(singleLayoutSide(projection).side).toBe("A");
   });
 

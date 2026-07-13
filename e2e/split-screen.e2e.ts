@@ -80,6 +80,33 @@ test("Alt+A / Alt+B switch the active side from the keyboard without firing Brus
   await expect(page.locator(".editor-pane-active")).toContainText("Side A");
 });
 
+test("the transport monitors the active side and keeps rolling when it switches", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "a" ? { ...entry, voiceId: "voice-2" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+  await page.getByRole("button", { name: "Split view" }).click();
+
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await expect(page.getByText("Sounding: A (Current)")).toBeVisible();
+
+  // Switching the active side while playing reschedules to B and keeps playing
+  // (Stop/Pause stay available -- the transport never stops to swap sources).
+  await page.keyboard.press("Alt+b");
+  await expect(page.getByText("Sounding: B (Draft)")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+});
+
 test("split offers an explicit linked/independent pitch-scroll toggle", async ({ page }) => {
   await installFakeTauri(page, {
     importedProject: project,

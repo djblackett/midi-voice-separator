@@ -1379,6 +1379,12 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.playback-monitor {
+  color: #7dd3fc;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .editor-grid {
   min-height: 360px;
   padding: 16px 24px 20px;

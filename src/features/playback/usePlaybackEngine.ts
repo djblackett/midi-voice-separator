@@ -61,6 +61,12 @@ export function usePlaybackEngine(
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTick, setCurrentTick] = useState(0);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
+  // Latest values for the reschedule effect to read without re-subscribing.
+  const isPlayingRef = useRef(false);
+  isPlayingRef.current = isPlaying;
+  const currentTickRef = useRef(0);
+  currentTickRef.current = currentTick;
+  const previousSourceRef = useRef<{ lineageId: string; sourceId: string } | null>(null);
 
   function getEngine(): PlaybackEngine {
     if (!engineRef.current) {
@@ -193,6 +199,21 @@ export function usePlaybackEngine(
   useEffect(() => {
     setBlockedReason(null);
   }, [source?.scope, source?.soloVoiceId]);
+  // Switching the monitored side (or editing it) while playing reschedules from
+  // the current tick, so the transport keeps rolling and Stop stays available --
+  // it never stops to swap sources. A new lineage is left to the reset effect.
+  useEffect(() => {
+    const previous = previousSourceRef.current;
+    previousSourceRef.current = source
+      ? { lineageId: source.lineageId, sourceId: source.sourceId }
+      : null;
+    if (!source || !previous || previous.lineageId !== source.lineageId) {
+      return;
+    }
+    if (previous.sourceId !== source.sourceId && isPlayingRef.current) {
+      void startFrom(currentTickRef.current);
+    }
+  }, [source?.lineageId, source?.sourceId]);
   // Reset to a stopped state whenever a genuinely new piece is loaded (a new
   // lineage). Switching between same-lineage sides keeps the same timeline, so
   // it must not reset the playhead here.

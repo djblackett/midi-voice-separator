@@ -493,6 +493,13 @@ export default function App() {
     if (!displayedProject) {
       return null;
     }
+    // The transport monitors the active side; its presentation-key map gives a
+    // matched B voice its A partner's timbre, so switching sides while playing
+    // makes real differences stand out by ear.
+    const monitoredProjection =
+      editorActiveSide === "B" && comparisonProjection.sideB
+        ? comparisonProjection.sideB
+        : comparisonProjection.sideA;
     return {
       sourceId: `${editorActiveSide}:${editorDocument.revision}`,
       lineageId: displayedProject.fileName,
@@ -502,9 +509,17 @@ export default function App() {
       durationTicks: displayedProject.durationTicks,
       soloVoiceId,
       scope: playbackScope,
-      presentationKeyByVoiceId: EMPTY_PRESENTATION_KEYS,
+      presentationKeyByVoiceId:
+        monitoredProjection.presentationKeyByVoiceId ?? EMPTY_PRESENTATION_KEYS,
     };
-  }, [displayedProject, editorActiveSide, editorDocument.revision, soloVoiceId, playbackScope]);
+  }, [
+    displayedProject,
+    editorActiveSide,
+    editorDocument.revision,
+    soloVoiceId,
+    playbackScope,
+    comparisonProjection,
+  ]);
   const playback = usePlaybackEngine(playbackSource, instrument);
   const tempoMap = useMemo(
     () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
@@ -2614,6 +2629,11 @@ export default function App() {
               {formatPlaybackTime(playbackCurrentSeconds)} /{" "}
               {formatPlaybackTime(playbackDurationSeconds)}
             </span>
+            {compareState ? (
+              <span className="playback-monitor" role="status">
+                Sounding: {editorActiveSide === "B" ? "B (Draft)" : "A (Current)"}
+              </span>
+            ) : null}
             <label
               className="playback-scope-label"
               title={
