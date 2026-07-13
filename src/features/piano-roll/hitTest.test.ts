@@ -114,6 +114,37 @@ describe("hitTestPianoRollNotesInRect", () => {
       hitTestPianoRollNotesInRect({ x0: 0, y0: 0, x1: 40, y1: 260 }, project, viewport),
     ).toEqual([]);
   });
+
+  it("clips partial notes to the gutter and excludes fully hidden notes", () => {
+    const partial = {
+      ...project.notes[1],
+      id: "partial",
+      startTick: 0,
+      endTick: 100,
+      durationTicks: 100,
+    };
+    const hidden = {
+      ...project.notes[1],
+      id: "hidden",
+      startTick: 0,
+      endTick: 40,
+      durationTicks: 40,
+    };
+    const scrolledProject = { ...project, notes: [partial, hidden] };
+    const scrolledViewport = { ...viewport, startTick: 50, endTick: 150 };
+
+    expect(
+      hitTestPianoRollNotesInRect(
+        { x0: 0, y0: 0, x1: viewport.width, y1: viewport.height },
+        scrolledProject,
+        scrolledViewport,
+      ).map((note) => note.id),
+    ).toEqual(["partial"]);
+    expect(hitTestPianoRollNote({ x: 55, y: 2 }, scrolledProject, scrolledViewport)).toBeNull();
+    expect(hitTestPianoRollNote({ x: 56, y: 2 }, scrolledProject, scrolledViewport)?.id).toBe(
+      "partial",
+    );
+  });
 });
 
 describe("hitTestVoiceLaneNote", () => {

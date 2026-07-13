@@ -6,6 +6,7 @@ import {
 import type { PitchMarker } from "../../domain/midi/rangeRules";
 import type { PianoRollViewport } from "../../domain/midi/viewport";
 import { pitchToY, tickToX } from "./coordinates";
+import { createPianoViewGeometry, PIANO_VIEW_GUTTER_WIDTH } from "./viewGeometry";
 import {
   buildVoiceLaneLayout,
   findVoiceLane,
@@ -13,7 +14,8 @@ import {
   VOICE_LANE_LABEL_WIDTH,
 } from "./voiceLanes";
 
-export const PIANO_ROLL_LABEL_WIDTH = 56;
+/** @deprecated Prefer the active view geometry's `gutterWidth`. */
+export { PIANO_VIEW_GUTTER_WIDTH as PIANO_ROLL_LABEL_WIDTH } from "./viewGeometry";
 const VOICE_COLORS = [
   "#38bdf8",
   "#a78bfa",
@@ -292,9 +294,11 @@ export function drawPianoRoll(
   context.fillStyle = "#111827";
   context.fillRect(0, 0, viewport.width, viewport.height);
 
+  const geometry = createPianoViewGeometry(project, viewport);
+  const gutterWidth = geometry.gutterWidth;
   const rollViewport = {
     ...viewport,
-    width: Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH),
+    width: Math.max(1, viewport.width - gutterWidth),
   };
   const pitchCount = rollViewport.highestPitch - rollViewport.lowestPitch + 1;
   const rowHeight = viewport.height / Math.max(1, pitchCount);
@@ -304,12 +308,12 @@ export function drawPianoRoll(
     const pitchClass = pitch % 12;
     const isBlackKey = [1, 3, 6, 8, 10].includes(pitchClass);
     context.fillStyle = isBlackKey ? "#172033" : "#111827";
-    context.fillRect(PIANO_ROLL_LABEL_WIDTH, y, rollViewport.width, rowHeight + 1);
+    context.fillRect(gutterWidth, y, rollViewport.width, rowHeight + 1);
 
     if (pitchClass === 0) {
       context.strokeStyle = "#334155";
       context.beginPath();
-      context.moveTo(PIANO_ROLL_LABEL_WIDTH, y);
+      context.moveTo(gutterWidth, y);
       context.lineTo(viewport.width, y);
       context.stroke();
       context.fillStyle = "#cbd5e1";
@@ -325,7 +329,7 @@ export function drawPianoRoll(
   // would scan far more beats than are ever drawn.
   const firstBeatTick = Math.floor(rollViewport.startTick / beatTicks) * beatTicks;
   for (let tick = firstBeatTick; tick <= rollViewport.endTick; tick += beatTicks) {
-    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(tick, rollViewport);
+    const x = gutterWidth + tickToX(tick, rollViewport);
     context.strokeStyle = tick % (beatTicks * 4) === 0 ? "#475569" : "#263244";
     context.beginPath();
     context.moveTo(x, 0);
@@ -334,16 +338,16 @@ export function drawPianoRoll(
   }
 
   context.fillStyle = "#0f172a";
-  context.fillRect(0, 0, PIANO_ROLL_LABEL_WIDTH, viewport.height);
+  context.fillRect(0, 0, gutterWidth, viewport.height);
   context.strokeStyle = "#475569";
   context.beginPath();
-  context.moveTo(PIANO_ROLL_LABEL_WIDTH, 0);
-  context.lineTo(PIANO_ROLL_LABEL_WIDTH, viewport.height);
+  context.moveTo(gutterWidth, 0);
+  context.lineTo(gutterWidth, viewport.height);
   context.stroke();
 
   if (timeRangeSelection) {
-    const left = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.startTick, rollViewport);
-    const right = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.endTick, rollViewport);
+    const left = gutterWidth + tickToX(timeRangeSelection.startTick, rollViewport);
+    const right = gutterWidth + tickToX(timeRangeSelection.endTick, rollViewport);
     context.fillStyle = "rgba(56, 189, 248, 0.18)";
     context.fillRect(Math.min(left, right), 0, Math.abs(right - left), viewport.height);
   }
@@ -351,19 +355,26 @@ export function drawPianoRoll(
   if (!project || project.notes.length === 0) {
     context.fillStyle = "#94a3b8";
     context.font = "14px system-ui";
-    context.fillText("No notes loaded", PIANO_ROLL_LABEL_WIDTH + 24, 40);
+    context.fillText("No notes loaded", gutterWidth + 24, 40);
     return;
   }
 
   const sortedNotes = [...project.notes]
     .filter((note) => !onlyChangedNotes || changedNoteIds.has(note.id))
     .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
+  context.save();
+  context.beginPath();
+  context.rect(gutterWidth, 0, Math.max(0, viewport.width - gutterWidth), viewport.height);
+  context.clip();
   for (const note of sortedNotes) {
-    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(note.startTick, rollViewport);
-    const y = pitchToY(note.pitch, rollViewport);
-    const endX = PIANO_ROLL_LABEL_WIDTH + tickToX(note.endTick, rollViewport);
-    const width = Math.max(2, endX - x);
-    const height = Math.max(2, rowHeight - 2);
+    const rect = geometry.noteRect(note);
+    if (!rect) {
+      continue;
+    }
+    const x = rect.left;
+    const y = rect.top;
+    const width = rect.right - rect.left;
+    const height = rect.bottom - rect.top;
 
     const style = resolveNoteRenderStyle(note, {
       selectedNoteIds,
@@ -377,26 +388,26 @@ export function drawPianoRoll(
     });
     context.globalAlpha = style.isDimmed ? 0.25 : 1;
     context.fillStyle = style.fillColor;
-    context.fillRect(x, y + 1, width, height);
+    context.fillRect(x, y, width, height);
     context.strokeStyle = style.strokeColor;
     context.lineWidth = style.isSelected ? 3 : 1;
     if (style.showLowConfidenceDash) {
       context.setLineDash([3, 2]);
     }
-    context.strokeRect(x, y + 1, width, height);
+    context.strokeRect(x, y, width, height);
     context.setLineDash([]);
     context.lineWidth = 1;
 
     if (style.showChangedEdge) {
       context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
-      context.fillRect(x, y + 1, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
+      context.fillRect(x, y, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
     }
 
     if (style.showConflictUnderline) {
       context.fillStyle = CONFLICT_UNDERLINE_COLOR;
       context.fillRect(
         x,
-        y + 1 + Math.max(0, height - CONFLICT_UNDERLINE_HEIGHT_PX),
+        y + Math.max(0, height - CONFLICT_UNDERLINE_HEIGHT_PX),
         width,
         CONFLICT_UNDERLINE_HEIGHT_PX,
       );
@@ -404,9 +415,10 @@ export function drawPianoRoll(
 
     context.globalAlpha = 1;
   }
+  context.restore();
 
-  drawPitchMarkers(context, viewport, pitchMarkers);
-  drawPlayhead(context, rollViewport, viewport.height, playheadTick);
+  drawPitchMarkers(context, viewport, gutterWidth, pitchMarkers);
+  drawPlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
 
   if (marqueeRect) {
     const left = Math.min(marqueeRect.x0, marqueeRect.x1);
@@ -430,6 +442,7 @@ export function drawTimeRuler(
   ppq: number,
   playheadTick: number | null = null,
   timeRangeSelection: TickWindow | null = null,
+  gutterWidth: number = PIANO_VIEW_GUTTER_WIDTH,
 ): void {
   context.clearRect(0, 0, viewport.width, TIME_RULER_HEIGHT);
   context.fillStyle = "#0f172a";
@@ -437,15 +450,15 @@ export function drawTimeRuler(
 
   const rollViewport = {
     ...viewport,
-    width: Math.max(1, viewport.width - PIANO_ROLL_LABEL_WIDTH),
+    width: Math.max(1, viewport.width - gutterWidth),
   };
 
   context.fillStyle = "#111827";
-  context.fillRect(PIANO_ROLL_LABEL_WIDTH, 0, rollViewport.width, TIME_RULER_HEIGHT);
+  context.fillRect(gutterWidth, 0, rollViewport.width, TIME_RULER_HEIGHT);
 
   if (timeRangeSelection) {
-    const left = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.startTick, rollViewport);
-    const right = PIANO_ROLL_LABEL_WIDTH + tickToX(timeRangeSelection.endTick, rollViewport);
+    const left = gutterWidth + tickToX(timeRangeSelection.startTick, rollViewport);
+    const right = gutterWidth + tickToX(timeRangeSelection.endTick, rollViewport);
     context.fillStyle = "rgba(56, 189, 248, 0.28)";
     context.fillRect(Math.min(left, right), 0, Math.abs(right - left), TIME_RULER_HEIGHT);
   }
@@ -455,7 +468,7 @@ export function drawTimeRuler(
   context.font = "11px system-ui";
   context.textBaseline = "top";
   for (let tick = firstBeatTick; tick <= rollViewport.endTick; tick += beatTicks) {
-    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(tick, rollViewport);
+    const x = gutterWidth + tickToX(tick, rollViewport);
     const isBar = tick % (beatTicks * 4) === 0;
     context.strokeStyle = isBar ? "#64748b" : "#334155";
     context.beginPath();
@@ -470,8 +483,8 @@ export function drawTimeRuler(
 
   context.strokeStyle = "#475569";
   context.beginPath();
-  context.moveTo(PIANO_ROLL_LABEL_WIDTH, 0);
-  context.lineTo(PIANO_ROLL_LABEL_WIDTH, TIME_RULER_HEIGHT);
+  context.moveTo(gutterWidth, 0);
+  context.lineTo(gutterWidth, TIME_RULER_HEIGHT);
   context.moveTo(0, TIME_RULER_HEIGHT - 0.5);
   context.lineTo(viewport.width, TIME_RULER_HEIGHT - 0.5);
   context.stroke();
@@ -481,7 +494,7 @@ export function drawTimeRuler(
     playheadTick >= rollViewport.startTick &&
     playheadTick <= rollViewport.endTick
   ) {
-    const x = PIANO_ROLL_LABEL_WIDTH + tickToX(playheadTick, rollViewport);
+    const x = gutterWidth + tickToX(playheadTick, rollViewport);
     context.strokeStyle = "#f8fafc";
     context.lineWidth = 2;
     context.beginPath();
@@ -624,6 +637,7 @@ function drawLanePlayhead(
 function drawPlayhead(
   context: CanvasRenderingContext2D,
   rollViewport: PianoRollViewport,
+  gutterWidth: number,
   height: number,
   playheadTick: number | null,
 ): void {
@@ -635,7 +649,7 @@ function drawPlayhead(
     return;
   }
 
-  const x = PIANO_ROLL_LABEL_WIDTH + tickToX(playheadTick, rollViewport);
+  const x = gutterWidth + tickToX(playheadTick, rollViewport);
   context.globalAlpha = 1;
   context.strokeStyle = "#f8fafc";
   context.lineWidth = 2;
@@ -650,6 +664,7 @@ function drawPlayhead(
 function drawPitchMarkers(
   context: CanvasRenderingContext2D,
   viewport: PianoRollViewport,
+  gutterWidth: number,
   pitchMarkers: readonly PitchMarker[],
 ): void {
   if (pitchMarkers.length === 0) {
@@ -667,16 +682,16 @@ function drawPitchMarkers(
     context.lineWidth = 1;
     context.setLineDash([6, 4]);
     context.beginPath();
-    context.moveTo(PIANO_ROLL_LABEL_WIDTH, y);
+    context.moveTo(gutterWidth, y);
     context.lineTo(viewport.width, y);
     context.stroke();
     context.setLineDash([]);
 
     context.fillStyle = "#f97316";
     context.beginPath();
-    context.moveTo(PIANO_ROLL_LABEL_WIDTH - 8, y);
-    context.lineTo(PIANO_ROLL_LABEL_WIDTH - 1, y - 5);
-    context.lineTo(PIANO_ROLL_LABEL_WIDTH - 1, y + 5);
+    context.moveTo(gutterWidth - 8, y);
+    context.lineTo(gutterWidth - 1, y - 5);
+    context.lineTo(gutterWidth - 1, y + 5);
     context.closePath();
     context.fill();
 

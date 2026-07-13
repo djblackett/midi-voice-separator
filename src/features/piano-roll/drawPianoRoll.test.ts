@@ -9,9 +9,11 @@ import {
   drawVoiceLanes,
   getVoiceFillColor,
   getVoiceStrokeColor,
+  PIANO_ROLL_LABEL_WIDTH,
   resolveNoteRenderStyle,
   type NoteRenderContext,
 } from "./drawPianoRoll";
+import { PIANO_VIEW_GUTTER_WIDTH } from "./viewGeometry";
 
 describe("voice colors", () => {
   it("maps voice IDs to stable palette colors", () => {
@@ -365,11 +367,12 @@ function callDrawPianoRoll(
   context: CanvasRenderingContext2D,
   midiProject: MidiProject | null,
   args: DrawPianoRollArgs = {},
+  drawViewport: PianoRollViewport = viewport,
 ): void {
   drawPianoRoll(
     context,
     midiProject,
-    viewport,
+    drawViewport,
     args.selectedNoteIds,
     args.marqueeRect ?? null,
     args.soloVoiceId ?? null,
@@ -386,6 +389,10 @@ function callDrawPianoRoll(
 }
 
 describe("drawPianoRoll", () => {
+  it("keeps the legacy label width as an alias of the canonical piano gutter", () => {
+    expect(PIANO_ROLL_LABEL_WIDTH).toBe(PIANO_VIEW_GUTTER_WIDTH);
+  });
+
   it("clears and fills the background", () => {
     const context = createMockCanvasContext();
 
@@ -425,6 +432,53 @@ describe("drawPianoRoll", () => {
     callDrawPianoRoll(context, project());
 
     expect(context.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it("clips a partial note and its cues to the gutter and skips a fully hidden note", () => {
+    const context = createMockCanvasContext();
+    const partial = note({
+      id: "partial",
+      pitch: 64,
+      startTick: 0,
+      endTick: 100,
+      durationTicks: 100,
+    });
+    const hidden = note({
+      id: "hidden",
+      pitch: 64,
+      startTick: 0,
+      endTick: 40,
+      durationTicks: 40,
+    });
+    const scrolledViewport = { ...viewport, startTick: 50, endTick: 150 };
+
+    callDrawPianoRoll(
+      context,
+      project({ notes: [partial, hidden] }),
+      {
+        changedNoteIds: new Set([partial.id]),
+        conflictNoteIds: new Set([partial.id]),
+      },
+      scrolledViewport,
+    );
+
+    expect(context.rect).toHaveBeenCalledWith(
+      PIANO_VIEW_GUTTER_WIDTH,
+      0,
+      viewport.width - PIANO_VIEW_GUTTER_WIDTH,
+      viewport.height,
+    );
+    expect(context.clip).toHaveBeenCalledTimes(1);
+    expect(context.strokeRect).toHaveBeenCalledTimes(1);
+    expect(context.strokeRect).toHaveBeenCalledWith(PIANO_VIEW_GUTTER_WIDTH, 1, 400, 50);
+    expect(
+      context.styledCalls.find((call) => call.method === "fillRect" && call.fillStyle === "#facc15")
+        ?.args,
+    ).toEqual([PIANO_VIEW_GUTTER_WIDTH, 1, 3, 50]);
+    expect(
+      context.styledCalls.find((call) => call.method === "fillRect" && call.fillStyle === "#ef4444")
+        ?.args,
+    ).toEqual([PIANO_VIEW_GUTTER_WIDTH, 49, 400, 2]);
   });
 
   it("fills a note in its voice color at full opacity when not dimmed", () => {
@@ -602,6 +656,23 @@ describe("drawTimeRuler", () => {
     drawTimeRuler(context, rulerViewport, 480);
 
     expect(context.clearRect).toHaveBeenCalledWith(0, 0, rulerViewport.width, 20);
+  });
+
+  it("uses the canonical piano gutter by default and accepts a bound view gutter", () => {
+    const piano = createMockCanvasContext();
+    drawTimeRuler(piano, rulerViewport, 480);
+    expect(
+      piano.styledCalls.find((call) => call.method === "fillRect" && call.fillStyle === "#111827")
+        ?.args,
+    ).toEqual([PIANO_VIEW_GUTTER_WIDTH, 0, 800, 20]);
+
+    const alternate = createMockCanvasContext();
+    drawTimeRuler(alternate, rulerViewport, 480, null, null, 96);
+    expect(
+      alternate.styledCalls.find(
+        (call) => call.method === "fillRect" && call.fillStyle === "#111827",
+      )?.args,
+    ).toEqual([96, 0, 760, 20]);
   });
 
   it("draws a playhead tick only when within the visible window", () => {

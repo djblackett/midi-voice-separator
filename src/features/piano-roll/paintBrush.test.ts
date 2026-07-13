@@ -123,6 +123,35 @@ describe("notesInBrushStamp", () => {
     );
   });
 
+  it("paints only the visible part of a note that crosses the gutter", () => {
+    const partial = {
+      ...project.notes[1],
+      id: "partial",
+      startTick: 0,
+      endTick: 100,
+      durationTicks: 100,
+    };
+    const hidden = {
+      ...project.notes[1],
+      id: "hidden",
+      startTick: 0,
+      endTick: 40,
+      durationTicks: 40,
+    };
+    const scrolledProject = { ...project, notes: [partial, hidden] };
+    const scrolledViewport = { ...viewport, startTick: 50, endTick: 150 };
+
+    expect(
+      notesInBrushStamp(
+        { x: 60, y: 26 },
+        { x: 60, y: 26 },
+        0,
+        scrolledProject,
+        scrolledViewport,
+      ).map((note) => note.id),
+    ).toEqual(["partial"]);
+  });
+
   it("returns nothing without a project", () => {
     expect(notesInBrushStamp({ x: 206, y: 26 }, { x: 206, y: 26 }, 10, null, viewport)).toEqual([]);
   });

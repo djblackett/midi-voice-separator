@@ -47,6 +47,8 @@ export function createMockCanvasContext(): MockCanvasContext {
     fillText: vi.fn((...args: unknown[]) => record("fillText", args)),
     beginPath: vi.fn(),
     closePath: vi.fn(),
+    rect: vi.fn(),
+    clip: vi.fn(),
     arc: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),

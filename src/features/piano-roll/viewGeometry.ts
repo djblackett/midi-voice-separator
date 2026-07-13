@@ -418,7 +418,7 @@ export function notesInBrushStampForView(
   });
 }
 
-function pointInPolygon(point: ScreenPoint, polygon: readonly ScreenPoint[]): boolean {
+export function pointInPolygon(point: ScreenPoint, polygon: readonly ScreenPoint[]): boolean {
   let inside = false;
   for (
     let index = 0, previous = polygon.length - 1;
