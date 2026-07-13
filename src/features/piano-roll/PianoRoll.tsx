@@ -1170,8 +1170,11 @@ export function PianoRoll({
   }
 
   function handleCanvasPointerCancel() {
+    draggedMarkerIdRef.current = null;
     dragStartRef.current = null;
     setMarqueeRect(null);
+    cursorPointRef.current = null;
+    cancelPaintStroke();
   }
 
   function pointFromMouseEvent(event: ReactMouseEvent<HTMLCanvasElement>) {

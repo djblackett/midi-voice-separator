@@ -2,7 +2,15 @@
 
 Repo: `chiptune-voice-separator` (c:\Users\davej\dev\midi-separator)
 Date: 2026-07-08
-Status: Slices 1-11 implemented; remaining compare/playback/editor parity ideas are deferred below.
+Status: Slices 1-11 implemented. This file preserves their historical scope; later roadmap work is
+tracked by `NEXT_FEATURES_MASTER_PLAN.md`.
+
+Historical scope note (2026-07-13): Slice 10 intentionally shipped the first voice-lane view as
+read-only at `d9c092c`. Master-plan Feature 6 later implemented editing parity through E3 while
+preserving that original slice boundary. Its non-browser automated gates are complete, but real
+Playwright execution and manual audio/ergonomics acceptance remain pending. The read-only wording
+inside Slice 10 and the summary below describes what that earlier slice shipped, not the current
+product.
 
 This plan supersedes the earlier draft of the same feature set. It keeps that
 draft's slice discipline and milestone order but resolves the contracts a
@@ -368,13 +376,15 @@ quality).
 
 ## Explicitly Deferred (so nobody scope-creeps them in)
 
-- Editable side-B / split-screen compare, and A/B playback (Slice 6/7 notes).
+- **Completed in later master-plan Features 2-5:** editable side B, split-screen compare, and A/B
+  playback (Slice 6/7 notes record why they were deferred here).
 - Cross-import diffing and automated export→reimport verification (blocked by
   C2; needs content-based matching, its own plan).
-- Cost-based quality comparison in the diff panel (needs a new Rust command
-  exposing `total_cost_of_committed_assignment`-style replay; worth considering
-  as the honest cross-mode metric C5 forbids confidence from being).
-- Voice-lane editing parity.
+- **Completed in later master-plan Feature 1:** cost-based quality comparison in the diff panel via
+  the versioned assignment-model cost evaluator.
+- **Implemented in later master-plan Feature 6:** voice-lane editing parity. Final E3 acceptance is
+  still pending the real Playwright run and manual audio/ergonomics checklist; see
+  `VOICE_LANE_PARITY_PLAN.md`.
 
 ## Summary of deltas from the earlier draft
 

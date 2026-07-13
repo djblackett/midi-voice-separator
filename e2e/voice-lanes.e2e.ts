@@ -234,6 +234,42 @@ async function dragLaneBrush(page: Page, fromTarget: LaneFixtureNote, toTarget: 
   await page.mouse.up();
 }
 
+async function cancelLaneBrush(page: Page, fromTarget: LaneFixtureNote, toTarget: LaneFixtureNote) {
+  const { canvas, box } = await interactiveLaneCanvas(page);
+  const from = laneNoteCenter(
+    fromTarget,
+    box,
+    laneProject.durationTicks,
+    laneProject.voices.length,
+  );
+  const to = laneNoteCenter(toTarget, box, laneProject.durationTicks, laneProject.voices.length);
+
+  await canvas.evaluate((element) => {
+    element.addEventListener(
+      "pointerdown",
+      (event) => {
+        (element as HTMLElement).dataset.lastPointerId = String(event.pointerId);
+      },
+      { once: true },
+    );
+  });
+  await page.mouse.move(box.x + from.x, box.y + from.y);
+  await page.mouse.down();
+  await canvas.evaluate((element) => {
+    const pointerId = Number((element as HTMLElement).dataset.lastPointerId);
+    element.dispatchEvent(
+      new PointerEvent("pointercancel", {
+        bubbles: true,
+        button: 0,
+        buttons: 0,
+        pointerId,
+      }),
+    );
+  });
+  await page.mouse.move(box.x + to.x, box.y + to.y, { steps: 4 });
+  await page.mouse.up();
+}
+
 async function lassoLaneNote(page: Page, target: LaneFixtureNote) {
   const { box } = await interactiveLaneCanvas(page);
   const rect = laneNoteRect(target, box, laneProject.durationTicks, laneProject.voices.length);
@@ -648,4 +684,21 @@ test.describe("voice lane view", () => {
       },
     );
   }
+
+  test("a canceled lane brush stroke cannot remain latched or create history", async ({ page }) => {
+    await installFakeTauri(page, { importedProject: laneProject });
+    await page.goto("/");
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+    await page.getByLabel("Select notes in Bass", { exact: true }).click();
+    await page.keyboard.press("b");
+
+    const undo = page.getByRole("button", { name: "Undo" });
+    await expect(undo).toBeDisabled();
+    await cancelLaneBrush(page, leadNote, leadHighNote);
+
+    await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+    await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+    await expect(undo).toBeDisabled();
+  });
 });

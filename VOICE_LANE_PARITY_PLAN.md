@@ -4,7 +4,9 @@
 - Date: 2026-07-13
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M15), `SPLIT_SCREEN_PLAN.md` (M13),
   `KEYBOARD_COMMANDS_PLAN.md` (M14), and `AB_PLAYBACK_PLAN.md` (M10-M12).
-- Status: architecture drafted; implementation is tracked by the commit-sized slices below.
+- Status: Feature 6 implementation and non-browser automated E3 gates are complete. Full
+  Playwright execution and manual audio/ergonomics acceptance remain pending; Feature 6 is not yet
+  fully accepted, and Feature 7 has not started.
 - Verified entry boundary: Features 1-5 are complete at commit `461f8cf`
   (`feat: add independent A/B playback monitoring`).
 
@@ -12,10 +14,10 @@
 
 ## 1. Purpose and scope
 
-The existing voice-lane view is useful for seeing assignment structure, but it is not yet an
-editor peer of the piano roll. It renders the same materialized project and supports point
+Before Feature 6, the voice-lane view was useful for seeing assignment structure, but it was not
+yet an editor peer of the piano roll. It rendered the same materialized project and supported point
 selection/audition, while marquee selection, context assignment, smart selection, paint tools,
-vertical reveal, and most geometry queries remain hard-wired to piano coordinates.
+vertical reveal, and most geometry queries remained hard-wired to piano coordinates.
 
 Feature 6 makes the two views alternate presentations of **one editor**, not two editors:
 
@@ -51,7 +53,7 @@ Feature 6 makes the two views alternate presentations of **one editor**, not two
 
 ---
 
-## 2. Current baseline (verified from code)
+## 2. Pre-implementation baseline (verified from code)
 
 ### What is already shared and should stay shared
 
@@ -361,6 +363,55 @@ No Rust checks are required unless a later slice unexpectedly changes `src-tauri
   manually test brush radius across lane boundaries, lasso stability, last-lane reachability,
   fullscreen, split A/B, and audition by ear.
 
+### E3 closure record (2026-07-13)
+
+Feature 6 implementation is complete through the E3 regression additions. The commit-sized
+implementation boundary before E3 is:
+
+| Slice | Commit    | Slice | Commit    | Slice | Commit    |
+| ----- | --------- | ----- | --------- | ----- | --------- |
+| A1    | `abed4fe` | B1    | `b9785cd` | C1    | `06ab80f` |
+| A2    | `f8b1059` | B2    | `6321728` | C2    | `8a4df41` |
+| A3    | `08966fa` | B3    | `41a23e5` | C3    | `46d60cf` |
+| D1    | `539d487` | D2    | `13f4af1` | D3    | `925cea6` |
+| E1    | `6851725` | E2    | `6d12081` |       |           |
+
+The E3 closure slice adds two explicit regressions beyond the earlier 106-test Playwright suite:
+
+- a split voice-lane edit mutates only active side B, creates history only on B, and leaves side A
+  and its undo stack unchanged;
+- a `pointercancel` during a lane brush stroke clears the gesture, preview, and pointer state
+  without committing an assignment or creating history.
+
+Completed automated evidence:
+
+- `pnpm test` — 562 unit tests passed;
+- `pnpm lint` — passed;
+- `pnpm exec tsc --noEmit` — passed;
+- `pnpm build` — passed;
+- targeted Prettier checks for every Feature 6/E3 file — passed;
+- `pnpm exec playwright test --list` — 108 Playwright tests discovered, up from 106 before the two
+  E3 regressions.
+
+The repo-wide `pnpm format:check` still reports the pre-existing untouched
+`native-e2e/native-shell.e2e.mjs`; E3 does not rewrite that unrelated native test. This slice's
+targeted formatting gate is clean.
+
+Real Playwright execution is not claimed: the current browser quota blocked a run, and no in-app
+browser target was available for a substitute manual drive. Run these when browser capacity is
+available:
+
+```powershell
+pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
+pnpm test:e2e
+```
+
+The audio and interaction-quality pause points also remain pending. Run `pnpm tauri dev` and work
+through the Feature 6 section in `MANUAL_TEST_CASES.md`, including audition by ear, brush/lasso
+ergonomics, last-lane reachability, fullscreen, and split A/B behavior. Until both the real
+Playwright run and that manual acceptance are recorded, Feature 6 is implemented but not fully
+accepted. Feature 7 has not started.
+
 ---
 
 ## 6. Contract-to-slice matrix
@@ -464,9 +515,11 @@ No Rust checks are required unless a later slice unexpectedly changes `src-tauri
 
 ## 11. Boundary handed to Feature 7
 
-On completion, piano and voice-lane views will be two geometry adapters over one interaction and
-editor-command system, with reachable lane rows and explicit capabilities. Feature 7 can then add
-content-based note correspondence without needing to know which editor view produced a selection
-or correction.
+With Feature 6 implemented, piano and voice-lane views are two geometry adapters over one
+interaction and editor-command system, with reachable lane rows and explicit capabilities. Once
+the pending E3 runtime and manual acceptance is recorded, Feature 7 can add content-based note
+correspondence without needing to know which editor view produced a selection or correction.
+
+Feature 7 has not started.
 
 No lane layout, viewport, or gesture state becomes part of note identity or content matching.

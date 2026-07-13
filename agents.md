@@ -39,9 +39,17 @@ Primary stack:
 - `src/`: React frontend.
 - `src/app/App.tsx`: main import, correction, and export flow.
 - `src/features/piano-roll/drawPianoRoll.ts`: canvas rendering.
-- `src/features/piano-roll/PianoRoll.tsx`: pointer-gesture handling
-  (click/shift-click/marquee select, plus paint-mode click-drag) and canvas
-  lifecycle. Exports `InteractionMode = "select" | "paint" | "range"`.
+- `src/features/piano-roll/PianoRoll.tsx`: the shared piano/voice-lane canvas controller for
+  click/Shift/marquee selection, context and smart actions, Pencil/Brush/Lasso/Wand painting,
+  audition, ruler gestures, pointer cancellation, and canvas lifecycle. View differences come from
+  bound geometry/capabilities rather than forked handlers. Exports
+  `InteractionMode = "select" | "paint" | "range"`.
+- `src/features/piano-roll/viewGeometry.ts`: canonical M15 geometry/capability seam. It binds the
+  active gutter, note rectangles, point/rectangle/brush/lasso queries, reveal targets, and optional
+  lane rows while requiring callers to pass the authorized `MidiNote[]` query set explicitly.
+- `src/features/piano-roll/laneViewport.ts`: pure dense-lane viewport math: 36px minimum rows,
+  content height, scroll clamping, visible row ranges, and reveal targets. Lane scroll is pane UI
+  state, never editor document state.
 - `src/features/piano-roll/viewportWindow.ts`: pure pan/zoom math
   (`ViewportWindow` = zoom level + raw pan position, resolved against a
   project's `durationTicks` into a concrete clamped tick range via
@@ -52,11 +60,10 @@ Primary stack:
 - `src/features/piano-roll/paint.ts`: pure `shouldPaintNote` predicate used
   by `PianoRoll.tsx`'s paint-stroke logic (kept separate for the same
   unit-testability reason as `selection.ts`).
-- `src/features/piano-roll/paintBrush.ts`: pure paint-tool geometry —
-  `PaintTool = "pencil" | "brush" | "lasso"`, brush-radius
-  constants/clamp/step, capsule-swept round-brush hit testing
-  (`notesInBrushStamp`), and freehand-lasso polygon enclosure
-  (`notesInLassoPath`). Unit-tested; mirrors `hitTest.ts`'s note-rect math.
+- `src/features/piano-roll/paintBrush.ts`: paint-tool definitions and compatibility helpers —
+  `PaintTool = "pencil" | "brush" | "lasso" | "wand"`, capability lookup, brush-radius
+  constants/clamp/step, and legacy piano wrappers. Canonical capsule/lasso queries now live in and
+  consume the active `viewGeometry.ts` binding.
 - `src/features/piano-roll/paintOverlay.ts`: canvas drawing for the
   paint-cursor overlay (voice-colored brush ring, pencil crosshair, lasso
   marching-ants path, wand sparkle, brush-size HUD). Thin canvas glue,
@@ -178,14 +185,12 @@ Primary stack:
 
 ## Active Plan
 
-The original 7-phase implementation plan for the heuristic voice-separation
-engine and its correction UX is complete (all 7 phases done — see Progress
-Log below). The follow-on roadmap (testing gap, README catch-up, the two
-deferred items, piano-roll pan/zoom, MIDI playback) is also complete —
-Phase 5 (playback) had its own dedicated plan, written at the same path
-`C:\Users\davej\.claude\plans\sequential-watching-sprout.md` (outside this
-repo) once selected. Only roadmap Phase 6 (performance validation on real
-dense files) remains.
+The architecture sequence in `NEXT_FEATURES_MASTER_PLAN.md` is complete through Feature 5.
+Feature 6 (voice-lane editing parity) is implemented and its available non-browser E3 gates are
+green, but it is not fully accepted: browser quota blocked real Playwright execution, and there was
+no in-app browser target for the manual audio/ergonomics pass. Feature 7 (content-based matching)
+has not started. Resume from `VOICE_LANE_PARITY_PLAN.md`'s E3 closure record, run the pending
+browser/manual checks, and record their evidence before advancing the roadmap.
 
 ## Progress Log
 
@@ -2121,6 +2126,50 @@ Added a workspace fullscreen mode for the piano-roll editor. `App.tsx` now wraps
 
 - **Not yet committed.** This section and its code (`App.tsx`, `global.css`, `e2e/fullscreen-workspace.e2e.ts`, `MANUAL_TEST_CASES.md`) exist only in the working tree as of this note.
 - Verified: `pnpm test` (357/357), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean; `pnpm test:e2e` (70/70, including `fullscreen-workspace.e2e.ts`). No Rust changes.
+
+### Master-plan Feature 6 — voice-lane editing parity implemented; E3 acceptance pending
+
+Feature 6 turns Piano and Voice lanes into two geometry adapters over the same editor controller,
+commands, branch histories, and render-style resolver. The commit-sized implementation through E2
+is recorded in `VOICE_LANE_PARITY_PLAN.md` (A1 `abed4fe` through E2 `6d12081`): canonical geometry
+and clipping, a dense-lane viewport, correspondence-aware split navigation, selection/context/smart
+gesture parity, all four paint tools, dynamic/side-qualified accessibility names, and common render
+cues. Pitch-range markers remain deliberately piano-only with symmetric disabled controls and
+help; no transition silently switches view or interaction mode.
+
+The E3 slice adds two regression boundaries that were not in the earlier 106-test Playwright
+suite:
+
+- `e2e/split-screen.e2e.ts` proves a Voice-lane edit on active side B changes only B, creates only
+  B history, and leaves side A plus its undo stack intact;
+- `e2e/voice-lanes.e2e.ts` proves `pointercancel` cannot leave a Brush stroke latched or commit
+  assignments/history. `PianoRoll` clears marker, marquee, cursor, and paint-stroke state on cancel,
+  and canvases opt out of native touch gestures so pointer ownership stays explicit.
+
+Available E3 evidence is green:
+
+- `pnpm test` — 562/562 unit tests;
+- `pnpm lint`;
+- `pnpm exec tsc --noEmit`;
+- `pnpm build`;
+- targeted Prettier checks for all Feature 6/E3 files;
+- `pnpm exec playwright test --list` — 108 tests discovered (106 before the two E3 additions).
+
+The repo-wide `pnpm format:check` still flags only the pre-existing untouched
+`native-e2e/native-shell.e2e.mjs`; do not mix that unrelated cleanup into the E3 slice.
+
+Do not record a Playwright pass yet. Real browser execution was quota-blocked, and no in-app
+browser target was available for a substitute interaction pass. When capacity returns, run:
+
+```powershell
+pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
+pnpm test:e2e
+```
+
+Then run `pnpm tauri dev` and complete `MANUAL_TEST_CASES.md`'s **Voice-lane editing parity**
+section on sparse and dense files, especially source-row Brush preview, clipped-row Lasso feel,
+last-lane reachability, fullscreen, split A/B, audition by ear, and playhead alignment. Feature 6
+is implemented but not fully accepted until both results are recorded. Feature 7 has not started.
 
 ## Architecture Invariants
 

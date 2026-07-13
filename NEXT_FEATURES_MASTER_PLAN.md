@@ -3,7 +3,9 @@
 Repository: `chiptune-voice-separator`  
 Date: 2026-07-10  
 Baseline commit: `a3e5fe9` (`Add comparison workflow end-to-end coverage`)  
-Status: architecture approved; individual feature plans and implementation not started
+Status: Features 1-5 complete. Feature 6 implementation and non-browser E3 gates are complete;
+real Playwright execution plus manual audio/ergonomics acceptance remain pending. Feature 7 has
+not started.
 
 ## Purpose
 
@@ -18,6 +20,24 @@ This document is the durable architecture contract for the next feature sequence
 7. Content-based note matching.
 8. Cross-import diffing.
 9. Automated export-to-reimport verification.
+
+### Implementation checkpoint (2026-07-13)
+
+| Feature                         | Status                                            | Terminal boundary                      |
+| ------------------------------- | ------------------------------------------------- | -------------------------------------- |
+| 1. Cost-based assignment metric | Complete                                          | `2844dd0`                              |
+| 2. Editable side B              | Complete                                          | `48af621`                              |
+| 3. Split-screen comparison      | Complete                                          | `2e6dc1d`                              |
+| 4. Keyboard side switching      | Complete                                          | `f52756c`                              |
+| 5. A/B playback                 | Complete                                          | `461f8cf`                              |
+| 6. Voice-lane editing parity    | Implemented; E3 runtime/manual acceptance pending | E2: `6d12081`; E3: this closure commit |
+| 7. Content-based matching       | Not started                                       | —                                      |
+
+Feature 6 is tracked in `VOICE_LANE_PARITY_PLAN.md`. Its available automated evidence is 562
+passing unit tests, passing lint/typecheck/build, and discovery of all 108 Playwright tests (106
+before the two E3 regressions). Browser quota prevented real Playwright execution, and no in-app
+browser target was available for the manual audio/ergonomics pass. This checkpoint therefore does
+not call Feature 6 fully accepted and does not advance the roadmap into Feature 7.
 
 `PLAN.local.md` records the completed snapshots/diff/read-only-compare roadmap. Do not
 overwrite or reinterpret it as the implementation plan for the work above. Each feature in
@@ -428,7 +448,7 @@ on the literal ID `percussion`.
 
 These are architecture-level gates, not the later commit-sized plans.
 
-### 1. Cost-based assignment metric
+### 1. Cost-based assignment metric — complete
 
 Required work:
 
@@ -452,7 +472,7 @@ version/profile, note universe, hard-violation status, and melodic voice count a
 Exit gate: deterministic, note-order-invariant, voice-ID-invariant results on synthetic and
 real fixtures, with no unsupported winner claim.
 
-### 2. Editable side B
+### 2. Editable side B — complete
 
 Required work before B UI:
 
@@ -465,7 +485,7 @@ Required work before B UI:
 Exit gate: A and B edit and undo independently; neither mutates the other or the source
 snapshot; stale reruns cannot land.
 
-### 3. Split screen
+### 3. Split screen — complete
 
 Required work:
 
@@ -476,7 +496,7 @@ Required work:
 
 Exit gate: both panes stay aligned, focus is obvious, and all edits route to the active side.
 
-### 4. Keyboard side switching
+### 4. Keyboard side switching — complete
 
 Required work:
 
@@ -487,7 +507,7 @@ Required work:
 Exit gate: switching cannot fire an editor tool, input fields remain safe, and shortcuts
 cannot bypass permissions.
 
-### 5. A/B playback
+### 5. A/B playback — complete
 
 Required work:
 
@@ -500,7 +520,7 @@ Required work:
 Exit gate: render side, monitor side, timbre mapping, playhead, and transport controls cannot
 diverge.
 
-### 6. Voice-lane editing parity
+### 6. Voice-lane editing parity — implemented, final E3 acceptance pending
 
 Required work:
 
@@ -515,7 +535,7 @@ remain piano-only unless separately designed.
 
 Exit gate: common gestures produce identical editor commands in both views.
 
-### 7. Content-based matching
+### 7. Content-based matching — not started
 
 Required work:
 

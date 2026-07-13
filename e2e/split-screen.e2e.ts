@@ -333,6 +333,91 @@ test("split offers an explicit linked/independent pitch-scroll toggle", async ({
   await expect(page.getByText("Sounding: A (Current)")).toBeVisible();
 });
 
+test("a split voice-lane edit mutates only active B and keeps undo branch-local", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: project,
+    reassign: ({ project: current }) => ({
+      ...current,
+      notes: current.notes.map((entry) =>
+        entry.id === "a" ? { ...entry, voiceId: "voice-2" } : entry,
+      ),
+    }),
+  });
+  await page.goto("/");
+  await startCompare(page);
+  await page.getByRole("button", { name: "Split view" }).click();
+  await page.getByRole("button", { name: "Voice lanes" }).click();
+
+  const sideAEditing = page.getByRole("group", {
+    name: "Side A voice lane (editing)",
+    exact: true,
+  });
+  const sideB = page.getByRole("group", { name: "Side B voice lane", exact: true });
+  const sideACanvas = sideAEditing.getByLabel("Side A voice lane note visualization", {
+    exact: true,
+  });
+  const sideBCanvas = sideB.getByLabel("Side B voice lane note visualization", { exact: true });
+  await expect(sideACanvas).toBeVisible();
+  await expect(sideBCanvas).toBeVisible();
+
+  const initialSideAHeight = (await sideACanvas.boundingBox())?.height ?? 0;
+  const initialSideBHeight = (await sideBCanvas.boundingBox())?.height ?? 0;
+  await page.getByRole("button", { name: "Fullscreen workspace" }).click();
+  await expect(page.getByRole("button", { name: "Exit fullscreen" })).toBeVisible();
+  await expect
+    .poll(async () => (await sideACanvas.boundingBox())?.height ?? 0)
+    .toBeGreaterThan(initialSideAHeight);
+  await expect
+    .poll(async () => (await sideBCanvas.boundingBox())?.height ?? 0)
+    .toBeGreaterThan(initialSideBHeight);
+  await expect(
+    sideAEditing.getByRole("slider", { name: "Voice lane vertical scroll" }),
+  ).toBeVisible();
+  await expect(sideB.getByRole("slider", { name: "Voice lane vertical scroll" })).toBeVisible();
+
+  // A is the re-run: note a moved from Lead to Bass.
+  await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+
+  // Activate B. Its branch starts at the import split with no undo history.
+  await sideB.click();
+  await expect(
+    page.getByRole("group", { name: "Side B voice lane (editing)", exact: true }),
+  ).toBeVisible();
+  await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+  const undo = page.getByRole("button", { name: "Undo" });
+  await expect(undo).toBeDisabled();
+
+  // One lane-view assignment mutates B and creates exactly one B history entry.
+  await page.getByLabel("Select notes in Lead", { exact: true }).click();
+  await page.keyboard.press("2");
+  await expect(voiceRow(page, "Lead")).toContainText("0 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("3 notes");
+  await expect(undo).toBeEnabled();
+
+  // A kept its own re-run result while B was edited.
+  await page.getByRole("group", { name: "Side A voice lane", exact: true }).click();
+  await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+
+  // Undoing once on B restores its baseline and exhausts only B's history.
+  await page.getByRole("group", { name: "Side B voice lane", exact: true }).click();
+  await expect(voiceRow(page, "Lead")).toContainText("0 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("3 notes");
+  await undo.click();
+  await expect(voiceRow(page, "Lead")).toContainText("2 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+  await expect(undo).toBeDisabled();
+
+  await page.getByRole("group", { name: "Side A voice lane", exact: true }).click();
+  await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+  await expect(undo).toBeEnabled();
+});
+
 test("split lane navigation stays independent or links by strict voice correspondence", async ({
   page,
 }) => {

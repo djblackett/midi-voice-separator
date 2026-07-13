@@ -72,9 +72,10 @@ tracks.
   only when both sides used the same separation strategy and search mode, since confidence
   isn't comparable across them. Changed notes get a colored edge cue directly in the piano
   roll, with a toggle to show only changed notes.
-- Read-only A/B compare preview: view a past snapshot's assignments rendered in the piano
-  roll without leaving the current session. All editing is disabled while previewing, with a
-  visible banner explaining why; exiting returns to normal editing.
+- Editable A/B comparison workspace: fork a snapshot into side B, edit either branch with its own
+  history, inspect both in a split view with linked musical time, and explicitly choose the active
+  editing side. The inactive pane and Diff projection remain read-only by authorization. One
+  transport can monitor A or B while keeping the sounding side and Stop control visible.
 - Scoped playback: play all notes, just the selection, just the active voice, just the
   notes changed relative to the comparison target, or a window around the current flagged
   note — composed with the existing Solo toggle by intersection.
@@ -86,10 +87,12 @@ tracks.
   overlapping notes (impossible for a monophonic chiptune voice to play), changed notes not
   yet locked against the comparison baseline, and a percussion-voice note plus a reminder to
   manually verify a reimport.
-- Voice lane view: a read-only alternate layout with one horizontal band per voice (instead
-  of one shared pitch axis), for quickly auditing what each voice is doing without notes
-  from other voices visually interleaved. Click a note to select it; editing happens back in
-  the normal piano-roll view.
+- Voice lane view: an alternate editor layout with one horizontal band per voice instead of one
+  shared pitch axis. It shares click/Shift/marquee selection, number-key and context assignment,
+  chord/phrase/line smart actions, Pencil/Brush/Lasso/Wand painting, audition, and undo/redo with
+  the piano view. Dense projects have a pointer- and keyboard-accessible vertical lane viewport;
+  split panes can navigate independently or link matched voices. Pitch-range markers remain an
+  explicit piano-only capability.
 - Smart fix suggestions: conservative, advisory correction suggestions — nearby
   low-confidence clusters, suspicious tiny voices worth merging, and melodic phrases split
   across two voices — each with a plain-language reason and a one-click action that goes
@@ -129,15 +132,17 @@ general soundfont support (the piano sound is a single bundled sample set, not a
 user-selectable soundfont). The current voice assignment is a heuristic, not a
 finished musical separation algorithm.
 
-The A/B compare preview is read-only by design — there is no editable side-B, split-screen
-view, or A/B playback yet. Diffing and snapshots are in-session only: note ids are not
-stable across an export/reimport round trip, so there is no cross-import diff and no
-automated export→reimport verification (a real limitation, not an oversight — it would need
-a content-based note-matching design and likely new Rust support). The diff panel's
-confidence-delta metric is not available across different separation strategies or search
-modes, since confidence measures local decisiveness under one scoring setup, not comparable
-quality across two. Voice lanes are read-only (click-to-select only); the editing tools live
-in the standard piano-roll view.
+A/B comparison currently covers two editable branches from the same imported lineage. The
+inactive split pane and Diff projection are intentionally read-only, but either A or B can be made
+the active editing branch. An unrelated external MIDI file cannot yet be used as a comparison
+reference. Diffing and snapshots are in-session only: note ids are not stable across an
+export/reimport round trip, so there is no cross-import diff and no automated export→reimport
+verification. Those workflows require the versioned content-based note matcher planned as Feature
+7 and likely new Rust support. The diff panel's confidence-delta metric also remains unavailable
+across different separation strategies or search modes because confidence measures local
+decisiveness under one scoring setup; the separate assignment-model cost evaluator is the honest
+cross-strategy measure. Pitch-range markers remain piano-only because voice lanes have no global
+pitch axis.
 
 ## Windows prerequisites
 
@@ -263,17 +268,14 @@ search-mode selection, pitch-range provenance) is complete and was validated on 
 CC0-licensed dense chiptune fixtures alongside synthetic stress tests, confirmed fast at
 every scale tried.
 
-A second plan (snapshots, assignment diff, read-only A/B compare, scoped playback, guided
-review, export readiness, voice lanes, smart fix suggestions) is also complete — see
-"Current capabilities" above. A follow-on pass then added paint mode's pencil/brush/lasso/wand
-tools with a drawn cursor overlay, smart selection (chord/phrase/top-line/bottom-line, a
-right-click context menu), click/paint audition, a confidence heatmap view, overlap-conflict
-review, time-ruler range selection, and a fullscreen editor workspace.
+A second plan added snapshots, assignment diff, scoped playback, guided review, export readiness,
+the initial voice-lane view, and smart fixes. The next architecture sequence has implemented its
+first six features: a versioned assignment-model cost evaluator, editable side B, split-screen
+comparison, keyboard side switching, monitored A/B playback, and voice-lane editing parity.
 
-What remains is what earlier plans explicitly deferred rather than left unfinished — see
-"Non-capabilities" above for the reasoning behind each: an editable A/B compare side with
-split-screen and A/B playback; cross-import diffing and automated export→reimport
-verification (blocked by note ids not surviving a round trip — its own plan, needing
-content-based matching); a cost-based cross-strategy quality metric for the diff panel
-(would need a new Rust command); and voice-lane editing parity. Any of these, or a fresh
-idea, would start a new plan.
+Feature 6's implementation and non-browser automated E3 gates are complete, including 562 passing
+unit tests and discovery of all 108 Playwright tests. Real Playwright execution is currently
+quota-blocked, and the manual audio/ergonomics pass still needs an available app/browser target, so
+Feature 6 is not yet fully accepted. Feature 7 has not started. The next planned boundary is
+content-based note matching, followed by cross-import diffing and automated export→reimport
+verification; see `NEXT_FEATURES_MASTER_PLAN.md` and `VOICE_LANE_PARITY_PLAN.md`.

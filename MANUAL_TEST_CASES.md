@@ -91,6 +91,45 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
   remain visible above the roll.
 - Click **Exit fullscreen** -> the editor returns to the normal page layout.
 
+## Voice-lane editing parity (Feature 6 acceptance)
+
+- Switch from **Piano roll** to **Voice lanes** → the canvas exposes the accessible name "Voice
+  lane note visualization," one row appears per voice, and switching back restores "Piano roll
+  note visualization" without changing selection or horizontal position.
+- Try one sparse file and one dense file → sparse rows use the available height; dense rows keep a
+  readable minimum height and expose **Voice lane vertical scroll**. Wheel/trackpad scrolling and
+  the range control's arrows, `Home`, and `End` can reach the final lane without producing a blank
+  canvas. Selecting an offscreen voice or note reveals its row without changing horizontal zoom.
+- In lanes, click, Shift-click, marquee, and Shift-marquee notes → selection membership matches the
+  same gestures in the piano view. Double-click chord selection and right-click phrase/line/Assign
+  actions target the expected notes.
+- Use `1`-`9`, a context Assign action, and Undo/Redo in lanes → each correction takes exactly one
+  undo step. `P`/`B`/`L`/`W` and the toolbar enter the requested paint tool without leaving lanes;
+  switching Piano ↔ Voice lanes while painting keeps the tool active.
+- Drag a Brush stroke across notes in adjacent source lanes → touched notes preview with the target
+  voice color but stay in their source rows during the stroke, then move atomically on release.
+  Crossing a lane boundary should neither skip a note nor repaint an untouched neighboring row.
+- Draw a Lasso near the clipped top or bottom edge of a partially visible row → only enclosed or
+  intersected visible notes preview and commit; backing the loop away removes them from preview,
+  and the gesture does not latch after release or cancellation.
+- Turn on Range markers in Piano → **Voice lanes** is disabled with "Exit Range markers before
+  switching to Voice lanes." Exit Range and switch to lanes → **Range markers** is disabled with
+  "Switch to Piano roll before enabling Range markers." Neither control silently changes mode or
+  view.
+- Compare both views with a selected note, Solo, confidence heat, changed-note filtering, an
+  overlap conflict, playback, and an in-progress paint stroke → selection, dimming, heat color,
+  changed edge, conflict cue, playhead, ruler/minimap alignment, and source-row preview remain
+  legible and consistent.
+- Enter fullscreen while lanes are visible → the lane canvas fills the remaining workspace and the
+  view, playback, paint, heatmap, and lane-scroll controls remain reachable. Exit fullscreen and
+  confirm the viewport is still valid.
+- In split A/B lanes, edit side B and Undo once → only B changes and only B history moves; side A is
+  unchanged. Verify independent lane scrolling first, then enable linking and reveal a matched
+  voice. Revealing an unmatched voice leaves the other pane independent and shows the fallback.
+- With Audition on, click and paint notes in lanes and listen for the expected voice timbre. During
+  transport playback, confirm gesture audition is suppressed and the playhead remains horizontally
+  aligned after zooming and panning.
+
 ## Paint mode
 
 - Click **Paint mode: off** to turn it on → button shows "Paint mode: on";
@@ -292,9 +331,25 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
   a time → state at each step matches what was actually done, in reverse
   order.
 
-## Known accepted gap
+## Pending Feature 6 acceptance
 
-- No real dense chiptune `.mid` fixture has been used to validate
-  performance directly — only synthetic stress fixtures (worth a manual
-  spot-check if/when a suitably dense real file is available, per
-  `agents.md`'s Progress Log).
+Feature 6 implementation and the available non-browser gates are complete: `pnpm test` passed 562
+unit tests, lint/typecheck/build passed, and Playwright discovery found 108 tests (106 before the
+two E3 branch-isolation and pointer-cancel regressions). Real Playwright execution is not yet a
+pass: the current browser quota blocked it, and there was no in-app browser target for the manual
+ergonomics substitute.
+
+Targeted Prettier checks for the Feature 6/E3 files pass. The repo-wide `pnpm format:check` still
+reports only the pre-existing untouched `native-e2e/native-shell.e2e.mjs`; this Feature 6 slice
+does not rewrite that unrelated native test.
+
+When browser capacity is available, run:
+
+```powershell
+pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
+pnpm test:e2e
+```
+
+Then run `pnpm tauri dev` and complete the Feature 6 checklist above on sparse and dense real files,
+including audition by ear. Record those results before calling Feature 6 fully accepted or starting
+Feature 7.
