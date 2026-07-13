@@ -9,6 +9,7 @@ import { pitchToY, tickToX } from "./coordinates";
 import {
   createPianoViewGeometry,
   PIANO_VIEW_GUTTER_WIDTH,
+  type ScreenRect,
   type ViewGeometry,
 } from "./viewGeometry";
 
@@ -289,6 +290,46 @@ export function resolveNoteRenderStyle(
   };
 }
 
+function drawNoteRect(
+  context: CanvasRenderingContext2D,
+  note: MidiNote,
+  rect: ScreenRect,
+  renderContext: NoteRenderContext,
+): void {
+  const width = rect.right - rect.left;
+  const height = rect.bottom - rect.top;
+  const style = resolveNoteRenderStyle(note, renderContext);
+
+  context.globalAlpha = style.isDimmed ? 0.25 : 1;
+  context.fillStyle = style.fillColor;
+  context.fillRect(rect.left, rect.top, width, height);
+  context.strokeStyle = style.strokeColor;
+  context.lineWidth = style.isSelected ? 3 : 1;
+  if (style.showLowConfidenceDash) {
+    context.setLineDash([3, 2]);
+  }
+  context.strokeRect(rect.left, rect.top, width, height);
+  context.setLineDash([]);
+  context.lineWidth = 1;
+
+  if (style.showChangedEdge) {
+    context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
+    context.fillRect(rect.left, rect.top, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
+  }
+
+  if (style.showConflictUnderline) {
+    context.fillStyle = CONFLICT_UNDERLINE_COLOR;
+    context.fillRect(
+      rect.left,
+      rect.top + Math.max(0, height - CONFLICT_UNDERLINE_HEIGHT_PX),
+      width,
+      CONFLICT_UNDERLINE_HEIGHT_PX,
+    );
+  }
+
+  context.globalAlpha = 1;
+}
+
 export function drawPianoRoll(
   context: CanvasRenderingContext2D,
   project: MidiProject | null,
@@ -388,12 +429,7 @@ export function drawPianoRoll(
     if (!rect) {
       continue;
     }
-    const x = rect.left;
-    const y = rect.top;
-    const width = rect.right - rect.left;
-    const height = rect.bottom - rect.top;
-
-    const style = resolveNoteRenderStyle(note, {
+    drawNoteRect(context, note, rect, {
       selectedNoteIds,
       soloVoiceId,
       paintPreview,
@@ -403,34 +439,6 @@ export function drawPianoRoll(
       conflictNoteIds,
       presentationKeyByVoiceId,
     });
-    context.globalAlpha = style.isDimmed ? 0.25 : 1;
-    context.fillStyle = style.fillColor;
-    context.fillRect(x, y, width, height);
-    context.strokeStyle = style.strokeColor;
-    context.lineWidth = style.isSelected ? 3 : 1;
-    if (style.showLowConfidenceDash) {
-      context.setLineDash([3, 2]);
-    }
-    context.strokeRect(x, y, width, height);
-    context.setLineDash([]);
-    context.lineWidth = 1;
-
-    if (style.showChangedEdge) {
-      context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
-      context.fillRect(x, y, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
-    }
-
-    if (style.showConflictUnderline) {
-      context.fillStyle = CONFLICT_UNDERLINE_COLOR;
-      context.fillRect(
-        x,
-        y + Math.max(0, height - CONFLICT_UNDERLINE_HEIGHT_PX),
-        width,
-        CONFLICT_UNDERLINE_HEIGHT_PX,
-      );
-    }
-
-    context.globalAlpha = 1;
   }
   context.restore();
 
@@ -521,6 +529,7 @@ export function drawVoiceLanes(
   previousVoiceId: ReadonlyMap<string, string> = new Map(),
   onlyChangedNotes: boolean = false,
   confidenceHeatmap: boolean = false,
+  conflictNoteIds: ReadonlySet<string> = new Set(),
   presentationKeyByVoiceId: ReadonlyMap<string, string> = new Map(),
 ): void {
   if (geometry.kind !== "voice-lanes" || geometry.laneRows === null) {
@@ -593,67 +602,20 @@ export function drawVoiceLanes(
     if (!rect) {
       continue;
     }
-    const width = rect.right - rect.left;
-    const height = rect.bottom - rect.top;
-    const style = resolveNoteRenderStyle(note, {
+    drawNoteRect(context, note, rect, {
       selectedNoteIds,
       soloVoiceId,
       paintPreview,
       changedNoteIds,
       previousVoiceId,
       confidenceHeatmap,
+      conflictNoteIds,
       presentationKeyByVoiceId,
     });
-
-    context.globalAlpha = style.isDimmed ? 0.25 : 1;
-    context.fillStyle = style.fillColor;
-    context.fillRect(rect.left, rect.top, width, height);
-    context.strokeStyle = style.strokeColor;
-    context.lineWidth = style.isSelected ? 3 : 1;
-    if (style.showLowConfidenceDash) {
-      context.setLineDash([3, 2]);
-    }
-    context.strokeRect(rect.left, rect.top, width, height);
-    context.setLineDash([]);
-    context.lineWidth = 1;
-
-    if (style.showChangedEdge) {
-      context.fillStyle = style.changeEdgeColor ?? DEFAULT_CHANGE_EDGE_COLOR;
-      context.fillRect(rect.left, rect.top, Math.min(CHANGE_EDGE_WIDTH_PX, width), height);
-    }
-
-    context.globalAlpha = 1;
   }
 
-  drawLanePlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
+  drawPlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
   drawMarquee(context, marqueeRect);
-}
-
-function drawLanePlayhead(
-  context: CanvasRenderingContext2D,
-  rollViewport: PianoRollViewport,
-  gutterWidth: number,
-  height: number,
-  playheadTick: number | null,
-): void {
-  if (
-    playheadTick === null ||
-    playheadTick < rollViewport.startTick ||
-    playheadTick > rollViewport.endTick
-  ) {
-    return;
-  }
-
-  const x = gutterWidth + tickToX(playheadTick, rollViewport);
-  context.globalAlpha = 1;
-  context.strokeStyle = "#f8fafc";
-  context.lineWidth = 2;
-  context.setLineDash([]);
-  context.beginPath();
-  context.moveTo(x, 0);
-  context.lineTo(x, height);
-  context.stroke();
-  context.lineWidth = 1;
 }
 function drawPlayhead(
   context: CanvasRenderingContext2D,

@@ -570,6 +570,7 @@ export function PianoRoll({
         previousVoiceId,
         onlyChangedNotes,
         confidenceHeatmap,
+        conflictNoteIds,
         presentationKeyByVoiceId,
       );
       return;
@@ -868,6 +869,7 @@ export function PianoRoll({
     timeRangeDraft,
     viewMode,
     viewGeometry,
+    presentationKeyByVoiceId,
   ]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLCanvasElement>) {

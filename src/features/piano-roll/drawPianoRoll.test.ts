@@ -354,10 +354,17 @@ function project(overrides: Partial<MidiProject> = {}): MidiProject {
 
 interface DrawVoiceLaneArgs {
   geometry?: ViewGeometry;
+  selectedNoteIds?: ReadonlySet<string>;
   marqueeRect?: Parameters<typeof drawVoiceLanes>[5];
   soloVoiceId?: string | null;
   paintPreview?: ReadonlyMap<string, string>;
   playheadTick?: number | null;
+  changedNoteIds?: ReadonlySet<string>;
+  previousVoiceId?: ReadonlyMap<string, string>;
+  onlyChangedNotes?: boolean;
+  confidenceHeatmap?: boolean;
+  conflictNoteIds?: ReadonlySet<string>;
+  presentationKeyByVoiceId?: ReadonlyMap<string, string>;
 }
 
 function callDrawVoiceLanes(
@@ -371,11 +378,17 @@ function callDrawVoiceLanes(
     midiProject,
     drawViewport,
     args.geometry ?? createVoiceLaneViewGeometry(midiProject, drawViewport),
-    undefined,
+    args.selectedNoteIds,
     args.marqueeRect ?? null,
     args.soloVoiceId,
     args.paintPreview,
     args.playheadTick,
+    args.changedNoteIds,
+    args.previousVoiceId,
+    args.onlyChangedNotes,
+    args.confidenceHeatmap,
+    args.conflictNoteIds,
+    args.presentationKeyByVoiceId,
   );
 }
 
@@ -817,6 +830,113 @@ describe("drawVoiceLanes", () => {
       (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
     );
     expect(noteFill?.globalAlpha).toBe(0.25);
+  });
+
+  it("gives a selected lane note the common thicker white stroke", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project(), { selectedNoteIds: new Set(["a"]) });
+
+    const strokeCall = context.styledCalls.find((call) => call.method === "strokeRect");
+    expect(strokeCall).toMatchObject({ lineWidth: 3, strokeStyle: "#f8fafc" });
+  });
+
+  it("fills a lane note with the common confidence heat color", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project({ notes: [note({ assignmentConfidence: 0.2 })] }), {
+      confidenceHeatmap: true,
+    });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === confidenceHeatColor(0.2),
+      ),
+    ).toBe(true);
+  });
+
+  it("uses the previous voice color for a changed lane note edge", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project(), {
+      changedNoteIds: new Set(["a"]),
+      previousVoiceId: new Map([["a", "voice-3"]]),
+    });
+
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-3"),
+      ),
+    ).toBe(true);
+  });
+
+  it("draws the common conflict underline at the bottom of a lane note", () => {
+    const target = note();
+    const midiProject = project({ notes: [target] });
+    const geometry = createVoiceLaneViewGeometry(midiProject, viewport);
+    const rect = geometry.noteRect(target);
+    expect(rect).not.toBeNull();
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, midiProject, {
+      geometry,
+      conflictNoteIds: new Set([target.id]),
+    });
+
+    expect(
+      context.styledCalls.find(
+        (call) => call.method === "fillRect" && call.fillStyle === "#ef4444",
+      ),
+    ).toMatchObject({
+      args: [rect?.left, (rect?.bottom ?? 0) - 2, (rect?.right ?? 0) - (rect?.left ?? 0), 2],
+    });
+  });
+
+  it("keeps the lane conflict cue while selection suppresses competing border cues", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project({ notes: [note({ assignmentConfidence: 0.2 })] }), {
+      selectedNoteIds: new Set(["a"]),
+      changedNoteIds: new Set(["a"]),
+      previousVoiceId: new Map([["a", "voice-3"]]),
+      conflictNoteIds: new Set(["a"]),
+    });
+
+    expect(context.styledCalls.find((call) => call.method === "strokeRect")).toMatchObject({
+      lineWidth: 3,
+      strokeStyle: "#f8fafc",
+    });
+    expect(context.setLineDash).not.toHaveBeenCalledWith([3, 2]);
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-3"),
+      ),
+    ).toBe(false);
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === "#ef4444",
+      ),
+    ).toBe(true);
+  });
+
+  it("lets lane paint preview beat heat and drive solo dimming", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project({ notes: [note({ assignmentConfidence: 0.2 })] }), {
+      soloVoiceId: "voice-1",
+      paintPreview: new Map([["a", "voice-2"]]),
+      confidenceHeatmap: true,
+    });
+
+    const previewFill = context.styledCalls.find(
+      (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-2"),
+    );
+    expect(previewFill?.globalAlpha).toBe(0.25);
+    expect(
+      context.styledCalls.some(
+        (call) => call.method === "fillRect" && call.fillStyle === confidenceHeatColor(0.2),
+      ),
+    ).toBe(false);
   });
 
   it("previews a target color in the source lane and reflows only after commit", () => {
