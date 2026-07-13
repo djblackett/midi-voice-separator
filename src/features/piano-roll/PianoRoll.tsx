@@ -33,7 +33,7 @@ import {
   type LaneViewportContext,
   type LaneViewportWindow,
 } from "./laneViewport";
-import { shouldPaintNote } from "./paint";
+import { resolvePencilPaintAnchor, resolveWandPaintTarget, shouldPaintNote } from "./paint";
 import {
   DEFAULT_BRUSH_RADIUS,
   notesInBrushStamp,
@@ -652,16 +652,18 @@ export function PianoRoll({
     if (!activeVoiceId || !interactionProject) {
       return;
     }
-    const note = hitTestActiveNote(point);
-    if (!note || paintedNoteIdsRef.current.has(note.id)) {
+    const target = resolveWandPaintTarget(
+      point,
+      interactionProject.notes,
+      viewGeometry,
+      interactionProject.ppq,
+      wandReach,
+    );
+    if (!target || paintedNoteIdsRef.current.has(target.anchor.id)) {
       return;
     }
-    const phrase = selectPhrase(note, interactionProject.notes, {
-      maxGapTicks: interactionProject.ppq,
-      maxPitchJumpSemitones: wandReach,
-    });
     let changed = false;
-    for (const phraseNote of phrase) {
+    for (const phraseNote of target.phrase) {
       if (phraseNote.voiceId !== activeVoiceId && !paintedNoteIdsRef.current.has(phraseNote.id)) {
         paintedNoteIdsRef.current.set(phraseNote.id, activeVoiceId);
         changed = true;
@@ -671,7 +673,7 @@ export function PianoRoll({
       redrawCanvas();
       // The anchor, not the whole phrase — one blip tells you the fill
       // landed; a full run would replay the melody on every click.
-      auditionThrottled([note]);
+      auditionThrottled([target.anchor]);
     }
   }
 
@@ -988,7 +990,7 @@ export function PianoRoll({
       } else if (paintTool === "wand") {
         stampWand(point);
       } else {
-        const note = hitTestActiveNote(point);
+        const note = resolvePencilPaintAnchor(point, interactionProject?.notes ?? [], viewGeometry);
         if (note && shouldPaintNote(note, activeVoiceId, new Set())) {
           paintedNoteIdsRef.current.set(note.id, activeVoiceId);
           redrawCanvas();
@@ -1034,7 +1036,7 @@ export function PianoRoll({
           updateLassoPreview();
         }
       } else {
-        const note = hitTestActiveNote(point);
+        const note = resolvePencilPaintAnchor(point, interactionProject?.notes ?? [], viewGeometry);
         if (
           note &&
           shouldPaintNote(note, activeVoiceId, new Set(paintedNoteIdsRef.current.keys()))

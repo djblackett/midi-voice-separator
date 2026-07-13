@@ -126,15 +126,14 @@ test.describe("paint mode", () => {
     await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
   });
 
-  test("clicking a note on the canvas while painting reassigns it, as one undoable step", async ({
-    page,
-  }) => {
+  test("a pencil click reassigns one note as one undoable step", async ({ page }) => {
     await installFakeTauri(page, { importedProject: twoVoiceProject });
     await page.goto("/");
     await importFixture(page);
 
     await page.getByLabel("Select notes in Voice 2").click();
     await page.getByRole("button", { name: "Paint mode: off" }).click();
+    await page.getByRole("button", { name: "Pencil" }).click();
 
     await clickNoteOnCanvas(page, noteA);
 
