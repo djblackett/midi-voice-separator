@@ -3,9 +3,13 @@ import { buildFixtureProject, installFakeTauri, note, voice } from "./fixtures/t
 
 // Smart selection (smartSelect.ts) driven through its real gestures:
 // double-click chord select, the right-click context menu's chord/line
-// actions, and assign-to-voice swatches. Coordinate math mirrors
-// buildViewport/hitTest at default zoom, same as paint-mode.e2e.ts.
+// actions, and assign-to-voice swatches. Coordinate math mirrors the
+// canonical piano and voice-lane rectangles at default zoom.
 const PIANO_ROLL_LABEL_WIDTH = 56;
+const VOICE_LANE_LABEL_WIDTH = 96;
+const LANE_PADDING_Y = 6;
+const MIN_NOTE_HEIGHT = 5;
+const MAX_NOTE_HEIGHT = 12;
 
 interface FixtureNote {
   pitch: number;
@@ -59,10 +63,37 @@ function noteScreenCenter(targetNote: FixtureNote, canvasBox: { width: number; h
   return { x: (noteX + noteEndX) / 2, y: noteY + rowHeight / 2 };
 }
 
+function laneNoteScreenCenter(
+  targetNote: FixtureNote,
+  canvasBox: { width: number; height: number },
+  voiceIndex: number,
+  lowestVoicePitch: number,
+  highestVoicePitch: number,
+) {
+  const laneHeight = Math.max(36, canvasBox.height / fixtureProject.voices.length);
+  const innerHeight = Math.max(1, laneHeight - LANE_PADDING_Y * 2);
+  const pitchSpan = Math.max(1, highestVoicePitch - lowestVoicePitch + 1);
+  const noteHeight = Math.min(MAX_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, innerHeight / pitchSpan));
+  const pitchOffset =
+    ((highestVoicePitch - targetNote.pitch) / pitchSpan) * Math.max(1, innerHeight - noteHeight);
+  const rollWidth = canvasBox.width - VOICE_LANE_LABEL_WIDTH;
+  const noteX = VOICE_LANE_LABEL_WIDTH + (targetNote.startTick / durationTicks) * rollWidth;
+  const noteEndX = VOICE_LANE_LABEL_WIDTH + (targetNote.endTick / durationTicks) * rollWidth;
+
+  return {
+    x: (noteX + noteEndX) / 2,
+    y: voiceIndex * laneHeight + LANE_PADDING_Y + pitchOffset + noteHeight / 2,
+  };
+}
+
 function voiceRow(page: Page, label: string) {
   return page
     .locator(".voice-legend li")
     .filter({ has: page.getByLabel(`Select notes in ${label}`, { exact: true }) });
+}
+
+function statsRow(page: Page, label: string) {
+  return page.locator(".diff-summary-stats div", { hasText: label }).innerText();
 }
 
 async function importFixture(page: Page) {
@@ -90,6 +121,46 @@ async function rightClickNote(page: Page, target: FixtureNote) {
   const box = await canvasBox(page);
   const local = noteScreenCenter(target, box);
   await page.mouse.click(box.x + local.x, box.y + local.y, { button: "right" });
+}
+
+async function switchToVoiceLanes(page: Page) {
+  await page.getByRole("button", { name: "Voice lanes" }).click();
+  await expect(page.getByRole("button", { name: "Voice lanes" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+}
+
+async function laneNotePoint(
+  page: Page,
+  target: FixtureNote,
+  voiceIndex: number,
+  lowestVoicePitch: number,
+  highestVoicePitch: number,
+) {
+  const canvas = page.getByLabel("Piano roll note visualization");
+  const box = await canvasBox(page);
+  return {
+    canvas,
+    point: laneNoteScreenCenter(target, box, voiceIndex, lowestVoicePitch, highestVoicePitch),
+  };
+}
+
+async function rightClickLaneNote(
+  page: Page,
+  target: FixtureNote,
+  voiceIndex: number,
+  lowestVoicePitch: number,
+  highestVoicePitch: number,
+) {
+  const { canvas, point } = await laneNotePoint(
+    page,
+    target,
+    voiceIndex,
+    lowestVoicePitch,
+    highestVoicePitch,
+  );
+  await canvas.click({ position: point, button: "right" });
 }
 
 test.describe("smart selection", () => {
@@ -146,5 +217,80 @@ test.describe("smart selection", () => {
     // The chord collapses to its highest note; the run notes never
     // overlap anything, so all three survive: 4 notes.
     await expect(page.getByText(/4 notes selected/)).toBeVisible();
+  });
+
+  test("voice lanes double-click a chord and assign the selected chord from its context menu", async ({
+    page,
+  }) => {
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+
+    const { canvas, point } = await laneNotePoint(page, chordThird, 0, 60, 67);
+    await canvas.dblclick({ position: point });
+    await expect(page.getByLabel("Selected note details")).toContainText("3 notes selected");
+
+    await rightClickLaneNote(page, chordRoot, 0, 60, 67);
+    await page.getByRole("menuitem", { name: "Assign to Voice 2" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("3 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("4 notes");
+
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("6 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
+  });
+
+  test("voice lane context actions select phrases, keep a line, and target an unselected note", async ({
+    page,
+  }) => {
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+
+    await rightClickLaneNote(page, run2, 0, 60, 67);
+    await page.getByRole("menuitem", { name: "Select phrase" }).click();
+    await expect(page.getByLabel("Selected note details")).toContainText("3 notes selected");
+
+    await rightClickLaneNote(page, chordRoot, 0, 60, 67);
+    await page.getByRole("menuitem", { name: "Select chord" }).click();
+    await rightClickLaneNote(page, chordFifth, 0, 60, 67);
+    await page.getByRole("menuitem", { name: "Keep bottom line only" }).click();
+    await expect(page.getByLabel("Selected note details").locator("dl")).toContainText("60");
+
+    await rightClickLaneNote(page, run1, 0, 60, 67);
+    await page.getByRole("menuitem", { name: "Assign to Voice 2" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("5 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("2 notes");
+  });
+
+  test("filtered voice-lane context assignment cannot mutate hidden selected notes", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, {
+      importedProject: fixtureProject,
+      reassign: ({ project: current }) => ({
+        ...current,
+        notes: current.notes.map((entry) =>
+          entry.id === "chord-root" ? { ...entry, voiceId: "voice-2" } : entry,
+        ),
+      }),
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Import MIDI" }).click();
+    await page.waitForSelector(".diff-summary");
+    await page.getByRole("button", { name: "Re-run separation" }).click();
+    const importValue = await page
+      .locator(".diff-target-select option", { hasText: "Import" })
+      .getAttribute("value");
+    await page.locator(".diff-target-select").selectOption(importValue ?? "");
+    await expect.poll(() => statsRow(page, "Notes reassigned")).toContain("1");
+
+    await page.getByLabel("Select notes in Voice 2", { exact: true }).click();
+    await page.getByLabel("Show changes in piano roll").check();
+    await page.getByLabel("Only changed notes").check();
+    await switchToVoiceLanes(page);
+
+    await rightClickLaneNote(page, chordRoot, 1, 60, 76);
+    await page.getByRole("menuitem", { name: "Assign to Voice 1" }).click();
+    await expect(voiceRow(page, "Voice 1")).toContainText("6 notes");
+    await expect(voiceRow(page, "Voice 2")).toContainText("1 notes");
   });
 });

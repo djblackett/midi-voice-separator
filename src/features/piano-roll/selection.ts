@@ -22,6 +22,22 @@ export function hasCrossedMarqueeThreshold(
   );
 }
 
+export function resolveContextAssignmentTargets(
+  contextNoteId: string | null,
+  selectedNoteIds: ReadonlySet<string>,
+  permittedNoteIds: readonly string[],
+): string[] {
+  const permitted = new Set(permittedNoteIds);
+  if (contextNoteId !== null && !permitted.has(contextNoteId)) {
+    return [];
+  }
+  if (contextNoteId !== null && !selectedNoteIds.has(contextNoteId)) {
+    return [contextNoteId];
+  }
+
+  return permittedNoteIds.filter((noteId) => selectedNoteIds.has(noteId));
+}
+
 export function resolveSelection(
   current: ReadonlySet<string>,
   gesture: SelectionGesture,

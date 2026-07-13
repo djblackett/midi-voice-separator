@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { hasCrossedMarqueeThreshold, resolveSelection } from "./selection";
+import {
+  hasCrossedMarqueeThreshold,
+  resolveContextAssignmentTargets,
+  resolveSelection,
+} from "./selection";
 
 describe("hasCrossedMarqueeThreshold", () => {
   it("latches a crossed threshold when the pointer returns near its start", () => {
@@ -15,6 +19,37 @@ describe("hasCrossedMarqueeThreshold", () => {
 
     expect(hasCrossedMarqueeThreshold(start, { x: 13, y: 17 }, 4)).toBe(false);
     expect(hasCrossedMarqueeThreshold(start, { x: 10, y: 16 }, 4)).toBe(true);
+  });
+});
+
+describe("resolveContextAssignmentTargets", () => {
+  const permitted = ["visible-b", "visible-a"];
+
+  it("targets permitted selected notes in permitted order for a selected anchor", () => {
+    expect(
+      resolveContextAssignmentTargets(
+        "visible-a",
+        new Set(["visible-a", "hidden", "visible-b"]),
+        permitted,
+      ),
+    ).toEqual(["visible-b", "visible-a"]);
+  });
+
+  it("targets only an unselected permitted anchor", () => {
+    expect(resolveContextAssignmentTargets("visible-a", new Set(["visible-b"]), permitted)).toEqual(
+      ["visible-a"],
+    );
+  });
+
+  it("uses permitted selected notes for empty-space actions", () => {
+    expect(
+      resolveContextAssignmentTargets(null, new Set(["hidden", "visible-a"]), permitted),
+    ).toEqual(["visible-a"]);
+  });
+
+  it("excludes hidden selections and rejects a hidden anchor", () => {
+    expect(resolveContextAssignmentTargets(null, new Set(["hidden"]), permitted)).toEqual([]);
+    expect(resolveContextAssignmentTargets("hidden", new Set(["hidden"]), permitted)).toEqual([]);
   });
 });
 

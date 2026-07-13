@@ -60,7 +60,11 @@ import {
   zoomPitchAt,
   type PitchViewportWindow,
 } from "./pitchViewportWindow";
-import { hasCrossedMarqueeThreshold, resolveSelection } from "./selection";
+import {
+  hasCrossedMarqueeThreshold,
+  resolveContextAssignmentTargets,
+  resolveSelection,
+} from "./selection";
 import {
   defaultViewportWindow,
   panBy,
@@ -516,6 +520,14 @@ export function PianoRoll({
     return interactionProject.notes.find((note) => note.id === contextMenu.noteId) ?? null;
   }, [contextMenu, interactionProject]);
 
+  const authorizedSelectedNoteIds = useMemo(
+    () =>
+      interactionProject?.notes
+        .filter((note) => selectedNoteIds.has(note.id))
+        .map((note) => note.id) ?? [],
+    [interactionProject, selectedNoteIds],
+  );
+
   // DAW convention: a right-click on a selected note acts on the whole
   // selection; on an unselected note, just that note; on empty space, the
   // selection (if any).
@@ -523,11 +535,12 @@ export function PianoRoll({
     if (!contextMenu) {
       return [];
     }
-    if (contextNote && !selectedNoteIds.has(contextNote.id)) {
-      return [contextNote.id];
-    }
-    return [...selectedNoteIds];
-  }, [contextMenu, contextNote, selectedNoteIds]);
+    return resolveContextAssignmentTargets(
+      contextMenu.noteId,
+      selectedNoteIds,
+      interactionProject?.notes.map((note) => note.id) ?? [],
+    );
+  }, [contextMenu, selectedNoteIds, interactionProject]);
 
   function drawCurrentView(context: CanvasRenderingContext2D) {
     if (viewMode === "voice-lanes") {
@@ -1144,12 +1157,12 @@ export function PianoRoll({
     // Always suppress the browser menu over the roll — a right-click that
     // can't open our menu should do nothing, not pop "Save image as...".
     event.preventDefault();
-    if (readOnly || viewMode !== "piano" || !interactionProject) {
+    if (readOnly || !viewGeometry.capabilities.contextActions || !interactionProject) {
       return;
     }
     const point = pointFromMouseEvent(event);
     const note = hitTestActiveNote(point);
-    if (!note && selectedNoteIds.size === 0) {
+    if (!note && authorizedSelectedNoteIds.length === 0) {
       setContextMenu(null);
       return;
     }
@@ -1158,7 +1171,11 @@ export function PianoRoll({
   }
 
   function handleCanvasDoubleClick(event: ReactMouseEvent<HTMLCanvasElement>) {
-    if (viewMode !== "piano" || interactionMode !== "select" || !interactionProject) {
+    if (
+      !viewGeometry.capabilities.clickSelection ||
+      interactionMode !== "select" ||
+      !interactionProject
+    ) {
       return;
     }
     const note = hitTestActiveNote(pointFromMouseEvent(event));
@@ -1173,7 +1190,9 @@ export function PianoRoll({
     // Deliberately unthrottled: the preceding click's single-note blip
     // would otherwise suppress hearing the chord itself — the whole point
     // of double-clicking it.
-    onAuditionNotes(chord);
+    if (viewGeometry.capabilities.audition) {
+      onAuditionNotes(chord);
+    }
     onSelectionChange(new Set(chord.map((chordNote) => chordNote.id)));
   }
 
@@ -1489,7 +1508,7 @@ export function PianoRoll({
                 </button>
               </>
             ) : null}
-            {selectedNoteIds.size >= 2 ? (
+            {authorizedSelectedNoteIds.length >= 2 ? (
               <>
                 <button type="button" role="menuitem" onClick={() => handleMenuKeepLine("top")}>
                   Keep top line only
