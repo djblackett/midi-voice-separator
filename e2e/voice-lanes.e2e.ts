@@ -107,9 +107,10 @@ async function clickNoteInLaneView(
   target: LaneFixtureNote,
   fixtureProject = laneProject,
   scrollTopPx = 0,
+  additive = false,
 ) {
-  // .first(): the interactive roll canvas — the shell's second canvas is
-  // the pointer-transparent paint-cursor overlay.
+  // The accessible name targets the interactive roll; the paint overlay is
+  // intentionally aria-hidden and pointer-transparent.
   const canvas = page.getByLabel("Piano roll note visualization");
   const box = await canvas.boundingBox();
   if (!box) {
@@ -122,9 +123,47 @@ async function clickNoteInLaneView(
     fixtureProject.voices.length,
     scrollTopPx,
   );
-  await page.mouse.move(box.x + local.x, box.y + local.y);
+  await canvas.click({
+    position: local,
+    modifiers: additive ? ["Shift"] : [],
+  });
+}
+
+async function dragLaneMarquee(
+  page: Page,
+  startTick: number,
+  endTick: number,
+  firstVoiceIndex: number,
+  lastVoiceIndex: number,
+  additive = false,
+) {
+  const canvas = page.getByLabel("Piano roll note visualization");
+  const box = await canvas.boundingBox();
+  if (!box) {
+    throw new Error("Piano roll canvas has no bounding box");
+  }
+
+  const rollWidth = box.width - VOICE_LANE_LABEL_WIDTH;
+  const laneHeight = Math.max(36, box.height / laneProject.voices.length);
+  const start = {
+    x: box.x + VOICE_LANE_LABEL_WIDTH + (startTick / laneProject.durationTicks) * rollWidth,
+    y: box.y + firstVoiceIndex * laneHeight + 2,
+  };
+  const end = {
+    x: box.x + VOICE_LANE_LABEL_WIDTH + (endTick / laneProject.durationTicks) * rollWidth,
+    y: box.y + (lastVoiceIndex + 1) * laneHeight - 2,
+  };
+
+  if (additive) {
+    await page.keyboard.down("Shift");
+  }
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
   await page.mouse.up();
+  if (additive) {
+    await page.keyboard.up("Shift");
+  }
 }
 
 async function switchToVoiceLanes(page: Page) {
@@ -200,6 +239,32 @@ test.describe("voice lane view", () => {
     const details = page.locator(".selection-details dl");
     await expect(details).toContainText("72");
     await expect(details).toContainText("voice-2");
+  });
+
+  test("Shift-click and marquee selection match the piano-roll gesture contract", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, { importedProject: laneProject });
+    await page.goto("/");
+    await importFixture(page);
+    await switchToVoiceLanes(page);
+
+    const details = page.getByLabel("Selected note details");
+    await clickNoteInLaneView(page, leadNote);
+    await clickNoteInLaneView(page, percussionNote, laneProject, 0, true);
+    await expect(details).toContainText("2 notes selected | 2 voices | pitches 36-72");
+
+    // Shift-click toggles an existing member back out.
+    await clickNoteInLaneView(page, percussionNote, laneProject, 0, true);
+    await expect(details.locator("dl")).toContainText("voice-2");
+
+    // A plain early-time marquee replaces Lead with Bass + Percussion.
+    await dragLaneMarquee(page, 1, 380, 0, 2);
+    await expect(details).toContainText("2 notes selected | 2 voices | pitches 36-48");
+
+    // Shift-marquee unions both later Lead notes with the current selection.
+    await dragLaneMarquee(page, 450, 920, 1, 1, true);
+    await expect(details).toContainText("4 notes selected | 3 voices | pitches 36-76");
   });
 
   test("the percussion lane is rendered and selectable", async ({ page }) => {

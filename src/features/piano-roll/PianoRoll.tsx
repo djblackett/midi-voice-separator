@@ -21,7 +21,7 @@ import {
   type MarqueeRect,
   type TickWindow,
 } from "./drawPianoRoll";
-import { hitTestPianoRollNotesInRect, type PianoRollPoint } from "./hitTest";
+import type { PianoRollPoint } from "./hitTest";
 import {
   clampLaneViewport,
   defaultLaneViewportWindow,
@@ -60,7 +60,7 @@ import {
   zoomPitchAt,
   type PitchViewportWindow,
 } from "./pitchViewportWindow";
-import { resolveSelection } from "./selection";
+import { hasCrossedMarqueeThreshold, resolveSelection } from "./selection";
 import {
   defaultViewportWindow,
   panBy,
@@ -73,6 +73,7 @@ import {
   createPianoViewGeometry,
   createVoiceLaneViewGeometry,
   hitTestNoteAtPoint,
+  hitTestNotesInRect,
 } from "./viewGeometry";
 
 const MARQUEE_THRESHOLD_PX = 4;
@@ -240,7 +241,11 @@ export function PianoRoll({
     },
     [pitchViewport, onPitchViewportChange],
   );
-  const dragStartRef = useRef<{ point: { x: number; y: number }; additive: boolean } | null>(null);
+  const dragStartRef = useRef<{
+    point: { x: number; y: number };
+    additive: boolean;
+    movedPastThreshold: boolean;
+  } | null>(null);
   const isPaintingRef = useRef(false);
   const paintedNoteIdsRef = useRef<Map<string, string>>(new Map());
   const draggedMarkerIdRef = useRef<string | null>(null);
@@ -484,10 +489,10 @@ export function PianoRoll({
     if (!marqueeRect) {
       return null;
     }
-    return hitTestPianoRollNotesInRect(marqueeRect, interactionProject, viewport).map(
+    return hitTestNotesInRect(marqueeRect, interactionProject?.notes ?? [], viewGeometry).map(
       (note) => note.id,
     );
-  }, [marqueeRect, interactionProject, viewport]);
+  }, [marqueeRect, interactionProject, viewGeometry]);
 
   const effectiveSelection = useMemo(() => {
     if (!marqueePreviewIds || !dragStartRef.current) {
@@ -532,6 +537,7 @@ export function PianoRoll({
         viewport,
         viewGeometry,
         effectiveSelection,
+        marqueeRect,
         soloVoiceId,
         paintedNoteIdsRef.current,
         currentPlaybackTick,
@@ -979,7 +985,11 @@ export function PianoRoll({
       return;
     }
 
-    dragStartRef.current = { point: pointFromEvent(event), additive: event.shiftKey };
+    dragStartRef.current = {
+      point: pointFromEvent(event),
+      additive: event.shiftKey,
+      movedPastThreshold: false,
+    };
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -1033,14 +1043,14 @@ export function PianoRoll({
     }
 
     const point = pointFromEvent(event);
-    if (viewMode === "voice-lanes") {
-      return;
-    }
-    const movedPastThreshold =
-      Math.abs(point.x - dragStart.point.x) >= MARQUEE_THRESHOLD_PX ||
-      Math.abs(point.y - dragStart.point.y) >= MARQUEE_THRESHOLD_PX;
+    dragStart.movedPastThreshold = hasCrossedMarqueeThreshold(
+      dragStart.point,
+      point,
+      MARQUEE_THRESHOLD_PX,
+      dragStart.movedPastThreshold,
+    );
 
-    if (movedPastThreshold || marqueeRect) {
+    if (dragStart.movedPastThreshold) {
       setMarqueeRect({ x0: dragStart.point.x, y0: dragStart.point.y, x1: point.x, y1: point.y });
     }
   }
@@ -1082,28 +1092,18 @@ export function PianoRoll({
 
     const point = pointFromEvent(event);
 
-    if (viewMode === "voice-lanes") {
-      const note = hitTestActiveNote(point);
-      if (note) {
-        auditionThrottled([note]);
-      }
-      onSelectionChange(
-        resolveSelection(selectedNoteIds, {
-          type: "click",
-          noteId: note?.id ?? null,
-          additive: dragStart.additive,
-        }),
-      );
-      dragStartRef.current = null;
-      setMarqueeRect(null);
-      return;
-    }
+    dragStart.movedPastThreshold = hasCrossedMarqueeThreshold(
+      dragStart.point,
+      point,
+      MARQUEE_THRESHOLD_PX,
+      dragStart.movedPastThreshold,
+    );
 
-    if (marqueeRect) {
-      const noteIds = hitTestPianoRollNotesInRect(
+    if (dragStart.movedPastThreshold) {
+      const noteIds = hitTestNotesInRect(
         { x0: dragStart.point.x, y0: dragStart.point.y, x1: point.x, y1: point.y },
-        interactionProject,
-        viewport,
+        interactionProject?.notes ?? [],
+        viewGeometry,
       ).map((note) => note.id);
       onSelectionChange(
         resolveSelection(selectedNoteIds, {
@@ -1126,6 +1126,11 @@ export function PianoRoll({
       );
     }
 
+    dragStartRef.current = null;
+    setMarqueeRect(null);
+  }
+
+  function handleCanvasPointerCancel() {
     dragStartRef.current = null;
     setMarqueeRect(null);
   }
@@ -1421,6 +1426,7 @@ export function PianoRoll({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handleCanvasPointerCancel}
         onContextMenu={handleCanvasContextMenu}
         onDoubleClick={handleCanvasDoubleClick}
         onPointerLeave={() => {

@@ -2,6 +2,26 @@ export type SelectionGesture =
   | { type: "click"; noteId: string | null; additive: boolean }
   | { type: "marquee"; noteIds: string[]; additive: boolean };
 
+export interface SelectionDragPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+export function hasCrossedMarqueeThreshold(
+  start: SelectionDragPoint,
+  current: SelectionDragPoint,
+  thresholdPx: number,
+  alreadyCrossed = false,
+): boolean {
+  if (alreadyCrossed) {
+    return true;
+  }
+
+  return (
+    Math.abs(current.x - start.x) >= thresholdPx || Math.abs(current.y - start.y) >= thresholdPx
+  );
+}
+
 export function resolveSelection(
   current: ReadonlySet<string>,
   gesture: SelectionGesture,

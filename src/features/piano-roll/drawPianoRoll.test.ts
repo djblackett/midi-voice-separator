@@ -354,6 +354,7 @@ function project(overrides: Partial<MidiProject> = {}): MidiProject {
 
 interface DrawVoiceLaneArgs {
   geometry?: ViewGeometry;
+  marqueeRect?: Parameters<typeof drawVoiceLanes>[5];
   soloVoiceId?: string | null;
   playheadTick?: number | null;
 }
@@ -370,6 +371,7 @@ function callDrawVoiceLanes(
     drawViewport,
     args.geometry ?? createVoiceLaneViewGeometry(midiProject, drawViewport),
     undefined,
+    args.marqueeRect ?? null,
     args.soloVoiceId,
     undefined,
     args.playheadTick,
@@ -828,6 +830,25 @@ describe("drawVoiceLanes", () => {
     expect(
       outOfRange.styledCalls.some((call) => call.method === "stroke" && call.lineWidth === 2),
     ).toBe(false);
+  });
+
+  it("draws a normalized marquee overlay when a marqueeRect is given", () => {
+    const context = createMockCanvasContext();
+
+    callDrawVoiceLanes(context, project(), {
+      marqueeRect: { x0: 160, y0: 80, x1: 110, y1: 40 },
+    });
+
+    expect(
+      context.styledCalls.find(
+        (call) => call.method === "fillRect" && call.fillStyle === "rgba(56, 189, 248, 0.15)",
+      ),
+    ).toMatchObject({ args: [110, 40, 50, 40] });
+    expect(
+      context.styledCalls.find(
+        (call) => call.method === "strokeRect" && call.strokeStyle === "#38bdf8",
+      ),
+    ).toMatchObject({ args: [110, 40, 50, 40], lineWidth: 1 });
   });
 });
 

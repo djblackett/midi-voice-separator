@@ -154,6 +154,25 @@ export interface MarqueeRect {
   y1: number;
 }
 
+function drawMarquee(context: CanvasRenderingContext2D, marqueeRect: MarqueeRect | null): void {
+  if (!marqueeRect) {
+    return;
+  }
+
+  const left = Math.min(marqueeRect.x0, marqueeRect.x1);
+  const top = Math.min(marqueeRect.y0, marqueeRect.y1);
+  const width = Math.abs(marqueeRect.x1 - marqueeRect.x0);
+  const height = Math.abs(marqueeRect.y1 - marqueeRect.y0);
+
+  context.fillStyle = "rgba(56, 189, 248, 0.15)";
+  context.fillRect(left, top, width, height);
+  context.strokeStyle = "#38bdf8";
+  context.lineWidth = 1;
+  context.setLineDash([4, 3]);
+  context.strokeRect(left, top, width, height);
+  context.setLineDash([]);
+}
+
 export interface NoteRenderStyle {
   fillColor: string;
   strokeColor: string;
@@ -417,21 +436,7 @@ export function drawPianoRoll(
 
   drawPitchMarkers(context, viewport, gutterWidth, pitchMarkers);
   drawPlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
-
-  if (marqueeRect) {
-    const left = Math.min(marqueeRect.x0, marqueeRect.x1);
-    const top = Math.min(marqueeRect.y0, marqueeRect.y1);
-    const width = Math.abs(marqueeRect.x1 - marqueeRect.x0);
-    const height = Math.abs(marqueeRect.y1 - marqueeRect.y0);
-
-    context.fillStyle = "rgba(56, 189, 248, 0.15)";
-    context.fillRect(left, top, width, height);
-    context.strokeStyle = "#38bdf8";
-    context.lineWidth = 1;
-    context.setLineDash([4, 3]);
-    context.strokeRect(left, top, width, height);
-    context.setLineDash([]);
-  }
+  drawMarquee(context, marqueeRect);
 }
 
 export function drawTimeRuler(
@@ -508,6 +513,7 @@ export function drawVoiceLanes(
   viewport: PianoRollViewport,
   geometry: ViewGeometry,
   selectedNoteIds: ReadonlySet<string> = new Set(),
+  marqueeRect: MarqueeRect | null = null,
   soloVoiceId: string | null = null,
   paintPreview: ReadonlyMap<string, string> = new Map(),
   playheadTick: number | null = null,
@@ -620,6 +626,7 @@ export function drawVoiceLanes(
   }
 
   drawLanePlayhead(context, rollViewport, gutterWidth, viewport.height, playheadTick);
+  drawMarquee(context, marqueeRect);
 }
 
 function drawLanePlayhead(

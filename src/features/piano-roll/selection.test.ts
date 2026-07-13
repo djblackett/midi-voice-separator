@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { resolveSelection } from "./selection";
+import { hasCrossedMarqueeThreshold, resolveSelection } from "./selection";
+
+describe("hasCrossedMarqueeThreshold", () => {
+  it("latches a crossed threshold when the pointer returns near its start", () => {
+    const start = { x: 10, y: 20 };
+    const crossed = hasCrossedMarqueeThreshold(start, { x: 15, y: 20 }, 4);
+
+    expect(crossed).toBe(true);
+    expect(hasCrossedMarqueeThreshold(start, { x: 11, y: 21 }, 4, crossed)).toBe(true);
+  });
+
+  it("stays below threshold until either axis reaches it", () => {
+    const start = { x: 10, y: 20 };
+
+    expect(hasCrossedMarqueeThreshold(start, { x: 13, y: 17 }, 4)).toBe(false);
+    expect(hasCrossedMarqueeThreshold(start, { x: 10, y: 16 }, 4)).toBe(true);
+  });
+});
 
 describe("resolveSelection", () => {
   it("replaces the selection on a plain click", () => {
