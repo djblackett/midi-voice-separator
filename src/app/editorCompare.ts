@@ -35,15 +35,16 @@ export interface ComparePreview {
 }
 
 /**
- * Editing is disabled whenever the canvas shows a side other than the one
- * being edited -- the "diff" view included, since it is never an editable side
- * (`activeSide` is "A" or "B", so `viewing === "diff"` is always disabled).
+ * In single layout, editing is disabled whenever the canvas shows a side other
+ * than the active one -- including the read-only diff view. Split renders both
+ * sides and the active pane is always editable, so the single-view `viewing`
+ * field must not make active B read-only.
  */
 export function isEditingDisabledForComparison(
   workspace: ComparisonWorkspace | null,
   activeSide: BranchId,
 ): boolean {
-  return workspace !== null && workspace.viewing !== activeSide;
+  return workspace !== null && workspace.layout === "single" && workspace.viewing !== activeSide;
 }
 
 export function createComparisonWorkspace(targetSnapshotId: string): ComparisonWorkspace {

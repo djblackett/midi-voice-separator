@@ -102,6 +102,12 @@ describe("editor compare state", () => {
     expect(isEditingDisabledForComparison(updateComparisonViewing(workspace, "diff"), "A")).toBe(
       true,
     );
+
+    // Split renders both sides; whichever pane is active remains editable even
+    // though the legacy single-view `viewing` field stays on A.
+    const splitWorkspace = { ...workspace, layout: "split" as const };
+    expect(isEditingDisabledForComparison(splitWorkspace, "A")).toBe(false);
+    expect(isEditingDisabledForComparison(splitWorkspace, "B")).toBe(false);
   });
 
   it("materializes the B snapshot project without mutating the current editor project", () => {

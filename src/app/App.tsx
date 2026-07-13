@@ -47,6 +47,7 @@ import { voiceIdForNumber } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import { seedVoiceLabelsFromImport } from "../domain/midi/voiceManagement";
 import { reconcileVoicesAfterReassign } from "../domain/midi/voiceReconciliation";
+import type { VoiceCorrespondence } from "../domain/midi/voiceCorrespondence";
 import {
   buildFlaggedNoteQueue,
   buildReviewProgress,
@@ -158,11 +159,35 @@ function toAppCommandError(commandError: unknown): AppCommandError {
 }
 
 type PlaybackScopeMode = "all" | "selected" | "voice" | "changed" | "flagged";
+type CompareSide = "A" | "B";
 
 const FLAGGED_PLAYBACK_WINDOW_TICKS = 960;
 
 /** Identity presentation map (single side plays with its own per-voice timbre). */
 const EMPTY_PRESENTATION_KEYS: ReadonlyMap<string, string> = new Map();
+
+/** Voice ids are side-local; correspondence is the only safe cross-side lookup. */
+function mapVoiceIdAcrossSides(
+  voiceId: string | null,
+  fromSide: CompareSide,
+  toSide: CompareSide,
+  correspondence: VoiceCorrespondence | null,
+): string | null {
+  if (voiceId === null || fromSide === toSide) {
+    return voiceId;
+  }
+  if (!correspondence) {
+    return null;
+  }
+
+  const match = correspondence.matched.find((pair) =>
+    fromSide === "A" ? pair.aVoiceId === voiceId : pair.bVoiceId === voiceId,
+  );
+  if (!match) {
+    return null;
+  }
+  return toSide === "A" ? match.aVoiceId : match.bVoiceId;
+}
 
 function parseMaxVoiceCount(input: string): number | undefined {
   const parsed = Number.parseInt(input, 10);
@@ -203,6 +228,10 @@ export default function App() {
   const [onlyChangedNotes, setOnlyChangedNotes] = useState(false);
   const [compareState, setCompareState] = useState<ComparisonWorkspace | null>(null);
   const [pendingCompareExit, setPendingCompareExit] = useState(false);
+  // Which side the transport monitors. `null` follows the active side; a split
+  // "Monitor A/B" control pins it so you can audition one side while editing the
+  // other.
+  const [monitorOverride, setMonitorOverride] = useState<"A" | "B" | null>(null);
   // Split panes share one time viewport so they stay aligned in musical time.
   // Pitch scroll is independent by default; `linkPitchScroll` shares it too.
   const [splitTimeViewport, setSplitTimeViewport] = useState<ViewportWindow>(defaultViewportWindow);
@@ -436,6 +465,15 @@ export default function App() {
     [editorActiveSide, editorBranchA, editorBranchB, compareState],
   );
   const isSplitLayout = comparisonProjection.visibleSides.length === 2;
+  // Outside split view, playback always follows the active/rendered side. In
+  // split, an explicit override can pin either side while the other is edited.
+  const monitoredSide: CompareSide =
+    isSplitLayout && monitorOverride ? monitorOverride : editorActiveSide;
+  const monitoredProjection =
+    monitoredSide === "B" && comparisonProjection.sideB
+      ? comparisonProjection.sideB
+      : comparisonProjection.sideA;
+  const monitoredProject = monitoredProjection.project;
   // The canvas always renders the active side's own materialized document:
   // switching the A/B toggle switches the active branch, so `displayedProject`
   // already is the viewed side.
@@ -482,51 +520,73 @@ export default function App() {
     playbackChangedNoteIds,
     currentFlaggedNoteId,
   ]);
+  const monitoredSoloVoiceId = mapVoiceIdAcrossSides(
+    soloVoiceId,
+    editorActiveSide,
+    monitoredSide,
+    comparisonProjection.correspondence,
+  );
+  const monitoredPlaybackScope = useMemo<PlaybackScope>(() => {
+    if (playbackScope.type !== "voice") {
+      return playbackScope;
+    }
+    return {
+      ...playbackScope,
+      voiceId: mapVoiceIdAcrossSides(
+        playbackScope.voiceId,
+        editorActiveSide,
+        monitoredSide,
+        comparisonProjection.correspondence,
+      ),
+    };
+  }, [playbackScope, editorActiveSide, monitoredSide, comparisonProjection.correspondence]);
+  const monitorMappingMessage =
+    monitoredSide !== editorActiveSide && soloVoiceId !== null && monitoredSoloVoiceId === null
+      ? `Soloed voice has no match on ${monitoredSide}; playback will use all voices.`
+      : monitoredSide !== editorActiveSide &&
+          playbackScope.type === "voice" &&
+          playbackScope.voiceId !== null &&
+          monitoredPlaybackScope.type === "voice" &&
+          monitoredPlaybackScope.voiceId === null
+        ? `Current voice has no match on ${monitoredSide}.`
+        : null;
   // Cross-side "matches voice X" / "new in preview" descriptions came from the
   // read-only B preview's voice matching. With B now a live editable branch,
   // rich correspondence-based labels move to the split-screen feature (M9/M10).
   const pianoRollVoiceDescriptions = useMemo(() => new Map<string, string>(), []);
-  // The transport plays one source at a time (M12). For now it follows the
-  // active side; a monitored-side switch is a later slice. `sourceId` carries
-  // the side + revision so the transport can tell a real change from a rerender.
+  // The transport plays one source at a time (M12). `sourceId` carries the
+  // monitored side + that branch's revision so edits to the other side do not
+  // reschedule pinned audio, while monitor switches do.
   const playbackSource = useMemo<PlaybackSource | null>(() => {
-    if (!displayedProject) {
+    if (!monitoredProject) {
       return null;
     }
-    // The transport monitors the active side; its presentation-key map gives a
-    // matched B voice its A partner's timbre, so switching sides while playing
-    // makes real differences stand out by ear.
-    const monitoredProjection =
-      editorActiveSide === "B" && comparisonProjection.sideB
-        ? comparisonProjection.sideB
-        : comparisonProjection.sideA;
     return {
-      sourceId: `${editorActiveSide}:${editorDocument.revision}`,
-      lineageId: displayedProject.fileName,
-      notes: displayedProject.notes,
-      ppq: displayedProject.ppq,
-      tempoChanges: displayedProject.tempoChanges,
-      durationTicks: displayedProject.durationTicks,
-      soloVoiceId,
-      scope: playbackScope,
+      sourceId: `${monitoredSide}:${monitoredProjection.revisionRef.revision}`,
+      lineageId: monitoredProject.fileName,
+      notes: monitoredProject.notes,
+      ppq: monitoredProject.ppq,
+      tempoChanges: monitoredProject.tempoChanges,
+      durationTicks: monitoredProject.durationTicks,
+      soloVoiceId: monitoredSoloVoiceId,
+      scope: monitoredPlaybackScope,
       presentationKeyByVoiceId:
         monitoredProjection.presentationKeyByVoiceId ?? EMPTY_PRESENTATION_KEYS,
     };
   }, [
-    displayedProject,
-    editorActiveSide,
-    editorDocument.revision,
-    soloVoiceId,
-    playbackScope,
-    comparisonProjection,
+    monitoredProject,
+    monitoredSide,
+    monitoredProjection,
+    monitoredSoloVoiceId,
+    monitoredPlaybackScope,
   ]);
   const playback = usePlaybackEngine(playbackSource, instrument);
   const tempoMap = useMemo(
-    () => buildTempoMap(displayedProject?.tempoChanges ?? [], displayedProject?.ppq ?? 480),
-    [displayedProject],
+    () => buildTempoMap(playbackSource?.tempoChanges ?? [], playbackSource?.ppq ?? 480),
+    [playbackSource?.tempoChanges, playbackSource?.ppq],
   );
   const playbackCurrentSeconds = tickToSeconds(tempoMap, playback.currentTick);
-  const playbackDurationSeconds = tickToSeconds(tempoMap, displayedProject?.durationTicks ?? 0);
+  const playbackDurationSeconds = tickToSeconds(tempoMap, playbackSource?.durationTicks ?? 0);
 
   useEffect(() => {
     if (playbackScopeMode === "changed" && !canUseChangedPlaybackScope) {
@@ -758,6 +818,7 @@ export default function App() {
     setSeparationStrategy(importedProject.strategySuggestion.strategy);
     setActiveVoiceId(null);
     setSoloVoiceId(null);
+    setMonitorOverride(null);
     setInteractionMode("select");
     setPitchMarkers(buildDefaultPitchMarkers(importedProject.notes));
     setMaxVoiceCountInput("");
@@ -1046,6 +1107,7 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setExportResult(null);
     setCompareState(null);
+    setMonitorOverride(null);
   }
 
   function handleRenameSnapshot(id: string, name: string) {
@@ -1061,6 +1123,7 @@ export default function App() {
       setShowChangedNotes(false);
       setOnlyChangedNotes(false);
       setCompareState(null);
+      setMonitorOverride(null);
     }
   }
 
@@ -1082,6 +1145,7 @@ export default function App() {
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
     setCompareState(null);
+    setMonitorOverride(null);
   }
 
   function handleStartCompare() {
@@ -1101,6 +1165,7 @@ export default function App() {
       target.id,
     );
     setCompareState(createComparisonWorkspace(diffTargetId));
+    setMonitorOverride(null);
     setPendingCompareExit(false);
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
@@ -1118,6 +1183,7 @@ export default function App() {
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
+    setMonitorOverride(null);
   }
 
   // Toggle between the single A/B/Diff canvas and the two-pane split. Leaving
@@ -1132,10 +1198,20 @@ export default function App() {
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
+    setMonitorOverride(null);
   }
 
   // Split panes: clicking a pane makes its side the active (editable) one.
   function handleActivateSide(side: "A" | "B") {
+    if (side === editorActiveSide) {
+      return;
+    }
+    setActiveVoiceId((current) =>
+      mapVoiceIdAcrossSides(current, editorActiveSide, side, comparisonProjection.correspondence),
+    );
+    setSoloVoiceId((current) =>
+      mapVoiceIdAcrossSides(current, editorActiveSide, side, comparisonProjection.correspondence),
+    );
     setEditorActiveSide(side);
   }
 
@@ -1144,6 +1220,12 @@ export default function App() {
   // selection, so selecting a note highlights it in both (shared note ids).
   function renderComparisonPane(sideProjection: SideProjection) {
     const { side, editable } = sideProjection;
+    const paneSoloVoiceId = mapVoiceIdAcrossSides(
+      soloVoiceId,
+      editorActiveSide,
+      side,
+      comparisonProjection.correspondence,
+    );
     return (
       <div
         key={side}
@@ -1162,7 +1244,7 @@ export default function App() {
           presentationKeyByVoiceId={sideProjection.presentationKeyByVoiceId}
           selectedNoteIds={selectedNoteIds}
           onSelectionChange={editable ? setSelectedNoteIds : () => {}}
-          soloVoiceId={soloVoiceId}
+          soloVoiceId={paneSoloVoiceId}
           interactionMode={interactionMode}
           activeVoiceId={activeVoiceId}
           onPaintNotes={handlePaintNotes}
@@ -1242,6 +1324,7 @@ export default function App() {
     setPendingCompareExit(false);
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
+    setMonitorOverride(null);
     setExportResult(null);
   }
 
@@ -1257,6 +1340,7 @@ export default function App() {
     setPendingCompareExit(false);
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
+    setMonitorOverride(null);
   }
 
   function handleCancelExitCompare() {
@@ -2508,15 +2592,45 @@ export default function App() {
                   {isSplitLayout ? "Single view" : "Split view"}
                 </button>
                 {isSplitLayout ? (
-                  <button
-                    type="button"
-                    className={linkPitchScroll ? "secondary-button active" : "secondary-button"}
-                    onClick={() => setLinkPitchScroll((current) => !current)}
-                    aria-pressed={linkPitchScroll ? "true" : "false"}
-                    title="Scroll and zoom both panes' pitch axis together"
-                  >
-                    {linkPitchScroll ? "Pitch: linked" : "Pitch: independent"}
-                  </button>
+                  <>
+                    <div className="compare-view-toggle" role="group" aria-label="Playback monitor">
+                      <button
+                        type="button"
+                        className={
+                          monitorOverride === null ? "secondary-button active" : "secondary-button"
+                        }
+                        onClick={() => setMonitorOverride(null)}
+                        aria-pressed={monitorOverride === null ? "true" : "false"}
+                        title="Sound whichever side is being edited"
+                      >
+                        Follow editing
+                      </button>
+                      {(["A", "B"] as const).map((side) => (
+                        <button
+                          key={side}
+                          type="button"
+                          className={
+                            monitorOverride === side
+                              ? "secondary-button active"
+                              : "secondary-button"
+                          }
+                          onClick={() => setMonitorOverride(side)}
+                          aria-pressed={monitorOverride === side ? "true" : "false"}
+                        >
+                          Monitor {side}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className={linkPitchScroll ? "secondary-button active" : "secondary-button"}
+                      onClick={() => setLinkPitchScroll((current) => !current)}
+                      aria-pressed={linkPitchScroll ? "true" : "false"}
+                      title="Scroll and zoom both panes' pitch axis together"
+                    >
+                      {linkPitchScroll ? "Pitch: linked" : "Pitch: independent"}
+                    </button>
+                  </>
                 ) : null}
                 {pendingCompareExit ? (
                   <span className="compare-exit-confirm" role="alert">
@@ -2631,7 +2745,12 @@ export default function App() {
             </span>
             {compareState ? (
               <span className="playback-monitor" role="status">
-                Sounding: {editorActiveSide === "B" ? "B (Draft)" : "A (Current)"}
+                Sounding: {monitoredSide === "B" ? "B (Draft)" : "A (Current)"}
+              </span>
+            ) : null}
+            {monitorMappingMessage ? (
+              <span className="playback-scope-message" role="status">
+                {monitorMappingMessage}
               </span>
             ) : null}
             <label
