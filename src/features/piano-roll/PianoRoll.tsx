@@ -34,14 +34,7 @@ import {
   type LaneViewportWindow,
 } from "./laneViewport";
 import { resolvePencilPaintAnchor, resolveWandPaintTarget, shouldPaintNote } from "./paint";
-import {
-  DEFAULT_BRUSH_RADIUS,
-  notesInBrushStamp,
-  notesInLassoPath,
-  stepBrushRadius,
-  type PaintTool,
-  type Point,
-} from "./paintBrush";
+import { DEFAULT_BRUSH_RADIUS, stepBrushRadius, type PaintTool, type Point } from "./paintBrush";
 import { drawPaintOverlay } from "./paintOverlay";
 import {
   chordToleranceTicks,
@@ -78,6 +71,8 @@ import {
   createVoiceLaneViewGeometry,
   hitTestNoteAtPoint,
   hitTestNotesInRect,
+  notesInBrushStampForView,
+  notesInLassoPathForView,
 } from "./viewGeometry";
 
 const MARQUEE_THRESHOLD_PX = 4;
@@ -620,7 +615,13 @@ export function PianoRoll({
     if (!activeVoiceId) {
       return;
     }
-    const hits = notesInBrushStamp(from, to, brushRadius, interactionProject, viewport);
+    const hits = notesInBrushStampForView(
+      from,
+      to,
+      brushRadius,
+      interactionProject?.notes ?? [],
+      viewGeometry,
+    );
     const alreadyPainted = new Set(paintedNoteIdsRef.current.keys());
     const newlyPainted: MidiNote[] = [];
     let changed = false;
@@ -687,7 +688,11 @@ export function PianoRoll({
     if (!activeVoiceId) {
       return;
     }
-    const enclosed = notesInLassoPath(lassoPathRef.current, interactionProject, viewport);
+    const enclosed = notesInLassoPathForView(
+      lassoPathRef.current,
+      interactionProject?.notes ?? [],
+      viewGeometry,
+    );
     const next = new Map<string, string>();
     for (const note of enclosed) {
       if (note.voiceId !== activeVoiceId) {

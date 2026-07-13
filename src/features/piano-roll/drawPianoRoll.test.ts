@@ -356,6 +356,7 @@ interface DrawVoiceLaneArgs {
   geometry?: ViewGeometry;
   marqueeRect?: Parameters<typeof drawVoiceLanes>[5];
   soloVoiceId?: string | null;
+  paintPreview?: ReadonlyMap<string, string>;
   playheadTick?: number | null;
 }
 
@@ -373,7 +374,7 @@ function callDrawVoiceLanes(
     undefined,
     args.marqueeRect ?? null,
     args.soloVoiceId,
-    undefined,
+    args.paintPreview,
     args.playheadTick,
   );
 }
@@ -816,6 +817,58 @@ describe("drawVoiceLanes", () => {
       (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-1"),
     );
     expect(noteFill?.globalAlpha).toBe(0.25);
+  });
+
+  it("previews a target color in the source lane and reflows only after commit", () => {
+    const sourceNote = note({ id: "painted", voiceId: "voice-1", pitch: 60 });
+    const voices = [
+      { id: "voice-1", label: "Source", noteCount: 1, lowestPitch: 60, highestPitch: 60 },
+      { id: "voice-2", label: "Target", noteCount: 0, lowestPitch: 60, highestPitch: 60 },
+    ];
+    const sourceProject = project({ voices, notes: [sourceNote] });
+    const sourceGeometry = createVoiceLaneViewGeometry(sourceProject, viewport);
+    const sourceRect = sourceGeometry.noteRect(sourceNote);
+    expect(sourceRect).not.toBeNull();
+
+    const previewContext = createMockCanvasContext();
+    callDrawVoiceLanes(previewContext, sourceProject, {
+      geometry: sourceGeometry,
+      paintPreview: new Map([[sourceNote.id, "voice-2"]]),
+    });
+    expect(
+      previewContext.styledCalls.find(
+        (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-2"),
+      ),
+    ).toMatchObject({
+      args: [
+        sourceRect?.left,
+        sourceRect?.top,
+        (sourceRect?.right ?? 0) - (sourceRect?.left ?? 0),
+        (sourceRect?.bottom ?? 0) - (sourceRect?.top ?? 0),
+      ],
+    });
+
+    const committedNote = { ...sourceNote, voiceId: "voice-2" };
+    const committedProject = project({ voices, notes: [committedNote] });
+    const committedGeometry = createVoiceLaneViewGeometry(committedProject, viewport);
+    const committedRect = committedGeometry.noteRect(committedNote);
+    expect(committedRect).not.toBeNull();
+    expect(committedRect?.top).not.toBe(sourceRect?.top);
+
+    const committedContext = createMockCanvasContext();
+    callDrawVoiceLanes(committedContext, committedProject, { geometry: committedGeometry });
+    expect(
+      committedContext.styledCalls.find(
+        (call) => call.method === "fillRect" && call.fillStyle === getVoiceFillColor("voice-2"),
+      ),
+    ).toMatchObject({
+      args: [
+        committedRect?.left,
+        committedRect?.top,
+        (committedRect?.right ?? 0) - (committedRect?.left ?? 0),
+        (committedRect?.bottom ?? 0) - (committedRect?.top ?? 0),
+      ],
+    });
   });
 
   it("draws a playhead line only when the tick is within the visible window", () => {
