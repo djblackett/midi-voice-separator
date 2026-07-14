@@ -22,6 +22,6 @@ export function materializeEditorProject(state: MaterializableEditorState): Midi
   const withOverrides = applyVoiceOverrides(project, voiceOverrides);
   return {
     ...withOverrides,
-    voices: buildVoiceList(voiceOrder, voiceLabels, withOverrides.notes),
+    voices: buildVoiceList(voiceOrder, voiceLabels, withOverrides.notes, withOverrides.voices),
   };
 }

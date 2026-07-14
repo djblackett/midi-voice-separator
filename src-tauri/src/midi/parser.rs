@@ -9,13 +9,23 @@ use crate::error::AppError;
 
 use super::model::{
     AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, MidiWarningCode, MidiWarningDto,
-    SeparationStrategy, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
+    SeparationStrategy, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto, VoiceRoleDto,
 };
 use super::voice_assignment::{
     assign_heuristic_voices, summarize_assigned_voices, summarize_separation_quality,
     PERCUSSION_CHANNEL,
 };
-use super::{EXPORTED_VOICE_TRACK_MARKER, EXPORTED_VOICE_TRACK_NAME};
+use super::{
+    EXPORTED_VOICE_ROLE_MELODIC_MARKER, EXPORTED_VOICE_ROLE_PERCUSSION_MARKER,
+    EXPORTED_VOICE_TRACK_MARKER, EXPORTED_VOICE_TRACK_NAME,
+};
+
+#[derive(Debug, Clone)]
+struct ExportedVoiceTrack {
+    voice_id: String,
+    label: Option<String>,
+    role: Option<VoiceRoleDto>,
+}
 
 #[derive(Debug, Clone)]
 struct ActiveNote {
@@ -51,12 +61,17 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
     let mut warnings = Vec::new();
     let mut max_tick = 0_u64;
     let mut sequence = 0_u64;
-    let mut exported_voice_track_count = 0_usize;
+    let mut exported_voice_tracks = Vec::new();
 
     for (track_index, track) in smf.tracks.iter().enumerate() {
         let track_voice_id = if is_exported_voice_track(track) {
-            exported_voice_track_count += 1;
-            Some(format!("voice-{exported_voice_track_count}"))
+            let voice_id = format!("voice-{}", exported_voice_tracks.len() + 1);
+            exported_voice_tracks.push(ExportedVoiceTrack {
+                voice_id: voice_id.clone(),
+                label: extract_track_name(track),
+                role: exported_track_role(track),
+            });
+            Some(voice_id)
         } else {
             None
         };
@@ -174,7 +189,11 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
             .then(left.channel.cmp(&right.channel))
             .then(left.id.cmp(&right.id))
     });
-    let mut voices = if !notes.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty()) {
+    let all_notes_are_marked =
+        !exported_voice_tracks.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty());
+    let mut voices = if all_notes_are_marked {
+        summarize_exported_voice_tracks(&notes, &exported_voice_tracks)
+    } else if !notes.is_empty() && notes.iter().all(|note| !note.voice_id.is_empty()) {
         summarize_assigned_voices(&notes)
     } else {
         assign_heuristic_voices(&mut notes)
@@ -184,13 +203,18 @@ pub fn parse_midi_project(path: &Path, bytes: &[u8]) -> Result<MidiProjectDto, A
         .iter()
         .map(|track| extract_track_name(track))
         .collect();
-    apply_track_name_labels(
-        &mut voices,
-        &notes,
-        &track_names,
-        exported_voice_track_count > 0,
-    );
-    let separation_summary = summarize_separation_quality(&notes);
+    if !all_notes_are_marked {
+        apply_track_name_labels(
+            &mut voices,
+            &notes,
+            &track_names,
+            !exported_voice_tracks.is_empty(),
+        );
+    }
+    let mut separation_summary = summarize_separation_quality(&notes);
+    if all_notes_are_marked {
+        separation_summary.voice_count = voices.len();
+    }
     let strategy_suggestion = suggest_strategy(&notes);
 
     Ok(MidiProjectDto {
@@ -371,6 +395,66 @@ fn is_exported_voice_track(track: &[midly::TrackEvent<'_>]) -> bool {
             TrackEventKind::Meta(MetaMessage::TrackName(name)) if *name == EXPORTED_VOICE_TRACK_NAME
         )
     })
+}
+
+fn exported_track_role(track: &[midly::TrackEvent<'_>]) -> Option<VoiceRoleDto> {
+    track.iter().find_map(|event| match &event.kind {
+        TrackEventKind::Meta(MetaMessage::Text(text))
+            if *text == EXPORTED_VOICE_ROLE_MELODIC_MARKER =>
+        {
+            Some(VoiceRoleDto::Melodic)
+        }
+        TrackEventKind::Meta(MetaMessage::Text(text))
+            if *text == EXPORTED_VOICE_ROLE_PERCUSSION_MARKER =>
+        {
+            Some(VoiceRoleDto::Percussion)
+        }
+        _ => None,
+    })
+}
+
+fn summarize_exported_voice_tracks(
+    notes: &[MidiNoteDto],
+    tracks: &[ExportedVoiceTrack],
+) -> Vec<MidiVoiceDto> {
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| {
+            let voice_notes = notes
+                .iter()
+                .filter(|note| note.voice_id == track.voice_id)
+                .collect::<Vec<_>>();
+            let inferred_role = if !voice_notes.is_empty()
+                && voice_notes
+                    .iter()
+                    .all(|note| note.channel == PERCUSSION_CHANNEL)
+            {
+                VoiceRoleDto::Percussion
+            } else {
+                VoiceRoleDto::Melodic
+            };
+            MidiVoiceDto {
+                id: track.voice_id.clone(),
+                label: track
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| format!("Voice {}", index + 1)),
+                role: track.role.unwrap_or(inferred_role),
+                note_count: voice_notes.len(),
+                lowest_pitch: voice_notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .min()
+                    .unwrap_or_default(),
+                highest_pitch: voice_notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .max()
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
 }
 
 fn end_note(

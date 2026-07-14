@@ -81,10 +81,14 @@ export interface SeparationSummary {
 export interface MidiVoice {
   id: string;
   label: string;
+  /** Present on current native responses; optional for older saved fixtures. */
+  role?: VoiceRole;
   noteCount: number;
   lowestPitch: number;
   highestPitch: number;
 }
+
+export type VoiceRole = "MELODIC" | "PERCUSSION";
 
 export interface TempoChange {
   tick: number;

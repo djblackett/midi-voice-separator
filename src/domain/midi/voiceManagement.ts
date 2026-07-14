@@ -1,4 +1,4 @@
-import type { MidiNote, MidiVoice } from "./midiProject";
+import type { MidiNote, MidiVoice, VoiceRole } from "./midiProject";
 import type { VoiceOverrides } from "./voiceAssignments";
 
 const VOICE_ID_PREFIX = "voice-";
@@ -17,11 +17,16 @@ export function buildVoiceList(
   voiceOrder: readonly string[],
   voiceLabels: Readonly<Record<string, string>>,
   notes: readonly MidiNote[],
+  sourceVoices: readonly MidiVoice[] = [],
 ): MidiVoice[] {
+  const roleByVoiceId = new Map(sourceVoices.map((voice) => [voice.id, voice.role]));
   return voiceOrder.map((voiceId, index) => {
     const voiceNotes = notes.filter((note) => note.voiceId === voiceId);
     const pitches = voiceNotes.map((note) => note.pitch);
 
+    const role: VoiceRole | undefined =
+      roleByVoiceId.get(voiceId) ??
+      (voiceId === PERCUSSION_VOICE_ID ? "PERCUSSION" : undefined);
     return {
       id: voiceId,
       label:
@@ -30,6 +35,7 @@ export function buildVoiceList(
       noteCount: voiceNotes.length,
       lowestPitch: pitches.length > 0 ? Math.min(...pitches) : 0,
       highestPitch: pitches.length > 0 ? Math.max(...pitches) : 0,
+      ...(role === undefined ? {} : { role }),
     };
   });
 }

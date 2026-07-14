@@ -8,7 +8,10 @@ use midly::{
 use crate::error::AppError;
 
 use super::{
-    export_validation::validate_export_project, model::MidiProjectDto, EXPORTED_VOICE_TRACK_MARKER,
+    export_validation::validate_export_project,
+    model::{MidiProjectDto, VoiceRoleDto},
+    EXPORTED_VOICE_ROLE_MELODIC_MARKER, EXPORTED_VOICE_ROLE_PERCUSSION_MARKER,
+    EXPORTED_VOICE_TRACK_MARKER,
 };
 
 const MAX_MIDI_DELTA: u64 = 0x0fff_ffff;
@@ -72,6 +75,7 @@ fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'_>, AppError> {
             &voice_notes,
             project.duration_ticks,
             voice.label.as_bytes(),
+            voice.role,
         )?);
     }
 
@@ -85,6 +89,7 @@ fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'_>, AppError> {
             &unlisted_voice_notes,
             project.duration_ticks,
             b"Unassigned",
+            VoiceRoleDto::Melodic,
         )?);
     }
 
@@ -132,6 +137,7 @@ fn build_voice_track<'a>(
     notes: &[&super::model::MidiNoteDto],
     duration_ticks: u64,
     label: &'a [u8],
+    role: VoiceRoleDto,
 ) -> Result<Vec<TrackEvent<'a>>, AppError> {
     let mut events = Vec::new();
 
@@ -182,12 +188,23 @@ fn build_voice_track<'a>(
         },
         TrackEvent {
             delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::Text(exported_role_marker(role))),
+        },
+        TrackEvent {
+            delta: u28::new(0),
             kind: TrackEventKind::Meta(MetaMessage::TrackName(label)),
         },
     ];
     track.extend(events_to_track(events, duration_ticks)?);
 
     Ok(track)
+}
+
+fn exported_role_marker(role: VoiceRoleDto) -> &'static [u8] {
+    match role {
+        VoiceRoleDto::Melodic => EXPORTED_VOICE_ROLE_MELODIC_MARKER,
+        VoiceRoleDto::Percussion => EXPORTED_VOICE_ROLE_PERCUSSION_MARKER,
+    }
 }
 
 fn events_to_track(
@@ -342,11 +359,15 @@ mod tests {
         ));
         assert!(matches!(
             first_voice_track[1].kind,
+            TrackEventKind::Meta(MetaMessage::Text(EXPORTED_VOICE_ROLE_MELODIC_MARKER))
+        ));
+        assert!(matches!(
+            first_voice_track[2].kind,
             TrackEventKind::Meta(MetaMessage::TrackName(name)) if name == b"Voice 1"
         ));
-        assert_eq!(first_voice_track[2].delta.as_int(), 0);
-        assert_eq!(first_voice_track[3].delta.as_int(), 480);
+        assert_eq!(first_voice_track[3].delta.as_int(), 0);
         assert_eq!(first_voice_track[4].delta.as_int(), 480);
+        assert_eq!(first_voice_track[5].delta.as_int(), 480);
     }
 
     #[test]
@@ -533,9 +554,12 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_inventory_marks_empty_exported_voices_as_a_partition_difference_target() {
+    fn round_trip_inventory_preserves_empty_exported_voice_metadata() {
         let mut project = project();
         project.notes.truncate(1);
+        project.voices[0].label = "Square".to_string();
+        project.voices[1].label = "Square".to_string();
+        project.voices[1].role = VoiceRoleDto::Percussion;
 
         let bytes = export_midi_bytes(&project).expect("project should export");
         let reimported = parse_midi_project(Path::new("empty-voice.mid"), &bytes)
@@ -543,7 +567,10 @@ mod tests {
 
         assert!(strict_content_report(&project).content_preserved);
         assert_eq!(project.voices.len(), 2);
-        assert_eq!(reimported.voices.len(), 1);
+        assert_eq!(reimported.voices.len(), 2);
+        assert_eq!(reimported.voices[0].label, "Square");
+        assert_eq!(reimported.voices[1].label, "Square");
+        assert_eq!(reimported.voices[1].role, VoiceRoleDto::Percussion);
     }
 
     #[test]
@@ -552,6 +579,7 @@ mod tests {
         project.voices.truncate(1);
         project.voices[0].id = "percussion".to_string();
         project.voices[0].label = "Percussion".to_string();
+        project.voices[0].role = VoiceRoleDto::Percussion;
         project.notes = vec![MidiNoteDto {
             channel: 9,
             pitch: 36,
@@ -569,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_inventory_marks_duplicate_labels_as_a_difference_target() {
+    fn round_trip_inventory_preserves_duplicate_labels_on_marked_tracks() {
         let mut project = project();
         project.voices[0].label = "Square".to_string();
         project.voices[1].label = "Square".to_string();
@@ -583,7 +611,7 @@ mod tests {
             .iter()
             .map(|voice| voice.label.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["Square", "Square 2"]);
+        assert_eq!(labels, vec!["Square", "Square"]);
     }
 
     #[test]
