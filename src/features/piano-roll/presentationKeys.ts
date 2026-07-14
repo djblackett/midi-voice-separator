@@ -8,7 +8,12 @@ import type { VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence"
 export type PresentationKey = string;
 
 export interface PresentationKeyMap {
-  keyForSide(side: "A" | "B", voiceId: string): PresentationKey;
+  keyForSide(side: string, voiceId: string): PresentationKey;
+}
+
+export interface PresentationKeySides {
+  readonly canonical: string;
+  readonly matched: string;
 }
 
 /**
@@ -18,17 +23,20 @@ export interface PresentationKeyMap {
  * keeps its own. Percussion, matched to itself by role, keeps its semantic key.
  * Domain voice ids are never rewritten (M8) -- consumers map ids to keys here.
  */
-export function derivePresentationKeys(correspondence: VoiceCorrespondence): PresentationKeyMap {
+export function derivePresentationKeys(
+  correspondence: VoiceCorrespondence,
+  sides: PresentationKeySides = { canonical: "A", matched: "B" },
+): PresentationKeyMap {
   const aPartnerByBVoiceId = new Map<string, string>();
   for (const pair of correspondence.matched) {
     aPartnerByBVoiceId.set(pair.bVoiceId, pair.aVoiceId);
   }
   return {
     keyForSide(side, voiceId) {
-      if (side === "A") {
+      if (side === sides.canonical) {
         return voiceId;
       }
-      return aPartnerByBVoiceId.get(voiceId) ?? voiceId;
+      return side === sides.matched ? (aPartnerByBVoiceId.get(voiceId) ?? voiceId) : voiceId;
     },
   };
 }

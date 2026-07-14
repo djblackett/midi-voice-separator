@@ -42,6 +42,19 @@ describe("derivePresentationKeys", () => {
     expect(keys.keyForSide("B", "voice-8")).toBe("voice-8");
   });
 
+  it("can map a read-only reference pane onto a current editable palette", () => {
+    const keys = derivePresentationKeys(
+      correspondence({
+        matched: [{ aVoiceId: "voice-current", bVoiceId: "reference-lead", overlap: 2 }],
+      }),
+      { canonical: "A", matched: "reference" },
+    );
+
+    expect(keys.keyForSide("reference", "reference-lead")).toBe("voice-current");
+    expect(keys.keyForSide("reference", "reference-only")).toBe("reference-only");
+    expect(keys.keyForSide("other", "voice-current")).toBe("voice-current");
+  });
+
   it("keeps percussion on its semantic key via its self-match", () => {
     const keys = derivePresentationKeys(
       correspondence({

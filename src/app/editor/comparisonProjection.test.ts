@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { CrossImportAssignmentDiff } from "../../domain/midi/crossImportDiff";
 import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import type { ComparisonWorkspace } from "../editorCompare";
+import type { ReferenceDocument } from "../referenceDocument";
 import {
   createComparisonBranches,
   forkSideB,
@@ -9,7 +11,11 @@ import {
 } from "./comparisonBranches";
 import { createEditorBranch } from "./editorBranch";
 import type { EditorDocument } from "./editorDocument";
-import { resolveComparisonProjection, singleLayoutSide } from "./comparisonProjection";
+import {
+  presentationKeyForVoice,
+  resolveComparisonProjection,
+  singleLayoutSide,
+} from "./comparisonProjection";
 
 function note(id: string, voiceId: string, pitch: number): MidiNote {
   return {
@@ -89,6 +95,62 @@ function workspace(layout: "single" | "split"): ComparisonWorkspace {
   };
 }
 
+function referenceDocument(assignments: Record<string, string>): ReferenceDocument {
+  const notes = Object.entries(assignments).map(([noteId, voiceId], index) =>
+    note(noteId, voiceId, 72 + index),
+  );
+  return {
+    documentId: "reference-1",
+    sourcePath: "C:/music/reference.mid",
+    importedAt: 1,
+    project: project(notes),
+    assignmentProvenance: { kind: "imported", algorithmVersion: 1 },
+  };
+}
+
+function externalWorkspace(
+  viewing: "current" | "reference" | "diff",
+  layout: "single" | "split",
+): ComparisonWorkspace {
+  return {
+    kind: "externalReference",
+    referenceDocumentId: "reference-1",
+    target: { branchId: "A", documentId: "A", revision: 0 },
+    viewing,
+    layout,
+  };
+}
+
+function externalDiff(): CrossImportAssignmentDiff {
+  return {
+    comparable: true,
+    referenceDocumentId: "reference-1",
+    editableDocumentId: "A",
+    matcher: {
+      matcherVersion: 1,
+      policy: "CROSS_IMPORT_V1",
+      referenceCoverage: { total: 2, exact: 2, fuzzy: 0, ambiguous: 0, unmatched: 0 },
+      editableCoverage: { total: 2, exact: 2, fuzzy: 0, ambiguous: 0, unmatched: 0 },
+      exactPairCount: 2,
+      fuzzyPairCount: 0,
+    },
+    trustedPairCoverage: { reference: 1, editable: 1 },
+    changedPairs: [],
+    matchedVoices: [
+      {
+        reference: { documentId: "reference-1", voiceId: "reference-lead" },
+        editable: { documentId: "A", voiceId: "voice-1" },
+        overlap: 1,
+      },
+    ],
+    addedEditableVoices: [],
+    removedReferenceVoices: [{ documentId: "reference-1", voiceId: "reference-only" }],
+    ambiguous: [],
+    unmatchedReference: [],
+    unmatchedEditable: [],
+  };
+}
+
 describe("resolveComparisonProjection", () => {
   it("renders only the active side in single layout but still resolves correspondence", () => {
     const projection = resolveComparisonProjection(branchesWithB("A"), workspace("single"));
@@ -131,5 +193,49 @@ describe("resolveComparisonProjection", () => {
     expect(projection.sideB).toBeNull();
     expect(projection.visibleSides).toEqual(["A"]);
     expect(singleLayoutSide(projection)).toBe(projection.sideA);
+  });
+
+  it("projects current and immutable reference panes in external single view", () => {
+    const branches = createComparisonBranches(
+      createEditorBranch("A", document("A", { n1: "voice-1", n2: "voice-2" })),
+    );
+    const reference = referenceDocument({ r1: "reference-lead", r2: "reference-only" });
+    const current = resolveComparisonProjection(branches, externalWorkspace("current", "single"), {
+      reference,
+      diff: externalDiff(),
+    });
+    const referenceView = resolveComparisonProjection(
+      branches,
+      externalWorkspace("reference", "single"),
+      { reference, diff: externalDiff() },
+    );
+
+    expect(current.visibleSides).toEqual(["A"]);
+    expect(singleLayoutSide(current)).toBe(current.sideA);
+    expect(referenceView.visibleSides).toEqual(["reference"]);
+    expect(singleLayoutSide(referenceView)).toMatchObject({
+      kind: "reference",
+      side: "reference",
+      editable: false,
+      document: reference,
+    });
+  });
+
+  it("projects a read-only reference beside its target and maps only trusted matched voices", () => {
+    const branches = createComparisonBranches(
+      createEditorBranch("A", document("A", { n1: "voice-1", n2: "voice-2" })),
+    );
+    const reference = referenceDocument({ r1: "reference-lead", r2: "reference-only" });
+    const projection = resolveComparisonProjection(
+      branches,
+      externalWorkspace("current", "split"),
+      { reference, diff: externalDiff() },
+    );
+
+    expect(projection.visibleSides).toEqual(["A", "reference"]);
+    expect(projection.reference?.editable).toBe(false);
+    expect(presentationKeyForVoice(projection.reference!, "reference-lead")).toBe("voice-1");
+    expect(presentationKeyForVoice(projection.reference!, "reference-only")).toBe("reference-only");
+    expect("revisionRef" in projection.reference!).toBe(false);
   });
 });
