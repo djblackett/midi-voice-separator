@@ -81,7 +81,12 @@ function branchesWithB(activeSide: "A" | "B" = "A"): ComparisonBranches {
 }
 
 function workspace(layout: "single" | "split"): ComparisonWorkspace {
-  return { targetSnapshotId: "snap", viewing: layout === "split" ? "A" : "A", layout };
+  return {
+    kind: "editableSnapshot",
+    targetSnapshotId: "snap",
+    viewing: layout === "split" ? "A" : "A",
+    layout,
+  };
 }
 
 describe("resolveComparisonProjection", () => {

@@ -5,6 +5,7 @@ import { createNamedSnapshot, type NamedSnapshot, type RerunSettings } from "./e
 import {
   buildComparePreview,
   createComparisonWorkspace,
+  createExternalReferenceWorkspace,
   describeVoiceMatch,
   editorSnapshotFromCurrent,
   isEditingDisabledForComparison,
@@ -108,6 +109,28 @@ describe("editor compare state", () => {
     const splitWorkspace = { ...workspace, layout: "split" as const };
     expect(isEditingDisabledForComparison(splitWorkspace, "A")).toBe(false);
     expect(isEditingDisabledForComparison(splitWorkspace, "B")).toBe(false);
+  });
+
+  it("keeps an external reference workspace read-only without creating side B", () => {
+    const workspace = createExternalReferenceWorkspace("reference-1", {
+      branchId: "A",
+      documentId: "A",
+      revision: 4,
+    });
+
+    expect(workspace).toEqual({
+      kind: "externalReference",
+      referenceDocumentId: "reference-1",
+      target: { branchId: "A", documentId: "A", revision: 4 },
+      viewing: "current",
+      layout: "single",
+    });
+    expect(isEditingDisabledForComparison(workspace, "A")).toBe(false);
+    expect(
+      isEditingDisabledForComparison(updateComparisonViewing(workspace, "reference"), "A"),
+    ).toBe(true);
+    expect(isEditingDisabledForComparison({ ...workspace, layout: "split" }, "A")).toBe(false);
+    expect(isEditingDisabledForComparison({ ...workspace, layout: "split" }, "B")).toBe(true);
   });
 
   it("materializes the B snapshot project without mutating the current editor project", () => {

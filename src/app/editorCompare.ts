@@ -4,10 +4,13 @@ import { matchVoices, toDiffSide, type VoiceMatching } from "../domain/midi/assi
 import type { VoiceOverrides } from "../domain/midi/voiceAssignments";
 import { materializeEditorProject } from "../domain/midi/editorMaterialization";
 import type { BranchId } from "./editor/editorBranch";
+import type { DocumentId } from "./editor/editorDocument";
 import type { EditorSnapshot } from "./editorHistory";
 import type { NamedSnapshot } from "./editorSnapshots";
+import type { ReferenceDocumentId } from "./referenceDocument";
 
 export type CompareViewing = "A" | "B" | "diff";
+export type ReferenceCompareViewing = "current" | "reference" | "diff";
 
 /** Single canvas (the A/B/Diff toggle) or two panes side by side (M13). */
 export type ComparisonLayout = "single" | "split";
@@ -19,11 +22,28 @@ export type ComparisonLayout = "single" | "split";
  * diffs, matches, or scores. The editable `activeSide` is owned by the branch
  * hook, not duplicated here.
  */
-export interface ComparisonWorkspace {
-  targetSnapshotId: string;
-  viewing: CompareViewing;
-  layout: ComparisonLayout;
+export interface EditableSnapshotWorkspace {
+  readonly kind: "editableSnapshot";
+  readonly targetSnapshotId: string;
+  readonly viewing: CompareViewing;
+  readonly layout: ComparisonLayout;
 }
+
+export interface ExternalReferenceTarget {
+  readonly branchId: BranchId;
+  readonly documentId: DocumentId;
+  readonly revision: number;
+}
+
+export interface ExternalReferenceWorkspace {
+  readonly kind: "externalReference";
+  readonly referenceDocumentId: ReferenceDocumentId;
+  readonly target: ExternalReferenceTarget;
+  readonly viewing: ReferenceCompareViewing;
+  readonly layout: ComparisonLayout;
+}
+
+export type ComparisonWorkspace = EditableSnapshotWorkspace | ExternalReferenceWorkspace;
 
 export interface CurrentEditorCompareState extends EditorSnapshot {
   assignmentProvenance: AssignmentProvenance;
@@ -44,18 +64,50 @@ export function isEditingDisabledForComparison(
   workspace: ComparisonWorkspace | null,
   activeSide: BranchId,
 ): boolean {
-  return workspace !== null && workspace.layout === "single" && workspace.viewing !== activeSide;
+  if (!workspace) {
+    return false;
+  }
+  if (workspace.kind === "externalReference") {
+    if (activeSide !== workspace.target.branchId) {
+      return true;
+    }
+    return workspace.layout === "single" && workspace.viewing !== "current";
+  }
+  return workspace.layout === "single" && workspace.viewing !== activeSide;
 }
 
-export function createComparisonWorkspace(targetSnapshotId: string): ComparisonWorkspace {
-  return { targetSnapshotId, viewing: "A", layout: "single" };
+export function createComparisonWorkspace(targetSnapshotId: string): EditableSnapshotWorkspace {
+  return { kind: "editableSnapshot", targetSnapshotId, viewing: "A", layout: "single" };
+}
+
+export function createExternalReferenceWorkspace(
+  referenceDocumentId: ReferenceDocumentId,
+  target: ExternalReferenceTarget,
+): ExternalReferenceWorkspace {
+  return {
+    kind: "externalReference",
+    referenceDocumentId,
+    target,
+    viewing: "current",
+    layout: "single",
+  };
 }
 
 export function updateComparisonViewing(
   workspace: ComparisonWorkspace | null,
-  viewing: CompareViewing,
+  viewing: CompareViewing | ReferenceCompareViewing,
 ): ComparisonWorkspace | null {
-  return workspace ? { ...workspace, viewing } : null;
+  if (!workspace) {
+    return null;
+  }
+  if (workspace.kind === "editableSnapshot") {
+    return viewing === "A" || viewing === "B" || viewing === "diff"
+      ? { ...workspace, viewing }
+      : workspace;
+  }
+  return viewing === "current" || viewing === "reference" || viewing === "diff"
+    ? { ...workspace, viewing }
+    : workspace;
 }
 
 export function materializeSnapshotProject(snapshot: NamedSnapshot | null): MidiProject | null {
@@ -67,7 +119,7 @@ export function buildComparePreview(
   snapshots: readonly NamedSnapshot[],
   current: CurrentEditorCompareState,
 ): ComparePreview {
-  if (!workspace || workspace.viewing === "A") {
+  if (!workspace || workspace.kind !== "editableSnapshot" || workspace.viewing === "A") {
     return { project: current.project, matching: null };
   }
 

@@ -1306,7 +1306,7 @@ export default function App() {
   // split forces the diff-free single canvas onto the active side.
   function handleToggleSplitLayout() {
     setCompareState((current) =>
-      current
+      current?.kind === "editableSnapshot"
         ? { ...current, layout: current.layout === "split" ? "single" : "split", viewing: "A" }
         : current,
     );
