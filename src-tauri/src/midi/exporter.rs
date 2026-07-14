@@ -7,7 +7,9 @@ use midly::{
 
 use crate::error::AppError;
 
-use super::{model::MidiProjectDto, EXPORTED_VOICE_TRACK_MARKER};
+use super::{
+    export_validation::validate_export_project, model::MidiProjectDto, EXPORTED_VOICE_TRACK_MARKER,
+};
 
 const MAX_MIDI_DELTA: u64 = 0x0fff_ffff;
 
@@ -28,6 +30,10 @@ pub fn export_midi_bytes(project: &MidiProjectDto) -> Result<Vec<u8>, AppError> 
 }
 
 fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'_>, AppError> {
+    // The encoder must never silently clamp or reorder a materialized editor
+    // project. Keep this at the shared builder boundary so every byte-export
+    // caller receives the same validation, not only the Tauri command.
+    let _preflight = validate_export_project(project)?;
     let mut tracks: Vec<Vec<TrackEvent<'_>>> = vec![build_conductor_track(project)?];
     let voice_ids: HashSet<&str> = project
         .voices
@@ -380,6 +386,16 @@ mod tests {
             error.code,
             crate::error::AppErrorCode::ExportTimingOutOfRange
         );
+    }
+
+    #[test]
+    fn rejects_invalid_project_values_before_encoding_them() {
+        let mut project = project();
+        project.notes[0].channel = 16;
+
+        let error = export_midi_bytes(&project).expect_err("invalid channel should be rejected");
+
+        assert_eq!(error.code, crate::error::AppErrorCode::InvalidExportProject);
     }
 
     fn strict_content_report(

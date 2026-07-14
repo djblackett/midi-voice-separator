@@ -13,6 +13,7 @@ pub enum AppErrorCode {
     InvalidMidi,
     UnsupportedTimingFormat,
     ExportTimingOutOfRange,
+    InvalidExportProject,
     InvalidAssignmentEvaluation,
     InvalidCrossImportComparison,
 }
@@ -98,6 +99,13 @@ impl AppError {
             code: AppErrorCode::ExportTimingOutOfRange,
             message: "A MIDI event delta is too large to encode in a Standard MIDI File."
                 .to_string(),
+        }
+    }
+
+    pub fn invalid_export_project(message: impl Into<String>) -> Self {
+        Self {
+            code: AppErrorCode::InvalidExportProject,
+            message: message.into(),
         }
     }
 

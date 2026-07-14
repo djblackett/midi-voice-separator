@@ -3,6 +3,7 @@ pub mod assignment_metric;
 // matcher policy consumes it in A2; retain it crate-private until then.
 #[allow(dead_code)]
 pub(crate) mod content_matching;
+pub(crate) mod export_validation;
 pub mod exporter;
 pub mod model;
 pub mod parser;
