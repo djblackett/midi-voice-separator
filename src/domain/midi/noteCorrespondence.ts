@@ -25,9 +25,25 @@ export interface CrossImportDiagnostics {
   readonly unmatchedEditable: readonly CorrespondenceNoteRef[];
 }
 
+/**
+ * Per-side semantic coverage reported by the native matcher. Ambiguous exact
+ * duplicate multiplicity can contribute here without creating an individual
+ * trusted occurrence pair, so consumers must not substitute this for pair
+ * coverage when deriving assignment evidence.
+ */
+export interface CrossImportMatchCoverage {
+  readonly total: number;
+  readonly exact: number;
+  readonly fuzzy: number;
+  readonly ambiguous: number;
+  readonly unmatched: number;
+}
+
 interface CrossImportMatchBase extends CrossImportDiagnostics {
   readonly matcherVersion: number;
   readonly policy: "CROSS_IMPORT_V1";
+  readonly referenceCoverage: CrossImportMatchCoverage;
+  readonly editableCoverage: CrossImportMatchCoverage;
   readonly exactPairs: readonly CorrespondenceNotePair[];
   readonly fuzzyPairs: readonly CorrespondenceNotePair[];
 }
@@ -55,6 +71,8 @@ export type TrustedPairEvidence =
       readonly kind: "trustedPairs";
       readonly matcherVersion: number;
       readonly policy: "CROSS_IMPORT_V1";
+      readonly referenceCoverage: CrossImportMatchCoverage;
+      readonly editableCoverage: CrossImportMatchCoverage;
       readonly pairs: readonly TrustedCorrespondencePair[];
       readonly diagnostics: CrossImportDiagnostics;
     }
@@ -62,6 +80,8 @@ export type TrustedPairEvidence =
       readonly kind: "incomparable";
       readonly matcherVersion: number;
       readonly policy: "CROSS_IMPORT_V1";
+      readonly referenceCoverage: CrossImportMatchCoverage;
+      readonly editableCoverage: CrossImportMatchCoverage;
       readonly reason: "INSUFFICIENT_COVERAGE" | "DUPLICATE_TRUSTED_REFERENCE";
       readonly diagnostics: CrossImportDiagnostics;
     };
@@ -83,6 +103,8 @@ export function toTrustedPairEvidence(result: CrossImportMatchForConsumers): Tru
       kind: "incomparable",
       matcherVersion: result.matcherVersion,
       policy: result.policy,
+      referenceCoverage: result.referenceCoverage,
+      editableCoverage: result.editableCoverage,
       reason: result.incomparableReason,
       diagnostics,
     };
@@ -106,6 +128,8 @@ export function toTrustedPairEvidence(result: CrossImportMatchForConsumers): Tru
         kind: "incomparable",
         matcherVersion: result.matcherVersion,
         policy: result.policy,
+        referenceCoverage: result.referenceCoverage,
+        editableCoverage: result.editableCoverage,
         reason: "DUPLICATE_TRUSTED_REFERENCE",
         diagnostics,
       };
@@ -118,6 +142,8 @@ export function toTrustedPairEvidence(result: CrossImportMatchForConsumers): Tru
     kind: "trustedPairs",
     matcherVersion: result.matcherVersion,
     policy: result.policy,
+    referenceCoverage: result.referenceCoverage,
+    editableCoverage: result.editableCoverage,
     pairs,
     diagnostics,
   };

@@ -10,12 +10,16 @@ function note(documentId: string, noteId: string): CorrespondenceNoteRef {
   return { documentId, noteId };
 }
 
+const emptyCoverage = { total: 0, exact: 0, fuzzy: 0, ambiguous: 0, unmatched: 0 };
+
 function comparableResult(
   changes: Partial<Extract<CrossImportMatchForConsumers, { comparable: true }>> = {},
 ): Extract<CrossImportMatchForConsumers, { comparable: true }> {
   return {
     matcherVersion: 1,
     policy: "CROSS_IMPORT_V1",
+    referenceCoverage: emptyCoverage,
+    editableCoverage: emptyCoverage,
     comparable: true,
     incomparableReason: null,
     exactPairs: [],
@@ -40,6 +44,8 @@ describe("toTrustedPairEvidence", () => {
       kind: "trustedPairs",
       matcherVersion: 1,
       policy: "CROSS_IMPORT_V1",
+      referenceCoverage: emptyCoverage,
+      editableCoverage: emptyCoverage,
       pairs: [
         {
           kind: "exact",
@@ -84,6 +90,8 @@ describe("toTrustedPairEvidence", () => {
     const result: Extract<CrossImportMatchForConsumers, { comparable: false }> = {
       matcherVersion: 1,
       policy: "CROSS_IMPORT_V1",
+      referenceCoverage: emptyCoverage,
+      editableCoverage: emptyCoverage,
       comparable: false,
       incomparableReason: "INSUFFICIENT_COVERAGE",
       exactPairs: [],
@@ -98,6 +106,8 @@ describe("toTrustedPairEvidence", () => {
       kind: "incomparable",
       matcherVersion: 1,
       policy: "CROSS_IMPORT_V1",
+      referenceCoverage: emptyCoverage,
+      editableCoverage: emptyCoverage,
       reason: "INSUFFICIENT_COVERAGE",
       diagnostics: {
         ambiguous: [],
