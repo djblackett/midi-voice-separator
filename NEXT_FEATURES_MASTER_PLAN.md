@@ -555,7 +555,9 @@ semantics.
 Exit gate: input ordering does not change matches; low coverage yields `incomparable`; strict
 and tolerant policies cannot be confused.
 
-### 8. Cross-import diffing
+### 8. Cross-import diffing — detailed plan drafted
+
+Implementation design and commit-sized slices: `CROSS_IMPORT_DIFFING_PLAN.md`.
 
 Required work:
 

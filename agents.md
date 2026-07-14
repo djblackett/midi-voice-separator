@@ -196,6 +196,10 @@ and checked-in fixtures. It remains intentionally unwired: there is no Tauri com
 screen, or replacement for `assignmentDiff.ts`'s current disjoint-ID guard. Feature 8 must consume
 only unambiguous pairs; Feature 9 must consume strict multiset semantics.
 
+Feature 8 now has its own durable plan in `CROSS_IMPORT_DIFFING_PLAN.md`. Its central ownership
+rule is that an external import is an immutable `ReferenceDocument`, never editable side B; retain
+the existing local-ID snapshot/A–B diff unchanged and build a separate paired-reference diff path.
+
 ## Progress Log
 
 - **Phase 1 (multi-select + bulk reassignment) — done.** Selection state in
