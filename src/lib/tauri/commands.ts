@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AssignmentProvenance } from "../../domain/midi/assignmentProvenance";
 import type { MidiProject, SeparationStrategy } from "../../domain/midi/midiProject";
 import type {
+  AmbiguousCorrespondenceGroup,
+  CorrespondenceNotePair,
+  CrossImportMatchForConsumers,
+} from "../../domain/midi/noteCorrespondence";
+import type {
   AssignmentEvaluationRequest,
   AssignmentMetricReport,
 } from "../../domain/midi/assignmentMetric";
@@ -9,6 +14,7 @@ import type {
 const COMMANDS = {
   backendStatus: "backend_status",
   importMidi: "import_midi",
+  compareExternalMidi: "compare_external_midi",
   exportMidi: "export_midi",
   reassignVoices: "reassign_voices",
   evaluateAssignment: "evaluate_assignment",
@@ -34,6 +40,50 @@ export interface ExportMidiResult {
 export interface AssignmentOperationResult {
   project: MidiProject;
   provenance: AssignmentProvenance;
+}
+
+export interface CrossImportComparisonRequest {
+  readonly referencePath: string;
+  readonly referenceDocumentId: string;
+  readonly editable: {
+    readonly documentId: string;
+    readonly project: MidiProject;
+  };
+}
+
+export interface RationalQuarterDistance {
+  readonly numerator: string;
+  readonly denominator: string;
+}
+
+export interface CrossImportFuzzyNotePair extends CorrespondenceNotePair {
+  readonly onsetDistance: RationalQuarterDistance;
+  readonly durationDistance: RationalQuarterDistance;
+  readonly sameChannel: boolean;
+  readonly velocityDifference: number;
+}
+
+export interface CrossImportAmbiguityGroup extends AmbiguousCorrespondenceGroup {
+  readonly matchedMultiplicity: number;
+  readonly candidateCount: number;
+}
+
+/** Native Feature 7 result, enriched only with display-only fuzzy scores. */
+export type CrossImportMatchResult = CrossImportMatchForConsumers & {
+  readonly fuzzyPairs: readonly CrossImportFuzzyNotePair[];
+  readonly ambiguous: readonly CrossImportAmbiguityGroup[];
+};
+
+export interface ExternalReferenceImportResult {
+  readonly documentId: string;
+  readonly path: string;
+  readonly project: MidiProject;
+  readonly provenance: AssignmentProvenance;
+}
+
+export interface CrossImportComparisonResponse {
+  readonly reference: ExternalReferenceImportResult;
+  readonly correspondence: CrossImportMatchResult;
 }
 
 // `SeparationStrategy` is a domain concept (it also appears in the
@@ -87,6 +137,16 @@ export async function getBackendStatus(): Promise<BackendStatus> {
 export async function importMidi(path: string): Promise<AssignmentOperationResult> {
   try {
     return await invoke<AssignmentOperationResult>(COMMANDS.importMidi, { path });
+  } catch (error) {
+    throw toCommandError(error);
+  }
+}
+
+export async function compareExternalMidi(
+  request: CrossImportComparisonRequest,
+): Promise<CrossImportComparisonResponse> {
+  try {
+    return await invoke<CrossImportComparisonResponse>(COMMANDS.compareExternalMidi, { request });
   } catch (error) {
     throw toCommandError(error);
   }

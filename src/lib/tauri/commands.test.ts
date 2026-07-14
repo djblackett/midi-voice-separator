@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   evaluateAssignment,
+  compareExternalMidi,
   exportMidi,
   getBackendStatus,
   importMidi,
@@ -38,6 +39,42 @@ describe("tauri command adapter", () => {
 
     await expect(importMidi("C:\\music\\song.mid")).resolves.toEqual(result);
     expect(invokeMock).toHaveBeenCalledWith("import_midi", { path: "C:\\music\\song.mid" });
+  });
+
+  it("maps a read-only external comparison request and response", async () => {
+    const request = {
+      referencePath: "C:\\music\\reference.mid",
+      referenceDocumentId: "reference-1",
+      editable: {
+        documentId: "document-a",
+        project: { fileName: "current.mid", notes: [] } as never,
+      },
+    };
+    const response = {
+      reference: {
+        documentId: "reference-1",
+        path: "C:\\music\\reference.mid",
+        project: { fileName: "reference.mid", notes: [] },
+        provenance: { kind: "imported", algorithmVersion: 1 },
+      },
+      correspondence: {
+        matcherVersion: 1,
+        policy: "CROSS_IMPORT_V1",
+        comparable: true,
+        incomparableReason: null,
+        referenceCoverage: { total: 0, exact: 0, fuzzy: 0, ambiguous: 0, unmatched: 0 },
+        editableCoverage: { total: 0, exact: 0, fuzzy: 0, ambiguous: 0, unmatched: 0 },
+        exactPairs: [],
+        fuzzyPairs: [],
+        ambiguous: [],
+        unmatchedReference: [],
+        unmatchedEditable: [],
+      },
+    };
+    invokeMock.mockResolvedValue(response);
+
+    await expect(compareExternalMidi(request)).resolves.toEqual(response);
+    expect(invokeMock).toHaveBeenCalledWith("compare_external_midi", { request });
   });
 
   it("maps export success", async () => {

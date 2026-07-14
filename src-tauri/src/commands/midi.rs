@@ -7,9 +7,14 @@ use crate::{
             evaluate_assignment_model_cost, AssignmentEvaluationRequestDto, AssignmentMetricError,
             AssignmentMetricReportDto,
         },
+        content_matching::{
+            cross_import_match_result_dto, discover_cross_import_candidates,
+            resolve_cross_import_candidates, ContentMatchError, MatchDocument,
+        },
         exporter::export_midi_bytes,
         model::{
-            AssignmentMode, AssignmentProvenanceDto, SeparationStrategy,
+            AssignmentMode, AssignmentProvenanceDto, CrossImportComparisonRequestDto,
+            CrossImportComparisonResponseDto, ReferenceDocumentDto, SeparationStrategy,
             ASSIGNMENT_ALGORITHM_VERSION,
         },
         parser::{has_exported_voice_tracks, parse_midi_project},
@@ -77,6 +82,107 @@ pub fn import_midi(path: String) -> Result<AssignmentOperationResultDto, AppErro
     })
 }
 
+/// Parses a separately selected MIDI file and compares its supported note
+/// content to the materialized editable project supplied by the frontend.
+/// The command is deliberately read-only: it returns a reference document and
+/// matcher diagnostics without changing any application/editor state.
+#[tauri::command]
+pub fn compare_external_midi(
+    request: CrossImportComparisonRequestDto,
+) -> Result<CrossImportComparisonResponseDto, AppError> {
+    let reference_document_id = request.reference_document_id.trim();
+    let editable_document_id = request.editable.document_id.trim();
+    if reference_document_id.is_empty() || editable_document_id.is_empty() {
+        return Err(AppError::invalid_cross_import_comparison(
+            "External comparison requires both document identifiers.",
+        ));
+    }
+    if reference_document_id == editable_document_id {
+        return Err(AppError::invalid_cross_import_comparison(
+            "The reference and editable documents must have different identifiers.",
+        ));
+    }
+
+    let trimmed_path = request.reference_path.trim();
+    if trimmed_path.is_empty() {
+        return Err(AppError::empty_path());
+    }
+    let path = Path::new(trimmed_path);
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(extension.as_deref(), Some("mid" | "midi")) {
+        return Err(AppError::unsupported_extension());
+    }
+
+    let bytes = fs::read(path).map_err(|error| {
+        eprintln!(
+            "Failed to read external comparison MIDI '{}': {error}",
+            path.display()
+        );
+        AppError::from_io(&error)
+    })?;
+    let reference_project = parse_midi_project(path, &bytes).map_err(|error| {
+        eprintln!(
+            "Failed to parse external comparison MIDI '{}': {error}",
+            path.display()
+        );
+        error
+    })?;
+    let reference_provenance = if has_exported_voice_tracks(&bytes) {
+        AssignmentProvenanceDto::AppExportedVoiceTracks
+    } else {
+        AssignmentProvenanceDto::Imported {
+            algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
+        }
+    };
+
+    let candidates = discover_cross_import_candidates(
+        MatchDocument {
+            document_id: reference_document_id,
+            ppq: reference_project.ppq,
+            notes: &reference_project.notes,
+        },
+        MatchDocument {
+            document_id: editable_document_id,
+            ppq: request.editable.project.ppq,
+            notes: &request.editable.project.notes,
+        },
+    )
+    .map_err(cross_import_match_error)?;
+    let correspondence = resolve_cross_import_candidates(
+        candidates,
+        reference_project.notes.len(),
+        request.editable.project.notes.len(),
+    );
+
+    Ok(CrossImportComparisonResponseDto {
+        reference: ReferenceDocumentDto {
+            document_id: reference_document_id.to_string(),
+            path: path.display().to_string(),
+            project: reference_project,
+            provenance: reference_provenance,
+        },
+        correspondence: cross_import_match_result_dto(&correspondence),
+    })
+}
+
+fn cross_import_match_error(error: ContentMatchError) -> AppError {
+    match error {
+        ContentMatchError::InvalidPpq => AppError::invalid_cross_import_comparison(
+            "External comparison requires a positive PPQ value in the editable project.",
+        ),
+        ContentMatchError::EndBeforeStart {
+            note_id,
+            start_tick,
+            end_tick,
+        } => AppError::invalid_cross_import_comparison(format!(
+            "Editable note '{note_id}' ends at tick {end_tick} before it starts at tick {start_tick}.",
+        )),
+    }
+}
+
 #[tauri::command]
 pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiResultDto, AppError> {
     let trimmed_path = path.trim();
@@ -139,9 +245,9 @@ mod tests {
     use crate::error::AppErrorCode;
     use crate::midi::assignment_metric::GENERAL_PURPOSE_PROFILE;
     use crate::midi::model::{
-        AssignmentMode, AssignmentProvenanceDto, AssignmentReason, MidiNoteDto, MidiVoiceDto,
-        SeparationSummaryDto, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
-        ASSIGNMENT_ALGORITHM_VERSION,
+        AssignmentMode, AssignmentProvenanceDto, AssignmentReason, CrossImportComparisonRequestDto,
+        MatchDocumentRequestDto, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
+        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto, ASSIGNMENT_ALGORITHM_VERSION,
     };
     use std::path::PathBuf;
 
@@ -205,6 +311,22 @@ mod tests {
             .join("two-note-smoke.mid")
     }
 
+    fn comparison_request(
+        reference_path: String,
+        reference_document_id: &str,
+        editable_document_id: &str,
+        editable_project: MidiProjectDto,
+    ) -> CrossImportComparisonRequestDto {
+        CrossImportComparisonRequestDto {
+            reference_path,
+            reference_document_id: reference_document_id.to_string(),
+            editable: MatchDocumentRequestDto {
+                document_id: editable_document_id.to_string(),
+                project: editable_project,
+            },
+        }
+    }
+
     #[test]
     fn import_midi_rejects_an_empty_path() {
         let error = import_midi("   ".to_string()).expect_err("blank path should be rejected");
@@ -233,6 +355,116 @@ mod tests {
                 algorithm_version: ASSIGNMENT_ALGORITHM_VERSION,
             }
         );
+    }
+
+    #[test]
+    fn compare_external_midi_rejects_invalid_paths_before_matching() {
+        let error = compare_external_midi(comparison_request(
+            "   ".to_string(),
+            "reference-1",
+            "editable-1",
+            project(),
+        ))
+        .expect_err("blank comparison path should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::EmptyPath);
+
+        let error = compare_external_midi(comparison_request(
+            "song.txt".to_string(),
+            "reference-1",
+            "editable-1",
+            project(),
+        ))
+        .expect_err("unsupported comparison extension should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::UnsupportedFileExtension);
+    }
+
+    #[test]
+    fn compare_external_midi_reports_parse_failure_without_mutating_the_request_project() {
+        let path = std::env::temp_dir().join("chiptune-voice-separator-compare-garbage.mid");
+        std::fs::write(&path, b"not a midi file").expect("temp file should write");
+        let editable = project();
+
+        let error = compare_external_midi(comparison_request(
+            path.display().to_string(),
+            "reference-1",
+            "editable-1",
+            editable.clone(),
+        ))
+        .expect_err("garbage reference bytes should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::InvalidMidi);
+        assert_eq!(editable.ppq, 480);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn compare_external_midi_matches_equivalent_notes_and_returns_a_read_only_reference() {
+        let path = fixture_path();
+        let editable = import_midi(path.display().to_string())
+            .expect("fixture should import for editable input")
+            .project;
+
+        let response = compare_external_midi(comparison_request(
+            path.display().to_string(),
+            "reference-1",
+            "editable-1",
+            editable,
+        ))
+        .expect("equivalent fixture should compare");
+
+        assert_eq!(response.reference.document_id, "reference-1");
+        assert_eq!(response.reference.project.notes.len(), 2);
+        assert!(response.correspondence.comparable);
+        assert_eq!(response.correspondence.exact_pairs.len(), 2);
+        assert!(response.correspondence.fuzzy_pairs.is_empty());
+        assert!(response
+            .correspondence
+            .exact_pairs
+            .iter()
+            .all(|pair| pair.reference.document_id == "reference-1"
+                && pair.editable.document_id == "editable-1"));
+    }
+
+    #[test]
+    fn compare_external_midi_reports_unrelated_content_as_incomparable() {
+        let path = fixture_path();
+        let mut editable = import_midi(path.display().to_string())
+            .expect("fixture should import for editable input")
+            .project;
+        for note in &mut editable.notes {
+            note.pitch = note.pitch.saturating_add(12);
+        }
+
+        let response = compare_external_midi(comparison_request(
+            path.display().to_string(),
+            "reference-1",
+            "editable-1",
+            editable,
+        ))
+        .expect("unrelated notes are valid comparison diagnostics");
+
+        assert!(!response.correspondence.comparable);
+        assert_eq!(response.correspondence.exact_pairs.len(), 0);
+        assert_eq!(response.correspondence.reference_coverage.unmatched, 2);
+        assert_eq!(response.correspondence.editable_coverage.unmatched, 2);
+    }
+
+    #[test]
+    fn compare_external_midi_maps_invalid_editable_matching_input_to_a_structured_error() {
+        let mut editable = project();
+        editable.ppq = 0;
+
+        let error = compare_external_midi(comparison_request(
+            fixture_path().display().to_string(),
+            "reference-1",
+            "editable-1",
+            editable,
+        ))
+        .expect_err("zero editable PPQ should be rejected");
+
+        assert_eq!(error.code, AppErrorCode::InvalidCrossImportComparison);
     }
 
     #[test]

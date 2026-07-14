@@ -289,3 +289,39 @@ pub struct CrossImportMatchResultDto {
     pub unmatched_reference: Vec<NoteRefDto>,
     pub unmatched_editable: Vec<NoteRefDto>,
 }
+
+/// Materialized editable document supplied by the frontend for a read-only
+/// external comparison. Editor history and overrides stay in TypeScript; Rust
+/// receives only the project state that is currently displayed/exported.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchDocumentRequestDto {
+    pub document_id: String,
+    pub project: MidiProjectDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportComparisonRequestDto {
+    pub reference_path: String,
+    pub reference_document_id: String,
+    pub editable: MatchDocumentRequestDto,
+}
+
+/// A successfully parsed external MIDI file. This intentionally excludes all
+/// editor mutation/history state, so it cannot become an editable branch.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceDocumentDto {
+    pub document_id: String,
+    pub path: String,
+    pub project: MidiProjectDto,
+    pub provenance: AssignmentProvenanceDto,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportComparisonResponseDto {
+    pub reference: ReferenceDocumentDto,
+    pub correspondence: CrossImportMatchResultDto,
+}

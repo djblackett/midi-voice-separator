@@ -14,6 +14,7 @@ pub enum AppErrorCode {
     UnsupportedTimingFormat,
     ExportTimingOutOfRange,
     InvalidAssignmentEvaluation,
+    InvalidCrossImportComparison,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +104,13 @@ impl AppError {
     pub fn invalid_assignment_evaluation(message: impl Into<String>) -> Self {
         Self {
             code: AppErrorCode::InvalidAssignmentEvaluation,
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_cross_import_comparison(message: impl Into<String>) -> Self {
+        Self {
+            code: AppErrorCode::InvalidCrossImportComparison,
             message: message.into(),
         }
     }
