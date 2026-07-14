@@ -143,9 +143,22 @@ pub struct SeparationSummaryDto {
 pub struct MidiVoiceDto {
     pub id: String,
     pub label: String,
+    /// A semantic role independent of unstable parser-local voice IDs.
+    /// Older frontend materialized projects omit this field and safely
+    /// default to melodic until the typed frontend surface adopts it.
+    #[serde(default)]
+    pub role: VoiceRoleDto,
     pub note_count: usize,
     pub lowest_pitch: u8,
     pub highest_pitch: u8,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VoiceRoleDto {
+    #[default]
+    Melodic,
+    Percussion,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -354,4 +367,128 @@ pub struct StrictAmbiguousNoteMatchGroupDto {
     pub expected: Vec<NoteRefDto>,
     pub reimported: Vec<NoteRefDto>,
     pub matched_multiplicity: usize,
+}
+
+/// Final semantic verdict for the materialized project written by an export.
+/// `CouldNotVerify` is reserved for the command layer after a successful
+/// write cannot be read back, parsed, or inspected.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RoundTripVerificationStatusDto {
+    Verified,
+    DifferencesFound,
+    Inconclusive,
+    CouldNotVerify,
+}
+
+/// Stable category for a reportable semantic mismatch. Presentation maps
+/// these categories to user-facing text; Rust never serializes a fragile
+/// formatted explanation as the source of truth.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RoundTripDifferenceKindDto {
+    MissingNote,
+    UnexpectedNote,
+    AmbiguousDuplicatePartition,
+    VoicePartition,
+    VoiceLabel,
+    VoiceRole,
+    Ppq,
+    Duration,
+    TempoMap,
+    TimeSignatures,
+    OverlappingDuplicatePairing,
+}
+
+/// Strict-note evidence that contributes to a round-trip verdict. Duplicate
+/// multiplicity remains semantic content evidence, while the group count
+/// warns the partition verifier that it has no occurrence correspondence.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrictNoteVerificationSummaryDto {
+    pub expected_note_count: usize,
+    pub reimported_note_count: usize,
+    pub exact_match_multiplicity: usize,
+    pub content_preserved: bool,
+    pub ambiguous_exact_group_count: usize,
+    pub missing_expected: Vec<NoteRefDto>,
+    pub unexpected_reimported: Vec<NoteRefDto>,
+}
+
+/// Partition evidence comes only from unique strict note pairs. A duplicate
+/// exact-content group therefore makes the partition inconclusive even when
+/// note multiset content is otherwise preserved.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoicePartitionVerificationDto {
+    pub unambiguous_pair_count: usize,
+    pub ambiguous_duplicate_group_count: usize,
+    pub comparable: bool,
+    pub preserved: bool,
+}
+
+/// The supported timeline facts are compared exactly; the strict note matcher
+/// remains the only place PPQ normalization is permitted for note positions.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineMetadataVerificationDto {
+    pub ppq_preserved: bool,
+    pub duration_preserved: bool,
+    pub tempo_map_preserved: bool,
+    pub time_signatures_preserved: bool,
+}
+
+/// Structured mismatch with document-qualified note addresses. Voice IDs are
+/// diagnostic addresses only: a differing parser-local ID never causes a
+/// failure by itself.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoundTripDifferenceDto {
+    pub kind: RoundTripDifferenceKindDto,
+    pub expected_notes: Vec<NoteRefDto>,
+    pub reimported_notes: Vec<NoteRefDto>,
+    pub expected_voice_id: Option<String>,
+    pub reimported_voice_id: Option<String>,
+}
+
+/// Pure semantic verification of an expected materialized project against a
+/// reparsed export. The export command is wired in a later slice; this DTO is
+/// deliberately complete enough to make that transport thin and auditable.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoundTripVerificationReportDto {
+    pub verifier_version: u32,
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicyDto,
+    pub status: RoundTripVerificationStatusDto,
+    pub note_summary: StrictNoteVerificationSummaryDto,
+    pub voice_partition: VoicePartitionVerificationDto,
+    pub metadata: TimelineMetadataVerificationDto,
+    pub differences: Vec<RoundTripDifferenceDto>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_role_defaults_to_melodic_for_older_project_payloads() {
+        let voice: MidiVoiceDto = serde_json::from_value(serde_json::json!({
+            "id": "voice-1",
+            "label": "Voice 1",
+            "noteCount": 1,
+            "lowestPitch": 60,
+            "highestPitch": 60,
+        }))
+        .expect("older payloads without a role should deserialize");
+
+        assert_eq!(voice.role, VoiceRoleDto::Melodic);
+    }
 }

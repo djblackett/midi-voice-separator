@@ -834,10 +834,11 @@ mod tests {
             .expect("drum note should import");
         assert_eq!(drum_note.voice_id, "percussion");
         assert_eq!(drum_note.assignment_reason, AssignmentReason::Percussion);
-        assert!(project
-            .voices
-            .iter()
-            .any(|voice| voice.id == "percussion" && voice.label == "Percussion"));
+        assert!(project.voices.iter().any(|voice| {
+            voice.id == "percussion"
+                && voice.label == "Percussion"
+                && voice.role == crate::midi::model::VoiceRoleDto::Percussion
+        }));
         assert!(project.strategy_suggestion.reason.contains("Percussion"));
     }
 

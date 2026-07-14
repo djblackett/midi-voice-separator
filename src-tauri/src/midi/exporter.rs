@@ -209,6 +209,7 @@ mod tests {
     use crate::midi::model::{
         AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, SeparationStrategy,
         SeparationSummaryDto, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
+        VoiceRoleDto,
     };
     use crate::midi::parser::parse_midi_project;
     use crate::midi::round_trip_verification::{
@@ -243,6 +244,7 @@ mod tests {
                 MidiVoiceDto {
                     id: "voice-1".to_string(),
                     label: "Voice 1".to_string(),
+                    role: VoiceRoleDto::Melodic,
                     note_count: 1,
                     lowest_pitch: 60,
                     highest_pitch: 60,
@@ -250,6 +252,7 @@ mod tests {
                 MidiVoiceDto {
                     id: "voice-2".to_string(),
                     label: "Voice 2".to_string(),
+                    role: VoiceRoleDto::Melodic,
                     note_count: 1,
                     lowest_pitch: 72,
                     highest_pitch: 72,
@@ -461,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_inventory_marks_percussion_identity_as_a_role_difference_target() {
+    fn round_trip_inventory_preserves_percussion_role_despite_parser_local_id_change() {
         let mut project = project();
         project.voices.truncate(1);
         project.voices[0].id = "percussion".to_string();
@@ -478,6 +481,7 @@ mod tests {
 
         assert!(strict_content_report(&project).content_preserved);
         assert_eq!(reimported.voices[0].label, "Percussion");
+        assert_eq!(reimported.voices[0].role, VoiceRoleDto::Percussion);
         assert_ne!(reimported.voices[0].id, "percussion");
     }
 

@@ -247,7 +247,8 @@ mod tests {
     use crate::midi::model::{
         AssignmentMode, AssignmentProvenanceDto, AssignmentReason, CrossImportComparisonRequestDto,
         MatchDocumentRequestDto, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
-        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto, ASSIGNMENT_ALGORITHM_VERSION,
+        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto, VoiceRoleDto,
+        ASSIGNMENT_ALGORITHM_VERSION,
     };
     use std::path::PathBuf;
 
@@ -277,6 +278,7 @@ mod tests {
             voices: vec![MidiVoiceDto {
                 id: "voice-1".to_string(),
                 label: "Voice 1".to_string(),
+                role: VoiceRoleDto::Melodic,
                 note_count: 1,
                 lowest_pitch: 60,
                 highest_pitch: 60,

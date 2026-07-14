@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::model::{
     AssignmentMode, AssignmentReason, MidiNoteDto, MidiVoiceDto, SeparationStrategy,
-    SeparationSummaryDto,
+    SeparationSummaryDto, VoiceRoleDto,
 };
 
 /// Tuning constants for the assignment cost model that don't vary by
@@ -202,6 +202,7 @@ pub fn assign_voices_with_locks(
         .find(|voice| voice.id == PERCUSSION_VOICE_ID)
     {
         Some(existing) => {
+            existing.role = VoiceRoleDto::Percussion;
             existing.note_count += percussion_pitches.len();
             existing.lowest_pitch = existing.lowest_pitch.min(lowest);
             existing.highest_pitch = existing.highest_pitch.max(highest);
@@ -209,6 +210,7 @@ pub fn assign_voices_with_locks(
         None => voices.push(MidiVoiceDto {
             id: PERCUSSION_VOICE_ID.to_string(),
             label: PERCUSSION_VOICE_LABEL.to_string(),
+            role: VoiceRoleDto::Percussion,
             note_count: percussion_pitches.len(),
             lowest_pitch: lowest,
             highest_pitch: highest,
@@ -376,6 +378,7 @@ pub fn assign_heuristic_voices_with_locks(
         .map(|(index, voice)| MidiVoiceDto {
             id: voice.id,
             label: format!("Voice {}", index + 1),
+            role: VoiceRoleDto::Melodic,
             note_count: voice.note_count,
             lowest_pitch: voice.lowest_pitch,
             highest_pitch: voice.highest_pitch,
@@ -504,6 +507,7 @@ pub fn assign_windowed_voices_with_locks(
         .map(|(index, voice)| MidiVoiceDto {
             id: voice.id,
             label: format!("Voice {}", index + 1),
+            role: VoiceRoleDto::Melodic,
             note_count: voice.note_count,
             lowest_pitch: voice.lowest_pitch,
             highest_pitch: voice.highest_pitch,
@@ -1559,6 +1563,15 @@ pub fn summarize_assigned_voices(notes: &[MidiNoteDto]) -> Vec<MidiVoiceDto> {
             MidiVoiceDto {
                 id: voice_id.clone(),
                 label: format!("Voice {}", index + 1),
+                role: if voice_id == PERCUSSION_VOICE_ID
+                    || voice_notes
+                        .iter()
+                        .all(|note| note.channel == PERCUSSION_CHANNEL)
+                {
+                    VoiceRoleDto::Percussion
+                } else {
+                    VoiceRoleDto::Melodic
+                },
                 note_count: voice_notes.len(),
                 lowest_pitch: voice_notes
                     .iter()
@@ -2859,6 +2872,7 @@ mod percussion_tests {
                 .find(|voice| voice.id == PERCUSSION_VOICE_ID)
                 .expect("percussion voice should be listed");
             assert_eq!(percussion_voice.label, "Percussion");
+            assert_eq!(percussion_voice.role, VoiceRoleDto::Percussion);
             assert_eq!(percussion_voice.note_count, 2);
             assert_eq!(percussion_voice.lowest_pitch, 36);
             assert_eq!(percussion_voice.highest_pitch, 42);
