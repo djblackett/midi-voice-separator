@@ -6,6 +6,7 @@ pub(crate) const NOTE_CORRESPONDENCE_MATCHER_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoteMatchPolicy {
+    SameDocumentV1,
     StrictRoundTripV1,
     CrossImportV1,
 }
@@ -30,6 +31,20 @@ pub(crate) struct MatchDocument<'a> {
 pub(crate) struct MatchedNotePair {
     pub left: MatchNoteRef,
     pub right: MatchNoteRef,
+}
+
+/// Local-ID correspondence for two views of the same editor document. This is
+/// deliberately separate from content matching: a caller must opt into a
+/// semantic policy before local document identity can no longer be trusted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SameDocumentMatchResult {
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicy,
+    pub comparable: bool,
+    pub incomparable_reason: Option<IncomparableReason>,
+    pub local_id_pairs: Vec<MatchedNotePair>,
+    pub unmatched_left: Vec<MatchNoteRef>,
+    pub unmatched_right: Vec<MatchNoteRef>,
 }
 
 /// A duplicate exact-content bucket. `matched_multiplicity` contributes to
@@ -109,6 +124,7 @@ pub(crate) struct MatchCoverage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IncomparableReason {
+    DifferentDocumentIds,
     InsufficientCoverage,
 }
 
@@ -227,6 +243,70 @@ pub(crate) fn canonicalize_notes(
             .then_with(|| left.note_id.cmp(&right.note_id))
     });
     Ok(canonical)
+}
+
+/// Pairs shared local note IDs only after proving both inputs represent the
+/// same document. It does not inspect MIDI content, PPQ, or note ordering;
+/// different documents remain incomparable rather than falling through to a
+/// content-derived policy.
+pub(crate) fn match_same_document_notes(
+    left: MatchDocument<'_>,
+    right: MatchDocument<'_>,
+) -> SameDocumentMatchResult {
+    let left_refs = local_note_refs(&left);
+    let right_refs = local_note_refs(&right);
+    if left.document_id != right.document_id {
+        return SameDocumentMatchResult {
+            matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+            policy: NoteMatchPolicy::SameDocumentV1,
+            comparable: false,
+            incomparable_reason: Some(IncomparableReason::DifferentDocumentIds),
+            local_id_pairs: Vec::new(),
+            unmatched_left: left_refs,
+            unmatched_right: right_refs,
+        };
+    }
+
+    let mut local_id_pairs = Vec::new();
+    let mut unmatched_left = Vec::new();
+    let mut unmatched_right = Vec::new();
+    let mut left_index = 0;
+    let mut right_index = 0;
+    while left_index < left_refs.len() && right_index < right_refs.len() {
+        match left_refs[left_index]
+            .note_id
+            .cmp(&right_refs[right_index].note_id)
+        {
+            std::cmp::Ordering::Less => {
+                unmatched_left.push(left_refs[left_index].clone());
+                left_index += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                unmatched_right.push(right_refs[right_index].clone());
+                right_index += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                local_id_pairs.push(MatchedNotePair {
+                    left: left_refs[left_index].clone(),
+                    right: right_refs[right_index].clone(),
+                });
+                left_index += 1;
+                right_index += 1;
+            }
+        }
+    }
+    unmatched_left.extend(left_refs.into_iter().skip(left_index));
+    unmatched_right.extend(right_refs.into_iter().skip(right_index));
+
+    SameDocumentMatchResult {
+        matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+        policy: NoteMatchPolicy::SameDocumentV1,
+        comparable: true,
+        incomparable_reason: None,
+        local_id_pairs,
+        unmatched_left,
+        unmatched_right,
+    }
 }
 
 /// Matches only exact supported note content after PPQ normalization. It has
@@ -612,6 +692,19 @@ fn note_ref(document_id: &str, note: &CanonicalNote) -> MatchNoteRef {
     }
 }
 
+fn local_note_refs(document: &MatchDocument<'_>) -> Vec<MatchNoteRef> {
+    let mut refs: Vec<_> = document
+        .notes
+        .iter()
+        .map(|note| MatchNoteRef {
+            document_id: document.document_id.to_string(),
+            note_id: note.id.clone(),
+        })
+        .collect();
+    refs.sort();
+    refs
+}
+
 fn gcd(mut left: u64, mut right: u64) -> u64 {
     while right != 0 {
         let remainder = left % right;
@@ -760,6 +853,47 @@ mod tests {
             ppq,
             notes,
         }
+    }
+
+    #[test]
+    fn same_document_pairs_only_shared_local_ids_without_content_matching() {
+        let left = vec![note("shared", 0, 120), note("left-only", 120, 240)];
+        let mut changed = note("shared", 720, 960);
+        changed.pitch = 71;
+        changed.channel = 9;
+        let right = vec![changed, note("right-only", 120, 240)];
+
+        let result = match_same_document_notes(
+            document("document-a", 960, &left),
+            document("document-a", 0, &right),
+        );
+
+        assert!(result.comparable);
+        assert_eq!(result.policy, NoteMatchPolicy::SameDocumentV1);
+        assert_eq!(result.local_id_pairs.len(), 1);
+        assert_eq!(result.local_id_pairs[0].left.note_id, "shared");
+        assert_eq!(result.unmatched_left[0].note_id, "left-only");
+        assert_eq!(result.unmatched_right[0].note_id, "right-only");
+    }
+
+    #[test]
+    fn same_document_refuses_different_document_ids_without_content_fallback() {
+        let left = vec![note("shared", 0, 120)];
+        let right = vec![note("shared", 0, 120)];
+
+        let result = match_same_document_notes(
+            document("document-a", 960, &left),
+            document("document-b", 960, &right),
+        );
+
+        assert!(!result.comparable);
+        assert_eq!(
+            result.incomparable_reason,
+            Some(IncomparableReason::DifferentDocumentIds)
+        );
+        assert!(result.local_id_pairs.is_empty());
+        assert_eq!(result.unmatched_left.len(), 1);
+        assert_eq!(result.unmatched_right.len(), 1);
     }
 
     #[test]

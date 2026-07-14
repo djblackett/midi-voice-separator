@@ -359,6 +359,11 @@ describe("diffAssignments", () => {
     expect(result.comparable).toBe(false);
     if (!result.comparable) {
       expect(result.reason).toMatch(/different imports/i);
+      expect(result).toEqual({
+        comparable: false,
+        reason:
+          "These two states share too few notes to compare, and are likely from different imports -- note ids don't survive export/reimport.",
+      });
     }
   });
 
