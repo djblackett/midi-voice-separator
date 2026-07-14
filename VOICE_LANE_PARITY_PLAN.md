@@ -397,9 +397,13 @@ The repo-wide `pnpm format:check` still reports the pre-existing untouched
 `native-e2e/native-shell.e2e.mjs`; E3 does not rewrite that unrelated native test. This slice's
 targeted formatting gate is clean.
 
-Real Playwright execution is not claimed: the current browser quota blocked a run, and no in-app
-browser target was available for a substitute manual drive. Run these when browser capacity is
-available:
+Real Playwright execution was re-attempted on 2026-07-13 outside the sandbox, serially in
+Chromium. It is **not green**: `pnpm test:e2e` reached all 108 tests, with 107 passing and one
+deterministic failure. `e2e/split-screen.e2e.ts`'s “a split voice-lane edit mutates only active B
+and keeps undo branch-local” cannot click the visible `Select notes in Lead` control after entering
+fullscreen; the Side A lane canvas/editor grid intercepts pointer events. The focused test failed
+the same way on all three `--repeat-each=3` attempts. Treat this as a real Feature 6 regression,
+not a quota or parallelism flake. Re-run these after fixing it:
 
 ```powershell
 pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
@@ -408,9 +412,9 @@ pnpm test:e2e
 
 The audio and interaction-quality pause points also remain pending. Run `pnpm tauri dev` and work
 through the Feature 6 section in `MANUAL_TEST_CASES.md`, including audition by ear, brush/lasso
-ergonomics, last-lane reachability, fullscreen, and split A/B behavior. Until both the real
-Playwright run and that manual acceptance are recorded, Feature 6 is implemented but not fully
-accepted. Feature 7 has not started.
+ergonomics, last-lane reachability, fullscreen, and split A/B behavior. Until the regression is
+fixed, the full real Playwright run passes, and that manual acceptance is recorded, Feature 6 is
+implemented but not fully accepted. Feature 7 implementation has not started.
 
 ---
 

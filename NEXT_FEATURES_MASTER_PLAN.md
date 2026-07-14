@@ -4,7 +4,8 @@ Repository: `chiptune-voice-separator`
 Date: 2026-07-10  
 Baseline commit: `a3e5fe9` (`Add comparison workflow end-to-end coverage`)  
 Status: Features 1-5 complete. Feature 6 implementation and non-browser E3 gates are complete;
-real Playwright execution plus manual audio/ergonomics acceptance remain pending. Feature 7 has
+real Playwright found one deterministic fullscreen split-lane regression, and manual
+audio/ergonomics acceptance remains pending. Feature 7 has a detailed plan but implementation has
 not started.
 
 ## Purpose
@@ -31,13 +32,15 @@ This document is the durable architecture contract for the next feature sequence
 | 4. Keyboard side switching      | Complete                                          | `f52756c`                              |
 | 5. A/B playback                 | Complete                                          | `461f8cf`                              |
 | 6. Voice-lane editing parity    | Implemented; E3 runtime/manual acceptance pending | E2: `6d12081`; E3: this closure commit |
-| 7. Content-based matching       | Not started                                       | —                                      |
+| 7. Content-based matching       | Detailed plan drafted; implementation not started | —                                      |
 
 Feature 6 is tracked in `VOICE_LANE_PARITY_PLAN.md`. Its available automated evidence is 562
 passing unit tests, passing lint/typecheck/build, and discovery of all 108 Playwright tests (106
-before the two E3 regressions). Browser quota prevented real Playwright execution, and no in-app
-browser target was available for the manual audio/ergonomics pass. This checkpoint therefore does
-not call Feature 6 fully accepted and does not advance the roadmap into Feature 7.
+before the two E3 regressions). A 2026-07-13 real serial Chromium run reached the suite but failed
+one deterministic fullscreen split-lane interaction test (107/108 passed; the Side A canvas
+intercepted a visible voice-swatch click). The manual audio/ergonomics pass is also outstanding.
+This checkpoint therefore does not call Feature 6 fully accepted or authorize Feature 7
+implementation. `CONTENT_BASED_NOTE_MATCHING_PLAN.md` is the detailed plan for Feature 7.
 
 `PLAN.local.md` records the completed snapshots/diff/read-only-compare roadmap. Do not
 overwrite or reinterpret it as the implementation plan for the work above. Each feature in

@@ -335,15 +335,16 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 
 Feature 6 implementation and the available non-browser gates are complete: `pnpm test` passed 562
 unit tests, lint/typecheck/build passed, and Playwright discovery found 108 tests (106 before the
-two E3 branch-isolation and pointer-cancel regressions). Real Playwright execution is not yet a
-pass: the current browser quota blocked it, and there was no in-app browser target for the manual
-ergonomics substitute.
+two E3 branch-isolation and pointer-cancel regressions). A real serial Chromium run on 2026-07-13
+reached the suite but is not a pass: 107/108 tests passed and the fullscreen split-lane branch
+isolation test failed deterministically because the Side A canvas/editor grid intercepted a visible
+`Select notes in Lead` voice-swatch click. Its focused `--repeat-each=3` retry failed 3/3.
 
 Targeted Prettier checks for the Feature 6/E3 files pass. The repo-wide `pnpm format:check` still
 reports only the pre-existing untouched `native-e2e/native-shell.e2e.mjs`; this Feature 6 slice
 does not rewrite that unrelated native test.
 
-When browser capacity is available, run:
+After fixing that regression, run:
 
 ```powershell
 pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
@@ -352,4 +353,4 @@ pnpm test:e2e
 
 Then run `pnpm tauri dev` and complete the Feature 6 checklist above on sparse and dense real files,
 including audition by ear. Record those results before calling Feature 6 fully accepted or starting
-Feature 7.
+Feature 7 implementation.

@@ -274,8 +274,10 @@ first six features: a versioned assignment-model cost evaluator, editable side B
 comparison, keyboard side switching, monitored A/B playback, and voice-lane editing parity.
 
 Feature 6's implementation and non-browser automated E3 gates are complete, including 562 passing
-unit tests and discovery of all 108 Playwright tests. Real Playwright execution is currently
-quota-blocked, and the manual audio/ergonomics pass still needs an available app/browser target, so
-Feature 6 is not yet fully accepted. Feature 7 has not started. The next planned boundary is
-content-based note matching, followed by cross-import diffing and automated export→reimport
-verification; see `NEXT_FEATURES_MASTER_PLAN.md` and `VOICE_LANE_PARITY_PLAN.md`.
+unit tests and discovery of all 108 Playwright tests. A real serial Chromium run on 2026-07-13
+found one deterministic fullscreen split-lane pointer-interception failure (107/108 passed), and
+the manual audio/ergonomics pass remains outstanding; Feature 6 is not yet fully accepted.
+Feature 7's content-based-matching plan is drafted, but implementation has not started. The next
+planned boundaries are content-based note matching, cross-import diffing, and automated
+export→reimport verification; see `NEXT_FEATURES_MASTER_PLAN.md`,
+`CONTENT_BASED_NOTE_MATCHING_PLAN.md`, and `VOICE_LANE_PARITY_PLAN.md`.

@@ -7,8 +7,9 @@ tracked by `NEXT_FEATURES_MASTER_PLAN.md`.
 
 Historical scope note (2026-07-13): Slice 10 intentionally shipped the first voice-lane view as
 read-only at `d9c092c`. Master-plan Feature 6 later implemented editing parity through E3 while
-preserving that original slice boundary. Its non-browser automated gates are complete, but real
-Playwright execution and manual audio/ergonomics acceptance remain pending. The read-only wording
+preserving that original slice boundary. Its non-browser automated gates are complete, but a real
+serial Chromium run found one deterministic fullscreen split-lane pointer-interception failure and
+manual audio/ergonomics acceptance remains pending. The read-only wording
 inside Slice 10 and the summary below describes what that earlier slice shipped, not the current
 product.
 
@@ -383,8 +384,8 @@ quality).
 - **Completed in later master-plan Feature 1:** cost-based quality comparison in the diff panel via
   the versioned assignment-model cost evaluator.
 - **Implemented in later master-plan Feature 6:** voice-lane editing parity. Final E3 acceptance is
-  still pending the real Playwright run and manual audio/ergonomics checklist; see
-  `VOICE_LANE_PARITY_PLAN.md`.
+  still pending a fix and green rerun for the deterministic fullscreen split-lane Playwright
+  regression plus the manual audio/ergonomics checklist; see `VOICE_LANE_PARITY_PLAN.md`.
 
 ## Summary of deltas from the earlier draft
 

@@ -187,10 +187,11 @@ Primary stack:
 
 The architecture sequence in `NEXT_FEATURES_MASTER_PLAN.md` is complete through Feature 5.
 Feature 6 (voice-lane editing parity) is implemented and its available non-browser E3 gates are
-green, but it is not fully accepted: browser quota blocked real Playwright execution, and there was
-no in-app browser target for the manual audio/ergonomics pass. Feature 7 (content-based matching)
-has not started. Resume from `VOICE_LANE_PARITY_PLAN.md`'s E3 closure record, run the pending
-browser/manual checks, and record their evidence before advancing the roadmap.
+green, but it is not fully accepted: the 2026-07-13 serial Chromium run reached 108 tests and found
+one deterministic fullscreen split-lane pointer-interception failure (107 passed), and the manual
+audio/ergonomics pass remains outstanding. Feature 7 (content-based matching) has a detailed plan
+but no implementation. Resume from `VOICE_LANE_PARITY_PLAN.md`'s E3 closure record, fix and rerun
+the browser regression, then record the manual evidence before advancing the roadmap.
 
 ## Progress Log
 
