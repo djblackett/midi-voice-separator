@@ -325,3 +325,33 @@ pub struct CrossImportComparisonResponseDto {
     pub reference: ReferenceDocumentDto,
     pub correspondence: CrossImportMatchResultDto,
 }
+
+/// Strict note-content evidence for the later export-to-reimport verifier.
+/// This is deliberately narrower than a final round-trip verdict: voice
+/// partition and supported timeline metadata are verified by later slices.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrictRoundTripVerificationDto {
+    pub verifier_version: u32,
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicyDto,
+    pub expected_note_count: usize,
+    pub reimported_note_count: usize,
+    pub exact_match_multiplicity: usize,
+    pub content_preserved: bool,
+    pub ambiguous_exact_groups: Vec<StrictAmbiguousNoteMatchGroupDto>,
+    pub missing_expected: Vec<NoteRefDto>,
+    pub unexpected_reimported: Vec<NoteRefDto>,
+}
+
+/// Equal duplicate content is semantic multiset evidence, never an invented
+/// occurrence-order correspondence for a later voice-partition claim.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrictAmbiguousNoteMatchGroupDto {
+    pub expected: Vec<NoteRefDto>,
+    pub reimported: Vec<NoteRefDto>,
+    pub matched_multiplicity: usize,
+}

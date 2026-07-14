@@ -6,6 +6,8 @@ pub(crate) mod content_matching;
 pub mod exporter;
 pub mod model;
 pub mod parser;
+#[allow(dead_code)]
+pub(crate) mod round_trip_verification;
 pub mod voice_assignment;
 
 pub use model::{AssignmentOperationResultDto, ExportMidiResultDto, MidiProjectDto};
