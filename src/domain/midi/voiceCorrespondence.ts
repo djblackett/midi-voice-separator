@@ -1,4 +1,5 @@
 import { PERCUSSION_VOICE_ID } from "./voiceManagement";
+import type { CorrespondenceNotePair } from "./noteCorrespondence";
 
 /**
  * Deterministic maximum-weight bipartite voice correspondence (M9). Pairs the
@@ -17,6 +18,22 @@ export interface CorrespondenceSide {
   readonly voiceIds: readonly string[];
   /** noteId -> voiceId for this side. */
   readonly assignments: ReadonlyMap<string, string>;
+}
+
+/** A correspondence side whose local note IDs are qualified for pair input. */
+export interface PairCorrespondenceSide extends CorrespondenceSide {
+  readonly documentId: string;
+}
+
+/**
+ * Pure overlap evidence shared by local-ID and cross-import adapters. The
+ * solver below remains unaware of how trusted note relationships were found.
+ */
+export interface VoiceOverlapEvidence {
+  readonly aVoiceIds: readonly string[];
+  readonly bVoiceIds: readonly string[];
+  readonly overlapByPair: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  readonly percussionOverlap: number;
 }
 
 export interface VoicePair {
@@ -140,39 +157,97 @@ export function maxWeightMatching(
   return pairs;
 }
 
-function buildOverlap(
-  a: CorrespondenceSide,
-  b: CorrespondenceSide,
-): Map<string, Map<string, number>> {
+function buildOverlapEvidence(a: CorrespondenceSide, b: CorrespondenceSide): VoiceOverlapEvidence {
   const overlap = new Map<string, Map<string, number>>();
+  let percussionOverlap = 0;
   for (const [noteId, aVoiceId] of a.assignments) {
-    if (aVoiceId === PERCUSSION_VOICE_ID) {
-      continue;
-    }
     const bVoiceId = b.assignments.get(noteId);
-    if (bVoiceId === undefined || bVoiceId === PERCUSSION_VOICE_ID) {
+    if (bVoiceId === undefined) {
       continue;
     }
-    const row = overlap.get(aVoiceId) ?? new Map<string, number>();
-    row.set(bVoiceId, (row.get(bVoiceId) ?? 0) + 1);
-    overlap.set(aVoiceId, row);
+    if (aVoiceId === PERCUSSION_VOICE_ID || bVoiceId === PERCUSSION_VOICE_ID) {
+      if (aVoiceId === PERCUSSION_VOICE_ID && bVoiceId === PERCUSSION_VOICE_ID) {
+        percussionOverlap += 1;
+      }
+      continue;
+    }
+    addOverlap(overlap, aVoiceId, bVoiceId);
   }
-  return overlap;
+  return {
+    aVoiceIds: a.voiceIds,
+    bVoiceIds: b.voiceIds,
+    overlapByPair: overlap,
+    percussionOverlap,
+  };
 }
 
 export function correspondVoices(
   a: CorrespondenceSide,
   b: CorrespondenceSide,
 ): VoiceCorrespondence {
-  const aVoiceIds = a.voiceIds
+  return correspondVoicesFromEvidence(buildOverlapEvidence(a, b));
+}
+
+/**
+ * Cross-import adapter. It counts only caller-approved note pairs whose
+ * document-qualified endpoints resolve on their declared side; malformed or
+ * duplicate pair input is ignored rather than inflating voice overlap.
+ */
+export function correspondVoicesFromPairs(
+  reference: PairCorrespondenceSide,
+  editable: PairCorrespondenceSide,
+  pairs: readonly CorrespondenceNotePair[],
+): VoiceCorrespondence {
+  const overlap = new Map<string, Map<string, number>>();
+  const usedReference = new Set<string>();
+  const usedEditable = new Set<string>();
+  let percussionOverlap = 0;
+  for (const pair of pairs) {
+    if (
+      pair.reference.documentId !== reference.documentId ||
+      pair.editable.documentId !== editable.documentId
+    ) {
+      continue;
+    }
+    const referenceKey = `${pair.reference.documentId}\u0000${pair.reference.noteId}`;
+    const editableKey = `${pair.editable.documentId}\u0000${pair.editable.noteId}`;
+    if (usedReference.has(referenceKey) || usedEditable.has(editableKey)) {
+      continue;
+    }
+    const referenceVoiceId = reference.assignments.get(pair.reference.noteId);
+    const editableVoiceId = editable.assignments.get(pair.editable.noteId);
+    if (referenceVoiceId === undefined || editableVoiceId === undefined) {
+      continue;
+    }
+    usedReference.add(referenceKey);
+    usedEditable.add(editableKey);
+    if (referenceVoiceId === PERCUSSION_VOICE_ID || editableVoiceId === PERCUSSION_VOICE_ID) {
+      if (referenceVoiceId === PERCUSSION_VOICE_ID && editableVoiceId === PERCUSSION_VOICE_ID) {
+        percussionOverlap += 1;
+      }
+      continue;
+    }
+    addOverlap(overlap, referenceVoiceId, editableVoiceId);
+  }
+
+  return correspondVoicesFromEvidence({
+    aVoiceIds: reference.voiceIds,
+    bVoiceIds: editable.voiceIds,
+    overlapByPair: overlap,
+    percussionOverlap,
+  });
+}
+
+export function correspondVoicesFromEvidence(evidence: VoiceOverlapEvidence): VoiceCorrespondence {
+  const aVoiceIds = evidence.aVoiceIds
     .filter((id) => id !== PERCUSSION_VOICE_ID)
     .slice()
     .sort();
-  const bVoiceIds = b.voiceIds
+  const bVoiceIds = evidence.bVoiceIds
     .filter((id) => id !== PERCUSSION_VOICE_ID)
     .slice()
     .sort();
-  const overlap = buildOverlap(a, b);
+  const overlap = evidence.overlapByPair;
 
   const weights = aVoiceIds.map((aId) => bVoiceIds.map((bId) => overlap.get(aId)?.get(bId) ?? 0));
   const matchedIndices = maxWeightMatching(weights);
@@ -184,23 +259,23 @@ export function correspondVoices(
   }));
 
   // Percussion corresponds by its semantic role, outside the weight problem.
-  const aHasPercussion = a.voiceIds.includes(PERCUSSION_VOICE_ID);
-  const bHasPercussion = b.voiceIds.includes(PERCUSSION_VOICE_ID);
+  const aHasPercussion = evidence.aVoiceIds.includes(PERCUSSION_VOICE_ID);
+  const bHasPercussion = evidence.bVoiceIds.includes(PERCUSSION_VOICE_ID);
   if (aHasPercussion && bHasPercussion) {
     matched.push({
       aVoiceId: PERCUSSION_VOICE_ID,
       bVoiceId: PERCUSSION_VOICE_ID,
-      overlap: sharedPercussionNotes(a, b),
+      overlap: evidence.percussionOverlap,
     });
   }
 
   const matchedA = new Set(matched.map((pair) => pair.aVoiceId));
   const matchedB = new Set(matched.map((pair) => pair.bVoiceId));
-  const unmatchedA = a.voiceIds
+  const unmatchedA = evidence.aVoiceIds
     .filter((id) => !matchedA.has(id))
     .slice()
     .sort();
-  const unmatchedB = b.voiceIds
+  const unmatchedB = evidence.bVoiceIds
     .filter((id) => !matchedB.has(id))
     .slice()
     .sort();
@@ -216,21 +291,21 @@ export function correspondVoices(
   };
 }
 
-function sharedPercussionNotes(a: CorrespondenceSide, b: CorrespondenceSide): number {
-  let shared = 0;
-  for (const [noteId, aVoiceId] of a.assignments) {
-    if (aVoiceId === PERCUSSION_VOICE_ID && b.assignments.get(noteId) === PERCUSSION_VOICE_ID) {
-      shared += 1;
-    }
-  }
-  return shared;
+function addOverlap(
+  overlap: Map<string, Map<string, number>>,
+  aVoiceId: string,
+  bVoiceId: string,
+): void {
+  const row = overlap.get(aVoiceId) ?? new Map<string, number>();
+  row.set(bVoiceId, (row.get(bVoiceId) ?? 0) + 1);
+  overlap.set(aVoiceId, row);
 }
 
 /** Voices whose single best overlap is tied by a second candidate (tie evidence). */
 function collectAmbiguous(
   aVoiceIds: readonly string[],
   bVoiceIds: readonly string[],
-  overlap: Map<string, Map<string, number>>,
+  overlap: ReadonlyMap<string, ReadonlyMap<string, number>>,
 ): AmbiguousVoice[] {
   const ambiguous: AmbiguousVoice[] = [];
   for (const aId of aVoiceIds) {
@@ -254,7 +329,7 @@ function hasTiedBest(values: readonly number[]): boolean {
 /** An A voice whose notes land in two or more B voices. */
 function collectSplits(
   aVoiceIds: readonly string[],
-  overlap: Map<string, Map<string, number>>,
+  overlap: ReadonlyMap<string, ReadonlyMap<string, number>>,
 ): VoiceSplit[] {
   const splits: VoiceSplit[] = [];
   for (const aId of aVoiceIds) {
@@ -272,7 +347,7 @@ function collectSplits(
 /** A B voice whose notes came from two or more A voices. */
 function collectMerges(
   bVoiceIds: readonly string[],
-  overlap: Map<string, Map<string, number>>,
+  overlap: ReadonlyMap<string, ReadonlyMap<string, number>>,
 ): VoiceMerge[] {
   const sources = new Map<string, string[]>();
   for (const [aId, row] of overlap) {

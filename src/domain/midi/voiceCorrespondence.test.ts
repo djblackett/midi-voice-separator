@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   correspondVoices,
+  correspondVoicesFromPairs,
   maxWeightMatching,
   VOICE_CORRESPONDENCE_MATCHER_VERSION,
   type CorrespondenceSide,
+  type PairCorrespondenceSide,
 } from "./voiceCorrespondence";
 
 function totalWeight(weights: number[][], pairs: readonly (readonly [number, number])[]): number {
@@ -38,6 +40,14 @@ function side(assignments: Record<string, string>, voiceIds?: string[]): Corresp
     voiceIds: voiceIds ?? [...new Set(Object.values(assignments))].sort(),
     assignments: new Map(Object.entries(assignments)),
   };
+}
+
+function pairSide(
+  documentId: string,
+  assignments: Record<string, string>,
+  voiceIds?: string[],
+): PairCorrespondenceSide {
+  return { documentId, ...side(assignments, voiceIds) };
 }
 
 describe("maxWeightMatching", () => {
@@ -158,5 +168,103 @@ describe("correspondVoices", () => {
     const b = side({ n1: "voice-5" }, ["voice-5"]);
     const result = correspondVoices(a, b);
     expect(result.unmatchedA).toContain("percussion");
+  });
+});
+
+describe("correspondVoicesFromPairs", () => {
+  it("derives the same voice correspondence from regenerated local IDs", () => {
+    const reference = pairSide("reference-1", {
+      "r-lead-1": "lead",
+      "r-lead-2": "lead",
+      "r-bass": "bass",
+    });
+    const editable = pairSide("A", {
+      "a-1": "voice-7",
+      "a-2": "voice-7",
+      "a-3": "voice-8",
+    });
+
+    const result = correspondVoicesFromPairs(reference, editable, [
+      {
+        reference: { documentId: "reference-1", noteId: "r-lead-1" },
+        editable: { documentId: "A", noteId: "a-1" },
+      },
+      {
+        reference: { documentId: "reference-1", noteId: "r-lead-2" },
+        editable: { documentId: "A", noteId: "a-2" },
+      },
+      {
+        reference: { documentId: "reference-1", noteId: "r-bass" },
+        editable: { documentId: "A", noteId: "a-3" },
+      },
+    ]);
+
+    expect(result.matched).toEqual([
+      { aVoiceId: "bass", bVoiceId: "voice-8", overlap: 1 },
+      { aVoiceId: "lead", bVoiceId: "voice-7", overlap: 2 },
+    ]);
+    expect(result.unmatchedA).toEqual([]);
+    expect(result.unmatchedB).toEqual([]);
+  });
+
+  it("preserves the legacy local-ID result when given the same trusted relationships", () => {
+    const legacyReference = side({ n1: "lead", n2: "lead", n3: "bass" });
+    const legacyEditable = side({ n1: "voice-7", n2: "voice-7", n3: "voice-8" });
+    const pairedReference = pairSide("reference-1", { n1: "lead", n2: "lead", n3: "bass" });
+    const pairedEditable = pairSide("A", { n1: "voice-7", n2: "voice-7", n3: "voice-8" });
+
+    expect(
+      correspondVoicesFromPairs(pairedReference, pairedEditable, [
+        {
+          reference: { documentId: "reference-1", noteId: "n1" },
+          editable: { documentId: "A", noteId: "n1" },
+        },
+        {
+          reference: { documentId: "reference-1", noteId: "n2" },
+          editable: { documentId: "A", noteId: "n2" },
+        },
+        {
+          reference: { documentId: "reference-1", noteId: "n3" },
+          editable: { documentId: "A", noteId: "n3" },
+        },
+      ]),
+    ).toEqual(correspondVoices(legacyReference, legacyEditable));
+  });
+
+  it("ignores duplicate or wrong-document pair input and keeps percussion role matching", () => {
+    const reference = pairSide("reference-1", { "r-note": "lead", "r-drum": "percussion" }, [
+      "lead",
+      "percussion",
+    ]);
+    const editable = pairSide("A", { "a-note": "voice-7", "a-drum": "percussion" }, [
+      "voice-7",
+      "percussion",
+    ]);
+
+    const result = correspondVoicesFromPairs(reference, editable, [
+      {
+        reference: { documentId: "reference-1", noteId: "r-note" },
+        editable: { documentId: "A", noteId: "a-note" },
+      },
+      {
+        reference: { documentId: "reference-1", noteId: "r-note" },
+        editable: { documentId: "A", noteId: "a-drum" },
+      },
+      {
+        reference: { documentId: "wrong-reference", noteId: "r-drum" },
+        editable: { documentId: "A", noteId: "a-drum" },
+      },
+      {
+        reference: { documentId: "reference-1", noteId: "r-drum" },
+        editable: { documentId: "A", noteId: "a-drum" },
+      },
+    ]);
+
+    expect(result.matched).toContainEqual({ aVoiceId: "lead", bVoiceId: "voice-7", overlap: 1 });
+    expect(result.matched).toContainEqual({
+      aVoiceId: "percussion",
+      bVoiceId: "percussion",
+      overlap: 1,
+    });
   });
 });
