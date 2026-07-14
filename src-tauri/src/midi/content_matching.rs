@@ -1,5 +1,47 @@
 use super::model::MidiNoteDto;
 
+/// Bump when a correspondence-policy change can alter match results.
+pub(crate) const NOTE_CORRESPONDENCE_MATCHER_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoteMatchPolicy {
+    StrictRoundTripV1,
+}
+
+/// Side-qualified local address returned by correspondence. The address lets a
+/// caller find a note in its own document; it is not global content identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MatchNoteRef {
+    pub document_id: String,
+    pub note_id: String,
+}
+
+/// Lightweight matcher input. It borrows immutable parsed/project notes; the
+/// matcher never owns or mutates an editor document.
+pub(crate) struct MatchDocument<'a> {
+    pub document_id: &'a str,
+    pub ppq: u16,
+    pub notes: &'a [MidiNoteDto],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MatchedNotePair {
+    pub left: MatchNoteRef,
+    pub right: MatchNoteRef,
+}
+
+/// Strict correspondence output before duplicate-multiset ambiguity (A3).
+/// Duplicate atoms are deliberately emitted as unmatched rather than paired by
+/// occurrence order; A3 upgrades that state to explicit ambiguity reporting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StrictNoteMatchResult {
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicy,
+    pub exact_pairs: Vec<MatchedNotePair>,
+    pub unmatched_left: Vec<MatchNoteRef>,
+    pub unmatched_right: Vec<MatchNoteRef>,
+}
+
 /// Exact, reduced position in quarter-note units. MIDI ticks are normalized
 /// before correspondence so the same musical position compares equally across
 /// files with different PPQs, without introducing floating-point error.
@@ -100,6 +142,107 @@ pub(crate) fn canonicalize_notes(
             .then_with(|| left.note_id.cmp(&right.note_id))
     });
     Ok(canonical)
+}
+
+/// Matches only exact supported note content after PPQ normalization. It has
+/// no tolerance path: any different canonical atom is reported unmatched.
+pub(crate) fn match_strict_notes(
+    left: MatchDocument<'_>,
+    right: MatchDocument<'_>,
+) -> Result<StrictNoteMatchResult, ContentMatchError> {
+    let left_notes = canonicalize_notes(left.notes, left.ppq)?;
+    let right_notes = canonicalize_notes(right.notes, right.ppq)?;
+    let mut exact_pairs = Vec::new();
+    let mut unmatched_left = Vec::new();
+    let mut unmatched_right = Vec::new();
+    let mut left_index = 0;
+    let mut right_index = 0;
+
+    while left_index < left_notes.len() && right_index < right_notes.len() {
+        let left_note = &left_notes[left_index];
+        let right_note = &right_notes[right_index];
+        match left_note.atom.cmp(&right_note.atom) {
+            std::cmp::Ordering::Less => {
+                let next = atom_group_end(&left_notes, left_index);
+                unmatched_left.extend(
+                    left_notes[left_index..next]
+                        .iter()
+                        .map(|note| note_ref(left.document_id, note)),
+                );
+                left_index = next;
+            }
+            std::cmp::Ordering::Greater => {
+                let next = atom_group_end(&right_notes, right_index);
+                unmatched_right.extend(
+                    right_notes[right_index..next]
+                        .iter()
+                        .map(|note| note_ref(right.document_id, note)),
+                );
+                right_index = next;
+            }
+            std::cmp::Ordering::Equal => {
+                let left_end = atom_group_end(&left_notes, left_index);
+                let right_end = atom_group_end(&right_notes, right_index);
+                let left_group = &left_notes[left_index..left_end];
+                let right_group = &right_notes[right_index..right_end];
+
+                if left_group.len() == 1 && right_group.len() == 1 {
+                    exact_pairs.push(MatchedNotePair {
+                        left: note_ref(left.document_id, &left_group[0]),
+                        right: note_ref(right.document_id, &right_group[0]),
+                    });
+                } else {
+                    unmatched_left.extend(
+                        left_group
+                            .iter()
+                            .map(|note| note_ref(left.document_id, note)),
+                    );
+                    unmatched_right.extend(
+                        right_group
+                            .iter()
+                            .map(|note| note_ref(right.document_id, note)),
+                    );
+                }
+
+                left_index = left_end;
+                right_index = right_end;
+            }
+        }
+    }
+
+    unmatched_left.extend(
+        left_notes[left_index..]
+            .iter()
+            .map(|note| note_ref(left.document_id, note)),
+    );
+    unmatched_right.extend(
+        right_notes[right_index..]
+            .iter()
+            .map(|note| note_ref(right.document_id, note)),
+    );
+
+    Ok(StrictNoteMatchResult {
+        matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+        policy: NoteMatchPolicy::StrictRoundTripV1,
+        exact_pairs,
+        unmatched_left,
+        unmatched_right,
+    })
+}
+
+fn atom_group_end(notes: &[CanonicalNote], start: usize) -> usize {
+    let atom = notes[start].atom;
+    notes[start..]
+        .iter()
+        .position(|note| note.atom != atom)
+        .map_or(notes.len(), |offset| start + offset)
+}
+
+fn note_ref(document_id: &str, note: &CanonicalNote) -> MatchNoteRef {
+    MatchNoteRef {
+        document_id: document_id.to_string(),
+        note_id: note.note_id.clone(),
+    }
 }
 
 fn gcd(mut left: u64, mut right: u64) -> u64 {
@@ -241,6 +384,156 @@ mod tests {
                 .map(|entry| entry.note_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["z-tie", "a-same", "a-tie"]
+        );
+    }
+
+    fn document<'a>(document_id: &'a str, ppq: u16, notes: &'a [MidiNoteDto]) -> MatchDocument<'a> {
+        MatchDocument {
+            document_id,
+            ppq,
+            notes,
+        }
+    }
+
+    #[test]
+    fn strictly_matches_equivalent_content_across_ppqs() {
+        let left = vec![note("left-note", 120, 360)];
+        let right = vec![note("right-note", 240, 720)];
+
+        let result =
+            match_strict_notes(document("left", 480, &left), document("right", 960, &right))
+                .unwrap();
+
+        assert_eq!(result.matcher_version, NOTE_CORRESPONDENCE_MATCHER_VERSION);
+        assert_eq!(result.policy, NoteMatchPolicy::StrictRoundTripV1);
+        assert_eq!(
+            result.exact_pairs,
+            vec![MatchedNotePair {
+                left: MatchNoteRef {
+                    document_id: "left".to_string(),
+                    note_id: "left-note".to_string(),
+                },
+                right: MatchNoteRef {
+                    document_id: "right".to_string(),
+                    note_id: "right-note".to_string(),
+                },
+            }]
+        );
+        assert!(result.unmatched_left.is_empty());
+        assert!(result.unmatched_right.is_empty());
+    }
+
+    #[test]
+    fn strict_matching_requires_every_atom_field_to_match() {
+        let original = note("left-note", 120, 360);
+        let mut changed_pitch = note("right-note", 120, 360);
+        changed_pitch.pitch += 1;
+        let mut changed_channel = note("right-note", 120, 360);
+        changed_channel.channel += 1;
+        let mut changed_velocity = note("right-note", 120, 360);
+        changed_velocity.velocity += 1;
+        let changed_start = note("right-note", 121, 360);
+        let changed_end = note("right-note", 120, 361);
+
+        for changed in [
+            changed_pitch,
+            changed_channel,
+            changed_velocity,
+            changed_start,
+            changed_end,
+        ] {
+            let result = match_strict_notes(
+                document("left", 480, std::slice::from_ref(&original)),
+                document("right", 480, std::slice::from_ref(&changed)),
+            )
+            .unwrap();
+            assert!(result.exact_pairs.is_empty());
+            assert_eq!(result.unmatched_left.len(), 1);
+            assert_eq!(result.unmatched_right.len(), 1);
+        }
+    }
+
+    #[test]
+    fn strict_matching_is_input_order_invariant() {
+        let mut left_low = note("left-low", 10, 20);
+        left_low.pitch = 59;
+        let left_high = note("left-high", 30, 40);
+        let mut right_low = note("right-low", 10, 20);
+        right_low.pitch = 59;
+        let right_high = note("right-high", 30, 40);
+
+        let forward_left = vec![left_high.clone(), left_low.clone()];
+        let forward_right = vec![right_low.clone(), right_high.clone()];
+        let reverse_left = vec![left_low, left_high];
+        let reverse_right = vec![right_high, right_low];
+
+        assert_eq!(
+            match_strict_notes(
+                document("left", 480, &forward_left),
+                document("right", 480, &forward_right),
+            )
+            .unwrap(),
+            match_strict_notes(
+                document("left", 480, &reverse_left),
+                document("right", 480, &reverse_right),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn strict_matching_keeps_duplicate_atoms_unpaired_until_ambiguity_is_available() {
+        let left = vec![note("left-1", 120, 360), note("left-2", 120, 360)];
+        let right = vec![note("right-1", 120, 360), note("right-2", 120, 360)];
+
+        let result =
+            match_strict_notes(document("left", 480, &left), document("right", 480, &right))
+                .unwrap();
+
+        assert!(result.exact_pairs.is_empty());
+        assert_eq!(
+            result.unmatched_left,
+            vec![
+                MatchNoteRef {
+                    document_id: "left".to_string(),
+                    note_id: "left-1".to_string(),
+                },
+                MatchNoteRef {
+                    document_id: "left".to_string(),
+                    note_id: "left-2".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            result.unmatched_right,
+            vec![
+                MatchNoteRef {
+                    document_id: "right".to_string(),
+                    note_id: "right-1".to_string(),
+                },
+                MatchNoteRef {
+                    document_id: "right".to_string(),
+                    note_id: "right-2".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn strict_matching_handles_empty_documents() {
+        let left: Vec<MidiNoteDto> = Vec::new();
+        let right: Vec<MidiNoteDto> = Vec::new();
+
+        assert_eq!(
+            match_strict_notes(document("left", 480, &left), document("right", 480, &right))
+                .unwrap(),
+            StrictNoteMatchResult {
+                matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+                policy: NoteMatchPolicy::StrictRoundTripV1,
+                exact_pairs: Vec::new(),
+                unmatched_left: Vec::new(),
+                unmatched_right: Vec::new(),
+            }
         );
     }
 }
