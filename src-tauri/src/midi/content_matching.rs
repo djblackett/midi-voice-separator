@@ -1,4 +1,9 @@
-use super::model::MidiNoteDto;
+use super::model::{
+    AmbiguousNoteMatchGroupDto, AmbiguousNoteMatchKindDto, CrossImportFuzzyNotePairDto,
+    CrossImportIncomparableReasonDto, CrossImportMatchCoverageDto, CrossImportMatchResultDto,
+    CrossImportNotePairDto, MidiNoteDto, NoteMatchPolicyDto, NoteRefDto,
+    RationalQuarterDistanceDto,
+};
 use std::collections::HashSet;
 
 /// Bump when a correspondence-policy change can alter match results.
@@ -113,6 +118,15 @@ pub(crate) struct FuzzyMatchedNotePair {
     pub velocity_difference: u8,
 }
 
+/// Connected ambiguous fuzzy candidates. Every endpoint in the group stays
+/// visible to the UI, but none is promoted to an occurrence-order pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AmbiguousFuzzyNoteGroup {
+    pub left: Vec<MatchNoteRef>,
+    pub right: Vec<MatchNoteRef>,
+    pub candidate_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MatchCoverage {
     pub total: usize,
@@ -138,7 +152,9 @@ pub(crate) struct CrossImportMatchResult {
     pub right_coverage: MatchCoverage,
     pub exact_pairs: Vec<MatchedNotePair>,
     pub fuzzy_pairs: Vec<FuzzyMatchedNotePair>,
+    pub ambiguous_exact_groups: Vec<AmbiguousExactNoteGroup>,
     pub ambiguous_fuzzy_candidates: Vec<FuzzyNoteCandidate>,
+    pub ambiguous_fuzzy_groups: Vec<AmbiguousFuzzyNoteGroup>,
     pub unmatched_left: Vec<MatchNoteRef>,
     pub unmatched_right: Vec<MatchNoteRef>,
 }
@@ -553,6 +569,7 @@ pub(crate) fn resolve_cross_import_candidates(
         false,
     );
     let comparable = covers_half(&left_coverage) && covers_half(&right_coverage);
+    let ambiguous_fuzzy_groups = group_ambiguous_fuzzy_candidates(&ambiguous_fuzzy_candidates);
     CrossImportMatchResult {
         matcher_version: candidates.matcher_version,
         policy: candidates.policy,
@@ -562,10 +579,164 @@ pub(crate) fn resolve_cross_import_candidates(
         right_coverage,
         exact_pairs: candidates.exact.exact_pairs,
         fuzzy_pairs,
+        ambiguous_exact_groups: candidates.exact.ambiguous_exact_groups,
         ambiguous_fuzzy_candidates,
+        ambiguous_fuzzy_groups,
         unmatched_left,
         unmatched_right,
     }
+}
+
+/// Converts the pure matcher output to the stable, side-qualified boundary
+/// shape Feature 8 will return from its real import-and-match command. The
+/// caller deliberately supplies reference as the left document and editable
+/// as the right document.
+pub(crate) fn cross_import_match_result_dto(
+    result: &CrossImportMatchResult,
+) -> CrossImportMatchResultDto {
+    let mut ambiguous: Vec<_> = result
+        .ambiguous_exact_groups
+        .iter()
+        .map(|group| AmbiguousNoteMatchGroupDto {
+            kind: AmbiguousNoteMatchKindDto::DuplicateExact,
+            reference: group.left.iter().map(note_ref_dto).collect(),
+            editable: group.right.iter().map(note_ref_dto).collect(),
+            matched_multiplicity: group.matched_multiplicity,
+            candidate_count: group.left.len().saturating_mul(group.right.len()),
+        })
+        .collect();
+    ambiguous.extend(result.ambiguous_fuzzy_groups.iter().map(|group| {
+        AmbiguousNoteMatchGroupDto {
+            kind: AmbiguousNoteMatchKindDto::FuzzyConflict,
+            reference: group.left.iter().map(note_ref_dto).collect(),
+            editable: group.right.iter().map(note_ref_dto).collect(),
+            matched_multiplicity: 0,
+            candidate_count: group.candidate_count,
+        }
+    }));
+
+    CrossImportMatchResultDto {
+        matcher_version: result.matcher_version,
+        policy: note_match_policy_dto(result.policy),
+        comparable: result.comparable,
+        incomparable_reason: result
+            .incomparable_reason
+            .map(cross_import_incomparable_reason_dto),
+        reference_coverage: coverage_dto(&result.left_coverage),
+        editable_coverage: coverage_dto(&result.right_coverage),
+        exact_pairs: result.exact_pairs.iter().map(note_pair_dto).collect(),
+        fuzzy_pairs: result
+            .fuzzy_pairs
+            .iter()
+            .map(|pair| CrossImportFuzzyNotePairDto {
+                reference: note_ref_dto(&pair.left),
+                editable: note_ref_dto(&pair.right),
+                onset_distance: distance_dto(pair.onset_distance),
+                duration_distance: distance_dto(pair.duration_distance),
+                same_channel: pair.same_channel,
+                velocity_difference: pair.velocity_difference,
+            })
+            .collect(),
+        ambiguous,
+        unmatched_reference: result.unmatched_left.iter().map(note_ref_dto).collect(),
+        unmatched_editable: result.unmatched_right.iter().map(note_ref_dto).collect(),
+    }
+}
+
+fn note_match_policy_dto(policy: NoteMatchPolicy) -> NoteMatchPolicyDto {
+    match policy {
+        NoteMatchPolicy::SameDocumentV1 => NoteMatchPolicyDto::SameDocumentV1,
+        NoteMatchPolicy::StrictRoundTripV1 => NoteMatchPolicyDto::StrictRoundTripV1,
+        NoteMatchPolicy::CrossImportV1 => NoteMatchPolicyDto::CrossImportV1,
+    }
+}
+
+fn cross_import_incomparable_reason_dto(
+    reason: IncomparableReason,
+) -> CrossImportIncomparableReasonDto {
+    match reason {
+        IncomparableReason::DifferentDocumentIds => {
+            CrossImportIncomparableReasonDto::DifferentDocumentIds
+        }
+        IncomparableReason::InsufficientCoverage => {
+            CrossImportIncomparableReasonDto::InsufficientCoverage
+        }
+    }
+}
+
+fn note_ref_dto(note_ref: &MatchNoteRef) -> NoteRefDto {
+    NoteRefDto {
+        document_id: note_ref.document_id.clone(),
+        note_id: note_ref.note_id.clone(),
+    }
+}
+
+fn note_pair_dto(pair: &MatchedNotePair) -> CrossImportNotePairDto {
+    CrossImportNotePairDto {
+        reference: note_ref_dto(&pair.left),
+        editable: note_ref_dto(&pair.right),
+    }
+}
+
+fn distance_dto(distance: RationalQuarterDistance) -> RationalQuarterDistanceDto {
+    RationalQuarterDistanceDto {
+        numerator: distance.numerator.to_string(),
+        denominator: distance.denominator.to_string(),
+    }
+}
+
+fn coverage_dto(coverage: &MatchCoverage) -> CrossImportMatchCoverageDto {
+    CrossImportMatchCoverageDto {
+        total: coverage.total,
+        exact: coverage.exact,
+        fuzzy: coverage.fuzzy,
+        ambiguous: coverage.ambiguous,
+        unmatched: coverage.unmatched,
+    }
+}
+
+fn group_ambiguous_fuzzy_candidates(
+    candidates: &[FuzzyNoteCandidate],
+) -> Vec<AmbiguousFuzzyNoteGroup> {
+    let mut consumed = vec![false; candidates.len()];
+    let mut groups = Vec::new();
+
+    for start in 0..candidates.len() {
+        if consumed[start] {
+            continue;
+        }
+        consumed[start] = true;
+        let mut left = HashSet::from([candidates[start].left.clone()]);
+        let mut right = HashSet::from([candidates[start].right.clone()]);
+        let mut candidate_count = 1;
+        let mut expanded = true;
+        while expanded {
+            expanded = false;
+            for (index, candidate) in candidates.iter().enumerate() {
+                if consumed[index]
+                    || (!left.contains(&candidate.left) && !right.contains(&candidate.right))
+                {
+                    continue;
+                }
+                consumed[index] = true;
+                left.insert(candidate.left.clone());
+                right.insert(candidate.right.clone());
+                candidate_count += 1;
+                expanded = true;
+            }
+        }
+        let mut left: Vec<_> = left.into_iter().collect();
+        let mut right: Vec<_> = right.into_iter().collect();
+        left.sort();
+        right.sort();
+        groups.push(AmbiguousFuzzyNoteGroup {
+            left,
+            right,
+            candidate_count,
+        });
+    }
+
+    groups
 }
 
 fn score_less(left: &FuzzyNoteCandidate, right: &FuzzyNoteCandidate) -> bool {
@@ -1345,6 +1516,10 @@ mod tests {
         );
         assert!(result.fuzzy_pairs.is_empty());
         assert_eq!(result.ambiguous_fuzzy_candidates.len(), 2);
+        assert_eq!(result.ambiguous_fuzzy_groups.len(), 1);
+        assert_eq!(result.ambiguous_fuzzy_groups[0].candidate_count, 2);
+        assert_eq!(result.ambiguous_fuzzy_groups[0].left.len(), 1);
+        assert_eq!(result.ambiguous_fuzzy_groups[0].right.len(), 2);
         assert!(result.unmatched_left.is_empty());
         assert!(result.unmatched_right.is_empty());
         assert!(!result.comparable);
@@ -1380,5 +1555,70 @@ mod tests {
             1,
         );
         assert!(!asymmetric.comparable);
+    }
+
+    #[test]
+    fn cross_import_dto_preserves_duplicate_ambiguity_without_occurrence_pairs() {
+        let left = vec![note("left-1", 0, 480), note("left-2", 0, 480)];
+        let right = vec![note("right-1", 0, 480), note("right-2", 0, 480)];
+        let result = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("reference", 960, &left),
+                document("editable", 960, &right),
+            )
+            .unwrap(),
+            left.len(),
+            right.len(),
+        );
+
+        let dto = cross_import_match_result_dto(&result);
+
+        assert!(dto.comparable);
+        assert_eq!(dto.policy, NoteMatchPolicyDto::CrossImportV1);
+        assert!(dto.exact_pairs.is_empty());
+        assert_eq!(dto.ambiguous.len(), 1);
+        assert_eq!(
+            dto.ambiguous[0].kind,
+            AmbiguousNoteMatchKindDto::DuplicateExact
+        );
+        assert_eq!(dto.ambiguous[0].reference.len(), 2);
+        assert_eq!(dto.ambiguous[0].editable.len(), 2);
+        assert_eq!(dto.ambiguous[0].matched_multiplicity, 2);
+        assert_eq!(
+            serde_json::to_value(&dto).unwrap()["policy"],
+            serde_json::Value::String("CROSS_IMPORT_V1".to_string())
+        );
+    }
+
+    #[test]
+    fn cross_import_dto_groups_connected_fuzzy_conflicts_deterministically() {
+        let left = vec![note("left", 0, 960)];
+        let right = vec![note("right-a", 7, 967), note("right-b", 7, 967)];
+        let result = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("reference", 960, &left),
+                document("editable", 960, &right),
+            )
+            .unwrap(),
+            left.len(),
+            right.len(),
+        );
+
+        let dto = cross_import_match_result_dto(&result);
+
+        assert_eq!(dto.ambiguous.len(), 1);
+        assert_eq!(
+            dto.ambiguous[0].kind,
+            AmbiguousNoteMatchKindDto::FuzzyConflict
+        );
+        assert_eq!(dto.ambiguous[0].candidate_count, 2);
+        assert_eq!(
+            dto.ambiguous[0]
+                .editable
+                .iter()
+                .map(|note_ref| note_ref.note_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["right-a", "right-b"]
+        );
     }
 }

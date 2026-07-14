@@ -187,3 +187,105 @@ pub struct ExportMidiResultDto {
     pub track_count: usize,
     pub note_count: usize,
 }
+
+/// Versioned policy echoed by a note-correspondence response. The matching
+/// implementation remains private to the backend; this is its stable wire
+/// identity for the first real Feature 8 consumer.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NoteMatchPolicyDto {
+    SameDocumentV1,
+    StrictRoundTripV1,
+    CrossImportV1,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CrossImportIncomparableReasonDto {
+    DifferentDocumentIds,
+    InsufficientCoverage,
+}
+
+/// Side-qualified parser-local note address. It is intentionally an address,
+/// not a content identity claim.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteRefDto {
+    pub document_id: String,
+    pub note_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportNotePairDto {
+    pub reference: NoteRefDto,
+    pub editable: NoteRefDto,
+}
+
+/// JSON numbers cannot faithfully represent every u128 score component, so
+/// the reduced rational values cross the boundary as decimal strings.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RationalQuarterDistanceDto {
+    pub numerator: String,
+    pub denominator: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportFuzzyNotePairDto {
+    pub reference: NoteRefDto,
+    pub editable: NoteRefDto,
+    pub onset_distance: RationalQuarterDistanceDto,
+    pub duration_distance: RationalQuarterDistanceDto,
+    pub same_channel: bool,
+    pub velocity_difference: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AmbiguousNoteMatchKindDto {
+    DuplicateExact,
+    FuzzyConflict,
+}
+
+/// An ambiguity group preserves every eligible side-qualified reference; no
+/// consumer may derive occurrence-order pairs from it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AmbiguousNoteMatchGroupDto {
+    pub kind: AmbiguousNoteMatchKindDto,
+    pub reference: Vec<NoteRefDto>,
+    pub editable: Vec<NoteRefDto>,
+    pub matched_multiplicity: usize,
+    pub candidate_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportMatchCoverageDto {
+    pub total: usize,
+    pub exact: usize,
+    pub fuzzy: usize,
+    pub ambiguous: usize,
+    pub unmatched: usize,
+}
+
+/// Serializable read-only result for the Feature 8 comparison command. The
+/// command is introduced later; defining this DTO beside the other Tauri
+/// models keeps the pure matcher itself free of wire-format concerns.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossImportMatchResultDto {
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicyDto,
+    pub comparable: bool,
+    pub incomparable_reason: Option<CrossImportIncomparableReasonDto>,
+    pub reference_coverage: CrossImportMatchCoverageDto,
+    pub editable_coverage: CrossImportMatchCoverageDto,
+    pub exact_pairs: Vec<CrossImportNotePairDto>,
+    pub fuzzy_pairs: Vec<CrossImportFuzzyNotePairDto>,
+    pub ambiguous: Vec<AmbiguousNoteMatchGroupDto>,
+    pub unmatched_reference: Vec<NoteRefDto>,
+    pub unmatched_editable: Vec<NoteRefDto>,
+}
