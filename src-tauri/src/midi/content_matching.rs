@@ -12,7 +12,7 @@ pub(crate) enum NoteMatchPolicy {
 
 /// Side-qualified local address returned by correspondence. The address lets a
 /// caller find a note in its own document; it is not global content identity.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct MatchNoteRef {
     pub document_id: String,
     pub note_id: String,
@@ -86,6 +86,45 @@ pub(crate) struct CrossImportCandidateResult {
     pub policy: NoteMatchPolicy,
     pub exact: StrictNoteMatchResult,
     pub fuzzy_candidates: Vec<FuzzyNoteCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FuzzyMatchedNotePair {
+    pub left: MatchNoteRef,
+    pub right: MatchNoteRef,
+    pub onset_distance: RationalQuarterDistance,
+    pub duration_distance: RationalQuarterDistance,
+    pub same_channel: bool,
+    pub velocity_difference: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MatchCoverage {
+    pub total: usize,
+    pub exact: usize,
+    pub fuzzy: usize,
+    pub ambiguous: usize,
+    pub unmatched: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncomparableReason {
+    InsufficientCoverage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CrossImportMatchResult {
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicy,
+    pub comparable: bool,
+    pub incomparable_reason: Option<IncomparableReason>,
+    pub left_coverage: MatchCoverage,
+    pub right_coverage: MatchCoverage,
+    pub exact_pairs: Vec<MatchedNotePair>,
+    pub fuzzy_pairs: Vec<FuzzyMatchedNotePair>,
+    pub ambiguous_fuzzy_candidates: Vec<FuzzyNoteCandidate>,
+    pub unmatched_left: Vec<MatchNoteRef>,
+    pub unmatched_right: Vec<MatchNoteRef>,
 }
 
 /// Exact, reduced position in quarter-note units. MIDI ticks are normalized
@@ -355,6 +394,137 @@ pub(crate) fn discover_cross_import_candidates(
     })
 }
 
+/// Resolves B1's scored candidates without ever using output order as an
+/// identity tie-breaker. A pair is accepted only when it is the unique best
+/// candidate for both endpoints; every other edge stays visible as ambiguity.
+pub(crate) fn resolve_cross_import_candidates(
+    candidates: CrossImportCandidateResult,
+    left_total: usize,
+    right_total: usize,
+) -> CrossImportMatchResult {
+    let mut fuzzy_pairs = Vec::new();
+    let mut ambiguous_fuzzy_candidates = Vec::new();
+    for candidate in &candidates.fuzzy_candidates {
+        let left_edges: Vec<_> = candidates
+            .fuzzy_candidates
+            .iter()
+            .filter(|edge| edge.left == candidate.left)
+            .collect();
+        let right_edges: Vec<_> = candidates
+            .fuzzy_candidates
+            .iter()
+            .filter(|edge| edge.right == candidate.right)
+            .collect();
+        let unique_left = uniquely_best(candidate, &left_edges);
+        let unique_right = uniquely_best(candidate, &right_edges);
+        if unique_left && unique_right {
+            fuzzy_pairs.push(FuzzyMatchedNotePair {
+                left: candidate.left.clone(),
+                right: candidate.right.clone(),
+                onset_distance: candidate.onset_distance,
+                duration_distance: candidate.duration_distance,
+                same_channel: candidate.same_channel,
+                velocity_difference: candidate.velocity_difference,
+            });
+        } else {
+            ambiguous_fuzzy_candidates.push(candidate.clone());
+        }
+    }
+    let fuzzy_left: HashSet<_> = fuzzy_pairs.iter().map(|pair| pair.left.clone()).collect();
+    let fuzzy_right: HashSet<_> = fuzzy_pairs.iter().map(|pair| pair.right.clone()).collect();
+    let ambiguous_left: HashSet<_> = ambiguous_fuzzy_candidates
+        .iter()
+        .map(|candidate| candidate.left.clone())
+        .collect();
+    let ambiguous_right: HashSet<_> = ambiguous_fuzzy_candidates
+        .iter()
+        .map(|candidate| candidate.right.clone())
+        .collect();
+    let unmatched_left: Vec<_> = candidates
+        .exact
+        .unmatched_left
+        .iter()
+        .filter(|note_ref| !fuzzy_left.contains(*note_ref) && !ambiguous_left.contains(*note_ref))
+        .cloned()
+        .collect();
+    let unmatched_right: Vec<_> = candidates
+        .exact
+        .unmatched_right
+        .iter()
+        .filter(|note_ref| !fuzzy_right.contains(*note_ref) && !ambiguous_right.contains(*note_ref))
+        .cloned()
+        .collect();
+    let exact = candidates.exact.exact_match_multiplicity;
+    let fuzzy = fuzzy_pairs.len();
+    let left_coverage = coverage(
+        left_total,
+        exact,
+        fuzzy,
+        &unmatched_left,
+        &ambiguous_fuzzy_candidates,
+        true,
+    );
+    let right_coverage = coverage(
+        right_total,
+        exact,
+        fuzzy,
+        &unmatched_right,
+        &ambiguous_fuzzy_candidates,
+        false,
+    );
+    let comparable = covers_half(&left_coverage) && covers_half(&right_coverage);
+    CrossImportMatchResult {
+        matcher_version: candidates.matcher_version,
+        policy: candidates.policy,
+        comparable,
+        incomparable_reason: (!comparable).then_some(IncomparableReason::InsufficientCoverage),
+        left_coverage,
+        right_coverage,
+        exact_pairs: candidates.exact.exact_pairs,
+        fuzzy_pairs,
+        ambiguous_fuzzy_candidates,
+        unmatched_left,
+        unmatched_right,
+    }
+}
+
+fn score_less(left: &FuzzyNoteCandidate, right: &FuzzyNoteCandidate) -> bool {
+    compare_fuzzy_score(left, right).is_lt()
+}
+
+fn uniquely_best(candidate: &FuzzyNoteCandidate, edges: &[&FuzzyNoteCandidate]) -> bool {
+    edges.iter().all(|other| {
+        (candidate.left == other.left && candidate.right == other.right)
+            || score_less(candidate, other)
+    })
+}
+
+fn coverage(
+    total: usize,
+    exact: usize,
+    fuzzy: usize,
+    unmatched: &[MatchNoteRef],
+    ambiguous: &[FuzzyNoteCandidate],
+    left: bool,
+) -> MatchCoverage {
+    let ambiguous = ambiguous
+        .iter()
+        .map(|edge| if left { &edge.left } else { &edge.right })
+        .collect::<HashSet<_>>()
+        .len();
+    MatchCoverage {
+        total,
+        exact,
+        fuzzy,
+        ambiguous,
+        unmatched: unmatched.len(),
+    }
+}
+
+fn covers_half(coverage: &MatchCoverage) -> bool {
+    coverage.total == 0 || (coverage.exact + coverage.fuzzy) * 2 >= coverage.total
+}
+
 fn consumed_note_ids(result: &StrictNoteMatchResult, left: bool) -> HashSet<&str> {
     let pairs = result
         .exact_pairs
@@ -405,12 +575,19 @@ fn compare_fuzzy_candidates(
     left: &FuzzyNoteCandidate,
     right: &FuzzyNoteCandidate,
 ) -> std::cmp::Ordering {
+    compare_fuzzy_score(left, right)
+        .then_with(|| left.left.cmp(&right.left))
+        .then_with(|| left.right.cmp(&right.right))
+}
+
+fn compare_fuzzy_score(
+    left: &FuzzyNoteCandidate,
+    right: &FuzzyNoteCandidate,
+) -> std::cmp::Ordering {
     compare_distance(left.onset_distance, right.onset_distance)
         .then_with(|| compare_distance(left.duration_distance, right.duration_distance))
         .then_with(|| right.same_channel.cmp(&left.same_channel))
         .then_with(|| left.velocity_difference.cmp(&right.velocity_difference))
-        .then_with(|| left.left.cmp(&right.left))
-        .then_with(|| left.right.cmp(&right.right))
 }
 
 fn compare_distance(
@@ -879,5 +1056,77 @@ mod tests {
         assert_eq!(result.fuzzy_candidates.len(), 1);
         assert_eq!(result.fuzzy_candidates[0].left.note_id, "near-left");
         assert_eq!(result.fuzzy_candidates[0].right.note_id, "near-right");
+    }
+
+    #[test]
+    fn resolves_only_a_mutually_unique_fuzzy_candidate() {
+        let left = vec![note("left", 0, 960)];
+        let right = vec![note("right", 7, 967)];
+        let result = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("left", 960, &left),
+                document("right", 960, &right),
+            )
+            .unwrap(),
+            1,
+            1,
+        );
+        assert!(result.comparable);
+        assert_eq!(result.fuzzy_pairs.len(), 1);
+        assert!(result.ambiguous_fuzzy_candidates.is_empty());
+        assert!(result.unmatched_left.is_empty());
+        assert!(result.unmatched_right.is_empty());
+    }
+
+    #[test]
+    fn preserves_tied_fuzzy_candidates_as_ambiguity() {
+        let left = vec![note("left", 0, 960)];
+        let right = vec![note("right-a", 7, 967), note("right-b", 7, 967)];
+        let result = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("left", 960, &left),
+                document("right", 960, &right),
+            )
+            .unwrap(),
+            1,
+            2,
+        );
+        assert!(result.fuzzy_pairs.is_empty());
+        assert_eq!(result.ambiguous_fuzzy_candidates.len(), 2);
+        assert!(result.unmatched_left.is_empty());
+        assert!(result.unmatched_right.is_empty());
+        assert!(!result.comparable);
+        assert_eq!(
+            result.incomparable_reason,
+            Some(IncomparableReason::InsufficientCoverage)
+        );
+    }
+
+    #[test]
+    fn accepts_exactly_fifty_percent_coverage_but_rejects_asymmetric_low_coverage() {
+        let left = vec![note("exact-left", 0, 480), note("extra-left", 960, 1440)];
+        let mut extra_right = note("extra-right", 960, 1440);
+        extra_right.pitch += 1;
+        let right = vec![note("exact-right", 0, 480), extra_right];
+        let boundary = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("left", 960, &left),
+                document("right", 960, &right),
+            )
+            .unwrap(),
+            2,
+            2,
+        );
+        assert!(boundary.comparable);
+        let asymmetric = resolve_cross_import_candidates(
+            discover_cross_import_candidates(
+                document("left", 960, &left),
+                document("right", 960, &right),
+            )
+            .unwrap(),
+            3,
+            1,
+        );
+        assert!(!asymmetric.comparable);
     }
 }
