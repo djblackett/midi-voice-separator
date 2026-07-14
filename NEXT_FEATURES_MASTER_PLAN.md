@@ -523,7 +523,7 @@ Required work:
 Exit gate: render side, monitor side, timbre mapping, playhead, and transport controls cannot
 diverge.
 
-### 6. Voice-lane editing parity — implemented, final E3 acceptance pending
+### 6. Voice-lane editing parity — automated E3 complete; manual acceptance pending
 
 Required work:
 

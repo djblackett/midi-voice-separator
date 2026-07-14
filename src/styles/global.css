@@ -1680,9 +1680,16 @@ kbd {
 .piano-roll-legend-swatch {
   width: 10px;
   height: 10px;
+  padding: 0;
   border-radius: 3px;
   border: 1px solid rgba(248, 250, 252, 0.4);
   flex-shrink: 0;
+  cursor: pointer;
+}
+
+.piano-roll-legend-swatch:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .piano-roll-legend-label {

@@ -4,9 +4,8 @@
 - Date: 2026-07-13
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M15), `SPLIT_SCREEN_PLAN.md` (M13),
   `KEYBOARD_COMMANDS_PLAN.md` (M14), and `AB_PLAYBACK_PLAN.md` (M10-M12).
-- Status: Feature 6 implementation and non-browser automated E3 gates are complete. Full
-  Playwright execution and manual audio/ergonomics acceptance remain pending; Feature 6 is not yet
-  fully accepted, and Feature 7 has not started.
+- Status: Feature 6 implementation and all automated E3 gates are complete. Manual
+  audio/ergonomics acceptance remains pending, so Feature 6 is not yet fully accepted.
 - Verified entry boundary: Features 1-5 are complete at commit `461f8cf`
   (`feat: add independent A/B playback monitoring`).
 
@@ -385,36 +384,27 @@ The E3 closure slice adds two explicit regressions beyond the earlier 106-test P
 
 Completed automated evidence:
 
-- `pnpm test` — 562 unit tests passed;
+- `pnpm test` — 601 unit tests passed;
 - `pnpm lint` — passed;
-- `pnpm exec tsc --noEmit` — passed;
 - `pnpm build` — passed;
 - targeted Prettier checks for every Feature 6/E3 file — passed;
-- `pnpm exec playwright test --list` — 108 Playwright tests discovered, up from 106 before the two
-  E3 regressions.
+- `pnpm test:e2e -- --workers=1` — all 108 serial Chromium tests passed.
 
 The repo-wide `pnpm format:check` still reports the pre-existing untouched
 `native-e2e/native-shell.e2e.mjs`; E3 does not rewrite that unrelated native test. This slice's
 targeted formatting gate is clean.
 
-Real Playwright execution was re-attempted on 2026-07-13 outside the sandbox, serially in
-Chromium. It is **not green**: `pnpm test:e2e` reached all 108 tests, with 107 passing and one
-deterministic failure. `e2e/split-screen.e2e.ts`'s “a split voice-lane edit mutates only active B
-and keeps undo branch-local” cannot click the visible `Select notes in Lead` control after entering
-fullscreen; the Side A lane canvas/editor grid intercepts pointer events. The focused test failed
-the same way on all three `--repeat-each=3` attempts. Treat this as a real Feature 6 regression,
-not a quota or parallelism flake. Re-run these after fixing it:
-
-```powershell
-pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
-pnpm test:e2e
-```
+The former deterministic fullscreen regression is fixed. Fullscreen intentionally covers the
+outside voice legend and header Undo control, so the split-lane regression now selects the active
+pane's in-canvas voice control and invokes the existing `Ctrl+Z` undo command. The in-canvas
+control is explicitly named `Select <voice> voice` to avoid colliding with legacy voice-swatch and
+toolbar selectors. The Feature 6 browser slice (`e2e/voice-lanes.e2e.ts` plus
+`e2e/split-screen.e2e.ts`) passed 22/22 serial Chromium tests before the complete 108/108 run.
 
 The audio and interaction-quality pause points also remain pending. Run `pnpm tauri dev` and work
 through the Feature 6 section in `MANUAL_TEST_CASES.md`, including audition by ear, brush/lasso
-ergonomics, last-lane reachability, fullscreen, and split A/B behavior. Until the regression is
-fixed, the full real Playwright run passes, and that manual acceptance is recorded, Feature 6 is
-implemented but not fully accepted. Feature 7 implementation has not started.
+ergonomics, last-lane reachability, fullscreen, and split A/B behavior. Until that manual
+acceptance is recorded, Feature 6 is implemented and fully automated but not fully accepted.
 
 ---
 

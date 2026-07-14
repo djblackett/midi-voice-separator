@@ -383,16 +383,18 @@ test("a split voice-lane edit mutates only active B and keeps undo branch-local"
 
   // Activate B. Its branch starts at the import split with no undo history.
   await sideB.click();
-  await expect(
-    page.getByRole("group", { name: "Side B voice lane (editing)", exact: true }),
-  ).toBeVisible();
+  const sideBEditing = page.getByRole("group", {
+    name: "Side B voice lane (editing)",
+    exact: true,
+  });
+  await expect(sideBEditing).toBeVisible();
   await expect(voiceRow(page, "Lead")).toContainText("2 notes");
   await expect(voiceRow(page, "Bass")).toContainText("1 notes");
   const undo = page.getByRole("button", { name: "Undo" });
   await expect(undo).toBeDisabled();
 
   // One lane-view assignment mutates B and creates exactly one B history entry.
-  await page.getByLabel("Select notes in Lead", { exact: true }).click();
+  await sideBEditing.getByLabel("Select Lead voice", { exact: true }).click();
   await page.keyboard.press("2");
   await expect(voiceRow(page, "Lead")).toContainText("0 notes");
   await expect(voiceRow(page, "Bass")).toContainText("3 notes");
@@ -407,7 +409,7 @@ test("a split voice-lane edit mutates only active B and keeps undo branch-local"
   await page.getByRole("group", { name: "Side B voice lane", exact: true }).click();
   await expect(voiceRow(page, "Lead")).toContainText("0 notes");
   await expect(voiceRow(page, "Bass")).toContainText("3 notes");
-  await undo.click();
+  await page.keyboard.press("Control+z");
   await expect(voiceRow(page, "Lead")).toContainText("2 notes");
   await expect(voiceRow(page, "Bass")).toContainText("1 notes");
   await expect(undo).toBeDisabled();

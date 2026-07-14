@@ -1390,6 +1390,7 @@ export default function App() {
           onBrushRadiusChange={setBrushRadius}
           wandReach={wandReach}
           onAssignNotes={handleAssignNotesToVoice}
+          onSelectVoice={handleSelectVoiceSwatch}
           onAuditionNotes={handleAuditionNotes}
           confidenceHeatmap={isConfidenceHeatOn}
           pitchMarkers={pitchMarkers}
@@ -3258,6 +3259,7 @@ export default function App() {
               onBrushRadiusChange={setBrushRadius}
               wandReach={wandReach}
               onAssignNotes={handleAssignNotesToVoice}
+              onSelectVoice={handleSelectVoiceSwatch}
               onAuditionNotes={handleAuditionNotes}
               confidenceHeatmap={isConfidenceHeatOn}
               pitchMarkers={pitchMarkers}

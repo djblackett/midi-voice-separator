@@ -111,6 +111,8 @@ interface PianoRollProps {
   wandReach?: number;
   /** Context-menu "Assign to" — reassigns notes to an explicit voice. */
   onAssignNotes?: (noteIds: string[], voiceId: string) => void;
+  /** Selects all notes in one voice from the in-canvas legend. */
+  onSelectVoice?: (voiceId: string) => void;
   /** DAW-style audition: fired with the notes a click/paint gesture touched. */
   onAuditionNotes?: (notes: MidiNote[]) => void;
   /** When true, note colors show assignment confidence instead of voice. */
@@ -165,6 +167,7 @@ export function PianoRoll({
   onBrushRadiusChange = () => {},
   wandReach = DEFAULT_WAND_REACH,
   onAssignNotes = () => {},
+  onSelectVoice = () => {},
   onAuditionNotes = () => {},
   confidenceHeatmap = false,
   pitchMarkers = [],
@@ -1595,9 +1598,14 @@ export function PianoRoll({
             <ul className="piano-roll-legend-list">
               {project.voices.map((voice) => (
                 <li key={voice.id}>
-                  <span
+                  <button
+                    type="button"
                     className="piano-roll-legend-swatch"
                     style={{ backgroundColor: getVoiceFillColor(voice.id) }}
+                    aria-label={`Select ${voice.label} voice`}
+                    aria-pressed={activeVoiceId === voice.id}
+                    disabled={readOnly}
+                    onClick={() => onSelectVoice(voice.id)}
                   />
                   <span className="piano-roll-legend-label">
                     {voice.label}
