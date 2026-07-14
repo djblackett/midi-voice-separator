@@ -185,20 +185,20 @@ Primary stack:
 
 ## Active Plan
 
-The architecture sequence in `NEXT_FEATURES_MASTER_PLAN.md` is complete through Feature 5.
-Feature 6 (voice-lane editing parity) is implemented and its available non-browser E3 gates are
-green, but it is not fully accepted: the 2026-07-13 serial Chromium run reached 108 tests and found
-one deterministic fullscreen split-lane pointer-interception failure (107 passed), and the manual
-audio/ergonomics pass remains outstanding. Feature 7 (content-based matching) now has a pure Rust
-matcher seam through C2 (`CONTENT_BASED_NOTE_MATCHING_PLAN.md`): canonical rational atoms, strict
-and conservative cross-import policies, coverage/ambiguity gates, a same-document local-ID adapter,
-and checked-in fixtures. It remains intentionally unwired: there is no Tauri command, cross-import
-screen, or replacement for `assignmentDiff.ts`'s current disjoint-ID guard. Feature 8 must consume
-only unambiguous pairs; Feature 9 must consume strict multiset semantics.
+Feature 6 (voice-lane editing parity) is automated-complete at `71d3ee6`: the full serial Chromium
+suite passes 108/108, with unit, lint, build, and targeted formatting gates green. The manual
+audio/ergonomics pass remains the only Feature 6 acceptance requirement. Feature 7 is complete
+through its D1 downstream-contract boundary (`CONTENT_BASED_NOTE_MATCHING_PLAN.md`): canonical
+rational atoms, strict and conservative policies, coverage/ambiguity gates, a same-document
+adapter, fixtures, and proof that only trusted pairs can feed cross-import evidence.
 
-Feature 8 now has its own durable plan in `CROSS_IMPORT_DIFFING_PLAN.md`. Its central ownership
-rule is that an external import is an immutable `ReferenceDocument`, never editable side B; retain
-the existing local-ID snapshot/A–B diff unchanged and build a separate paired-reference diff path.
+Feature 8 has completed pure/native phases 0.1--C1
+(`CROSS_IMPORT_DIFFING_PLAN.md`): immutable `ReferenceDocument` ownership, pair-driven voice
+correspondence, a side-qualified diff, `compare_external_midi`, a revision-guarded controller, and
+read-only projection. Its C2--C4 UI and D1--D2 evidence are gated by Feature 6 manual acceptance.
+The existing local-ID snapshot/A–B diff remains unchanged. Feature 9 has completed its backend and
+revision-state phases through C2 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`); its presentation is
+likewise gated by Feature 6 manual acceptance and Feature 8 UI completion.
 
 ## Progress Log
 
@@ -2135,7 +2135,7 @@ Added a workspace fullscreen mode for the piano-roll editor. `App.tsx` now wraps
 - **Not yet committed.** This section and its code (`App.tsx`, `global.css`, `e2e/fullscreen-workspace.e2e.ts`, `MANUAL_TEST_CASES.md`) exist only in the working tree as of this note.
 - Verified: `pnpm test` (357/357), `pnpm lint`, `pnpm format:check`, `pnpm build` all clean; `pnpm test:e2e` (70/70, including `fullscreen-workspace.e2e.ts`). No Rust changes.
 
-### Master-plan Feature 6 — voice-lane editing parity implemented; E3 acceptance pending
+### Master-plan Feature 6 — automated E3 complete; manual acceptance pending
 
 Feature 6 turns Piano and Voice lanes into two geometry adapters over the same editor controller,
 commands, branch histories, and render-style resolver. The commit-sized implementation through E2
@@ -2154,32 +2154,21 @@ suite:
   assignments/history. `PianoRoll` clears marker, marquee, cursor, and paint-stroke state on cancel,
   and canvases opt out of native touch gestures so pointer ownership stays explicit.
 
-Available E3 evidence is green:
+Automated E3 evidence is green:
 
-- `pnpm test` — 562/562 unit tests;
-- `pnpm lint`;
-- `pnpm exec tsc --noEmit`;
-- `pnpm build`;
+- `pnpm test` — 601/601 unit tests;
+- `pnpm lint` and `pnpm build`;
 - targeted Prettier checks for all Feature 6/E3 files;
-- `pnpm exec playwright test --list` — 108 tests discovered (106 before the two E3 additions).
+- `pnpm test:e2e -- --workers=1` — 108/108 serial Chromium tests.
 
 The repo-wide `pnpm format:check` still flags only the pre-existing untouched
 `native-e2e/native-shell.e2e.mjs`; do not mix that unrelated cleanup into the E3 slice.
 
-Do not record a Playwright pass yet. Real browser execution was quota-blocked, and no in-app
-browser target was available for a substitute interaction pass. When capacity returns, run:
-
-```powershell
-pnpm exec playwright test e2e/voice-lanes.e2e.ts e2e/split-screen.e2e.ts --workers=1
-pnpm test:e2e
-```
-
 Then run `pnpm tauri dev` and complete `MANUAL_TEST_CASES.md`'s **Voice-lane editing parity**
 section on sparse and dense files, especially source-row Brush preview, clipped-row Lasso feel,
 last-lane reachability, fullscreen, split A/B, audition by ear, and playhead alignment. Feature 6
-is implemented but not fully accepted until both results are recorded. Feature 7's pure matcher is
-implemented through C2, but no later feature is authorized to consume it until its own ownership
-and UI/IPC contracts are built.
+is implemented but not fully accepted until that manual result is recorded. Feature 8 and Feature 9
+must retain their existing UI gates until then.
 
 ## Architecture Invariants
 

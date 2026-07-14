@@ -4,12 +4,11 @@ Repository: `chiptune-voice-separator`
 Date: 2026-07-13
 Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M16),
 `VOICE_LANE_PARITY_PLAN.md` (Feature 6 boundary).
-Status: implementation in progress through C2; no UI or Tauri command is wired.
-Verified entry boundary: Feature 6 is implemented through `30d0d4f`, but its real browser
-acceptance is blocked by a deterministic fullscreen split-lane pointer-interception regression
-(107/108 serial Chromium tests passed) and its manual audio/ergonomics checklist is outstanding.
-Feature 6's browser/manual acceptance remains outstanding. Feature 7's pure matcher seam was
-started on 2026-07-14 without changing that acceptance status or wiring any new UI behavior.
+Status: implementation is complete through D1. The matcher remains backend-owned; Feature 8 owns
+the serializable DTO/IPC consumer and no standalone matcher UI is wired.
+Verified entry boundary: Feature 6's automated E3 gate is complete at `71d3ee6` (108/108 serial
+Chromium tests); its manual audio/ergonomics checklist remains outstanding. Feature 7's pure matcher
+seam and downstream contract were completed without adding a standalone UI behavior.
 
 ### Execution record (2026-07-14)
 
@@ -21,7 +20,11 @@ started on 2026-07-14 without changing that acceptance status or wiring any new 
 - C2 adds checked-in JSON fixtures in `src-tauri/tests/fixtures/content_matching/` for PPQ
   normalization, duplicate ambiguity, related tolerant notes, and unrelated documents. They are
   exercised by `stable_json_fixtures_cover_supported_matching_boundaries`.
-- Verification through this point: `cargo test content_matching` (23 matcher tests), full
+- D1 landed in `a8db44e`, proving only unambiguous pairs can become downstream voice-overlap
+  evidence and that incomparable results cannot become local-ID assignment counts.
+- Feature 8 subsequently published the only needed DTO/IPC consumer; the matcher itself retains
+  no independent UI or mutable application state.
+- C2-boundary verification: `cargo test content_matching` (23 matcher tests), full
   `cargo test` (125 tests), `cargo check`, `cargo clippy -- -D warnings`, `pnpm lint`,
   `pnpm exec tsc --noEmit`, and `pnpm test` (562 frontend tests).
 

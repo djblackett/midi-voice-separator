@@ -4,7 +4,18 @@
 - Date: 2026-07-14
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M17),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md` (Feature 7 handoff), and the existing A/B workspace.
-- Status: architecture drafted; implementation not started.
+- Status: Phases 0.1--C1 are complete through `fa2417c`; C2--C4 UI and D1--D2 evidence remain
+  gated behind Feature 6 manual audio/ergonomics acceptance.
+
+### Execution record (2026-07-14)
+
+- 0.1 `a8db44e`, 0.2 `57bae2a`, A1 `a63de5e`, A2 `eaf81d4`, and A3 `bc2fd00` completed the
+  consumer guard, DTO audit, immutable reference ownership, pair-driven voice evidence, and
+  side-qualified cross-import diff contract.
+- B1 `0a3b875` and B2 `6f82fef` added the native comparison command and revision-guarded
+  controller; C1 `fa2417c` generalized pure comparison projection for a read-only reference pane.
+- None of those slices wire an App action or make the external project editable. C2--C4 remain
+  intentionally unstarted until the recorded manual Feature 6 checkpoint.
 
 ## 1. Purpose and user outcome
 
@@ -56,15 +67,16 @@ overrides, snapshots, promotion, export, or replacement of the working import.
 
 ## 3. Verified starting point
 
-Feature 7 is implemented through C2 (`3f23e06`) as a pure Rust seam:
+Feature 7 is complete through D1 and Feature 8 has already consumed its bounded handoff:
 
 - `src-tauri/src/midi/content_matching.rs` owns rational PPQ normalization,
   `SameDocumentV1`, `StrictRoundTripV1`, and conservative `CrossImportV1` candidate resolution.
-- It returns exact and fuzzy pairs, coverage, fuzzy ambiguity, unmatched side-qualified references,
-  and `incomparable` for insufficient coverage. Its checked-in fixture corpus covers different PPQ,
-  duplicates, related tolerant notes, and unrelated inputs.
-- It is still crate-private, has no serializable result DTO, and has no Tauri command. This is
-  deliberate: Feature 8 is the first real consumer and must publish only the wire shape it needs.
+  It returns exact and fuzzy pairs, coverage, ambiguity, unmatched side-qualified references, and
+  `incomparable` for insufficient coverage.
+- Feature 8 owns the serializable match-result DTO and `compare_external_midi` command. The command
+  returns an immutable reference plus derived data and does not mutate the working editor.
+- The revision-guarded controller and C1 projection are pure/unwired foundations. An external
+  reference remains absent from `App.tsx` until the gated C2 user-flow slice.
 
 The existing comparison implementation is intentionally not a suitable external-reference owner:
 
