@@ -4,12 +4,26 @@ Repository: `chiptune-voice-separator`
 Date: 2026-07-13
 Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M16),
 `VOICE_LANE_PARITY_PLAN.md` (Feature 6 boundary).
-Status: architecture drafted; implementation not started.
+Status: implementation in progress through C2; no UI or Tauri command is wired.
 Verified entry boundary: Feature 6 is implemented through `30d0d4f`, but its real browser
 acceptance is blocked by a deterministic fullscreen split-lane pointer-interception regression
 (107/108 serial Chromium tests passed) and its manual audio/ergonomics checklist is outstanding.
-This plan may be reviewed now; do not begin its implementation until that Feature 6 regression is
-fixed, the full E2E suite is green, and the Feature 6 manual acceptance is recorded.
+Feature 6's browser/manual acceptance remains outstanding. Feature 7's pure matcher seam was
+started on 2026-07-14 without changing that acceptance status or wiring any new UI behavior.
+
+### Execution record (2026-07-14)
+
+- `0825e43` added canonical rational note atoms; `b0a629a` added strict correspondence;
+  `3554c50` retained duplicate ambiguity; `4d6aae0` added conservative candidate discovery.
+- `1080dd7` resolves only mutually unique tolerant candidates and rejects insufficient coverage.
+- `f04e7d0` adds the `SameDocumentV1` local-ID adapter while preserving the current
+  `assignmentDiff.ts` disjoint-ID guard.
+- C2 adds checked-in JSON fixtures in `src-tauri/tests/fixtures/content_matching/` for PPQ
+  normalization, duplicate ambiguity, related tolerant notes, and unrelated documents. They are
+  exercised by `stable_json_fixtures_cover_supported_matching_boundaries`.
+- Verification through this point: `cargo test content_matching` (23 matcher tests), full
+  `cargo test` (125 tests), `cargo check`, `cargo clippy -- -D warnings`, `pnpm lint`,
+  `pnpm exec tsc --noEmit`, and `pnpm test` (562 frontend tests).
 
 ---
 
@@ -316,6 +330,10 @@ different PPQ, duplicate, related-tolerant, and unrelated cases. Update `agents.
 `NEXT_FEATURES_MASTER_PLAN.md`, `README.md`, and this plan with actual commands/results. Document
 that Feature 8 consumes only paired unambiguous notes, while Feature 9 consumes strict multiset
 semantics.
+
+The fixture files and documentation are now in place. No public Tauri command exists in Feature 7,
+so an IPC mirror remains intentionally deferred to the Feature 8/9 command that consumes it; this
+avoids publishing an unused wire contract before its request ownership is designed.
 
 Commit: `docs: document content-based matching boundary`
 

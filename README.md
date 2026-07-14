@@ -137,8 +137,11 @@ inactive split pane and Diff projection are intentionally read-only, but either 
 the active editing branch. An unrelated external MIDI file cannot yet be used as a comparison
 reference. Diffing and snapshots are in-session only: note ids are not stable across an
 export/reimport round trip, so there is no cross-import diff and no automated export→reimport
-verification. Those workflows require the versioned content-based note matcher planned as Feature
-7 and likely new Rust support. The diff panel's confidence-delta metric also remains unavailable
+verification. Feature 7 now provides a pure, versioned Rust note-correspondence foundation (strict
+semantic matching, conservative cross-import candidates, ambiguity, and coverage), but it has no
+Tauri command or UI consumer yet. Feature 8 will consume only unambiguous pairs for cross-import
+comparison; Feature 9 will consume strict multiset semantics for verification. The diff panel's
+confidence-delta metric also remains unavailable
 across different separation strategies or search modes because confidence measures local
 decisiveness under one scoring setup; the separate assignment-model cost evaluator is the honest
 cross-strategy measure. Pitch-range markers remain piano-only because voice lanes have no global

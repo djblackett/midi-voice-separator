@@ -1,0 +1,32 @@
+{
+  "policy": "STRICT_ROUND_TRIP_V1",
+  "left": {
+    "id": "exported-document",
+    "ppq": 480,
+    "notes": [
+      {
+        "id": "left-note",
+        "pitch": 60,
+        "channel": 0,
+        "velocity": 100,
+        "startTick": 120,
+        "endTick": 360
+      }
+    ]
+  },
+  "right": {
+    "id": "reimported-document",
+    "ppq": 960,
+    "notes": [
+      {
+        "id": "right-note",
+        "pitch": 60,
+        "channel": 0,
+        "velocity": 100,
+        "startTick": 240,
+        "endTick": 720
+      }
+    ]
+  },
+  "expected": { "exactMatchMultiplicity": 1, "ambiguousExactGroupCount": 0 }
+}

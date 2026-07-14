@@ -718,6 +718,7 @@ fn gcd(mut left: u64, mut right: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::midi::model::AssignmentReason;
+    use serde::Deserialize;
 
     fn note(id: &str, start_tick: u64, end_tick: u64) -> MidiNoteDto {
         MidiNoteDto {
@@ -852,6 +853,123 @@ mod tests {
             document_id,
             ppq,
             notes,
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    enum FixturePolicy {
+        StrictRoundTripV1,
+        CrossImportV1,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct FixtureDocument {
+        id: String,
+        ppq: u16,
+        notes: Vec<FixtureNote>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FixtureNote {
+        id: String,
+        pitch: u8,
+        channel: u8,
+        velocity: u8,
+        start_tick: u64,
+        end_tick: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FixtureExpected {
+        exact_match_multiplicity: usize,
+        ambiguous_exact_group_count: usize,
+        fuzzy_pair_count: Option<usize>,
+        comparable: Option<bool>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ContentMatchingFixture {
+        policy: FixturePolicy,
+        left: FixtureDocument,
+        right: FixtureDocument,
+        expected: FixtureExpected,
+    }
+
+    fn fixture_document(document: &FixtureDocument) -> Vec<MidiNoteDto> {
+        document
+            .notes
+            .iter()
+            .map(|note_fixture| MidiNoteDto {
+                id: note_fixture.id.clone(),
+                voice_id: "fixture-voice".to_string(),
+                source_track_index: 0,
+                channel: note_fixture.channel,
+                pitch: note_fixture.pitch,
+                velocity: note_fixture.velocity,
+                start_tick: note_fixture.start_tick,
+                end_tick: note_fixture.end_tick,
+                duration_ticks: note_fixture
+                    .end_tick
+                    .saturating_sub(note_fixture.start_tick),
+                assignment_confidence: 1.0,
+                assignment_reason: AssignmentReason::Imported,
+            })
+            .collect()
+    }
+
+    fn assert_fixture(fixture_json: &str) {
+        let fixture: ContentMatchingFixture = serde_json::from_str(fixture_json).unwrap();
+        let left = fixture_document(&fixture.left);
+        let right = fixture_document(&fixture.right);
+        let left_document = document(&fixture.left.id, fixture.left.ppq, &left);
+        let right_document = document(&fixture.right.id, fixture.right.ppq, &right);
+
+        match fixture.policy {
+            FixturePolicy::StrictRoundTripV1 => {
+                let result = match_strict_notes(left_document, right_document).unwrap();
+                assert_eq!(
+                    result.exact_match_multiplicity,
+                    fixture.expected.exact_match_multiplicity
+                );
+                assert_eq!(
+                    result.ambiguous_exact_groups.len(),
+                    fixture.expected.ambiguous_exact_group_count
+                );
+            }
+            FixturePolicy::CrossImportV1 => {
+                let result = resolve_cross_import_candidates(
+                    discover_cross_import_candidates(left_document, right_document).unwrap(),
+                    left.len(),
+                    right.len(),
+                );
+                assert_eq!(
+                    result.exact_pairs.len(),
+                    fixture.expected.exact_match_multiplicity
+                );
+                assert_eq!(
+                    result.fuzzy_pairs.len(),
+                    fixture.expected.fuzzy_pair_count.unwrap_or(0)
+                );
+                assert_eq!(
+                    result.comparable,
+                    fixture.expected.comparable.unwrap_or(false)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stable_json_fixtures_cover_supported_matching_boundaries() {
+        for fixture in [
+            include_str!("../../tests/fixtures/content_matching/different_ppq.json"),
+            include_str!("../../tests/fixtures/content_matching/duplicates.json"),
+            include_str!("../../tests/fixtures/content_matching/related_tolerant.json"),
+            include_str!("../../tests/fixtures/content_matching/unrelated.json"),
+        ] {
+            assert_fixture(fixture);
         }
     }
 

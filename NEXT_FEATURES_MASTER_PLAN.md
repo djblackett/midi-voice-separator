@@ -538,13 +538,19 @@ remain piano-only unless separately designed.
 
 Exit gate: common gestures produce identical editor commands in both views.
 
-### 7. Content-based matching — not started
+### 7. Content-based matching — in progress through the pure matcher boundary
 
 Required work:
 
 - Land M8, M9, and M16.
 - Support exact same-document correspondence and versioned cross-document policies.
 - Cover PPQ normalization, duplicates, ambiguity, and deterministic tie-breaking.
+
+Implemented 2026-07-14: the pure Rust service now has canonical rational atoms, strict matching,
+duplicate ambiguity, conservative cross-import candidate resolution with coverage gating,
+same-document local-ID correspondence, and checked-in fixture coverage. It has no public command
+or UI consumer yet. Feature 8 consumes only unambiguous pairs; Feature 9 consumes strict multiset
+semantics.
 
 Exit gate: input ordering does not change matches; low coverage yields `incomparable`; strict
 and tolerant policies cannot be confused.

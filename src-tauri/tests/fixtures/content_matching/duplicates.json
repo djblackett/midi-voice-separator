@@ -1,0 +1,41 @@
+{
+  "policy": "STRICT_ROUND_TRIP_V1",
+  "left": {
+    "id": "exported-document",
+    "ppq": 480,
+    "notes": [
+      {
+        "id": "left-a",
+        "pitch": 64,
+        "channel": 0,
+        "velocity": 100,
+        "startTick": 0,
+        "endTick": 240
+      },
+      { "id": "left-b", "pitch": 64, "channel": 0, "velocity": 100, "startTick": 0, "endTick": 240 }
+    ]
+  },
+  "right": {
+    "id": "reimported-document",
+    "ppq": 480,
+    "notes": [
+      {
+        "id": "right-a",
+        "pitch": 64,
+        "channel": 0,
+        "velocity": 100,
+        "startTick": 0,
+        "endTick": 240
+      },
+      {
+        "id": "right-b",
+        "pitch": 64,
+        "channel": 0,
+        "velocity": 100,
+        "startTick": 0,
+        "endTick": 240
+      }
+    ]
+  },
+  "expected": { "exactMatchMultiplicity": 2, "ambiguousExactGroupCount": 1 }
+}

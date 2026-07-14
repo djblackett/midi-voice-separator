@@ -189,9 +189,12 @@ The architecture sequence in `NEXT_FEATURES_MASTER_PLAN.md` is complete through 
 Feature 6 (voice-lane editing parity) is implemented and its available non-browser E3 gates are
 green, but it is not fully accepted: the 2026-07-13 serial Chromium run reached 108 tests and found
 one deterministic fullscreen split-lane pointer-interception failure (107 passed), and the manual
-audio/ergonomics pass remains outstanding. Feature 7 (content-based matching) has a detailed plan
-but no implementation. Resume from `VOICE_LANE_PARITY_PLAN.md`'s E3 closure record, fix and rerun
-the browser regression, then record the manual evidence before advancing the roadmap.
+audio/ergonomics pass remains outstanding. Feature 7 (content-based matching) now has a pure Rust
+matcher seam through C2 (`CONTENT_BASED_NOTE_MATCHING_PLAN.md`): canonical rational atoms, strict
+and conservative cross-import policies, coverage/ambiguity gates, a same-document local-ID adapter,
+and checked-in fixtures. It remains intentionally unwired: there is no Tauri command, cross-import
+screen, or replacement for `assignmentDiff.ts`'s current disjoint-ID guard. Feature 8 must consume
+only unambiguous pairs; Feature 9 must consume strict multiset semantics.
 
 ## Progress Log
 
@@ -2170,7 +2173,9 @@ pnpm test:e2e
 Then run `pnpm tauri dev` and complete `MANUAL_TEST_CASES.md`'s **Voice-lane editing parity**
 section on sparse and dense files, especially source-row Brush preview, clipped-row Lasso feel,
 last-lane reachability, fullscreen, split A/B, audition by ear, and playhead alignment. Feature 6
-is implemented but not fully accepted until both results are recorded. Feature 7 has not started.
+is implemented but not fully accepted until both results are recorded. Feature 7's pure matcher is
+implemented through C2, but no later feature is authorized to consume it until its own ownership
+and UI/IPC contracts are built.
 
 ## Architecture Invariants
 

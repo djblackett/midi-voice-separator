@@ -1,0 +1,37 @@
+{
+  "policy": "CROSS_IMPORT_V1",
+  "left": {
+    "id": "reference-document",
+    "ppq": 960,
+    "notes": [
+      {
+        "id": "left-note",
+        "pitch": 67,
+        "channel": 1,
+        "velocity": 90,
+        "startTick": 0,
+        "endTick": 960
+      }
+    ]
+  },
+  "right": {
+    "id": "candidate-document",
+    "ppq": 960,
+    "notes": [
+      {
+        "id": "right-note",
+        "pitch": 67,
+        "channel": 1,
+        "velocity": 90,
+        "startTick": 7,
+        "endTick": 967
+      }
+    ]
+  },
+  "expected": {
+    "exactMatchMultiplicity": 0,
+    "ambiguousExactGroupCount": 0,
+    "fuzzyPairCount": 1,
+    "comparable": true
+  }
+}
