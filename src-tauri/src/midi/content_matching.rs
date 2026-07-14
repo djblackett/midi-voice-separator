@@ -30,14 +30,29 @@ pub(crate) struct MatchedNotePair {
     pub right: MatchNoteRef,
 }
 
-/// Strict correspondence output before duplicate-multiset ambiguity (A3).
-/// Duplicate atoms are deliberately emitted as unmatched rather than paired by
-/// occurrence order; A3 upgrades that state to explicit ambiguity reporting.
+/// A duplicate exact-content bucket. `matched_multiplicity` contributes to
+/// strict semantic verification, but individual local references remain
+/// ambiguous: their occurrence order must never create a fake pairing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AmbiguousExactNoteGroup {
+    pub atom: CanonicalNoteAtom,
+    pub left: Vec<MatchNoteRef>,
+    pub right: Vec<MatchNoteRef>,
+    pub matched_multiplicity: usize,
+    pub unmatched_left_multiplicity: usize,
+    pub unmatched_right_multiplicity: usize,
+}
+
+/// Strict correspondence output. Exact duplicate multisets count toward the
+/// supported semantic model while preserving the ambiguity needed by a future
+/// cross-import UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StrictNoteMatchResult {
     pub matcher_version: u32,
     pub policy: NoteMatchPolicy,
+    pub exact_match_multiplicity: usize,
     pub exact_pairs: Vec<MatchedNotePair>,
+    pub ambiguous_exact_groups: Vec<AmbiguousExactNoteGroup>,
     pub unmatched_left: Vec<MatchNoteRef>,
     pub unmatched_right: Vec<MatchNoteRef>,
 }
@@ -153,6 +168,8 @@ pub(crate) fn match_strict_notes(
     let left_notes = canonicalize_notes(left.notes, left.ppq)?;
     let right_notes = canonicalize_notes(right.notes, right.ppq)?;
     let mut exact_pairs = Vec::new();
+    let mut exact_match_multiplicity = 0;
+    let mut ambiguous_exact_groups = Vec::new();
     let mut unmatched_left = Vec::new();
     let mut unmatched_right = Vec::new();
     let mut left_index = 0;
@@ -191,17 +208,24 @@ pub(crate) fn match_strict_notes(
                         left: note_ref(left.document_id, &left_group[0]),
                         right: note_ref(right.document_id, &right_group[0]),
                     });
+                    exact_match_multiplicity += 1;
                 } else {
-                    unmatched_left.extend(
-                        left_group
+                    let matched_multiplicity = left_group.len().min(right_group.len());
+                    exact_match_multiplicity += matched_multiplicity;
+                    ambiguous_exact_groups.push(AmbiguousExactNoteGroup {
+                        atom: left_group[0].atom,
+                        left: left_group
                             .iter()
-                            .map(|note| note_ref(left.document_id, note)),
-                    );
-                    unmatched_right.extend(
-                        right_group
+                            .map(|note| note_ref(left.document_id, note))
+                            .collect(),
+                        right: right_group
                             .iter()
-                            .map(|note| note_ref(right.document_id, note)),
-                    );
+                            .map(|note| note_ref(right.document_id, note))
+                            .collect(),
+                        matched_multiplicity,
+                        unmatched_left_multiplicity: left_group.len() - matched_multiplicity,
+                        unmatched_right_multiplicity: right_group.len() - matched_multiplicity,
+                    });
                 }
 
                 left_index = left_end;
@@ -224,7 +248,9 @@ pub(crate) fn match_strict_notes(
     Ok(StrictNoteMatchResult {
         matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
         policy: NoteMatchPolicy::StrictRoundTripV1,
+        exact_match_multiplicity,
         exact_pairs,
+        ambiguous_exact_groups,
         unmatched_left,
         unmatched_right,
     })
@@ -482,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_matching_keeps_duplicate_atoms_unpaired_until_ambiguity_is_available() {
+    fn strictly_reports_equal_duplicate_multisets_as_ambiguous_exact_content() {
         let left = vec![note("left-1", 120, 360), note("left-2", 120, 360)];
         let right = vec![note("right-1", 120, 360), note("right-2", 120, 360)];
 
@@ -491,8 +517,19 @@ mod tests {
                 .unwrap();
 
         assert!(result.exact_pairs.is_empty());
+        assert_eq!(result.exact_match_multiplicity, 2);
+        assert_eq!(result.ambiguous_exact_groups.len(), 1);
+        assert_eq!(result.ambiguous_exact_groups[0].matched_multiplicity, 2);
         assert_eq!(
-            result.unmatched_left,
+            result.ambiguous_exact_groups[0].unmatched_left_multiplicity,
+            0
+        );
+        assert_eq!(
+            result.ambiguous_exact_groups[0].unmatched_right_multiplicity,
+            0
+        );
+        assert_eq!(
+            result.ambiguous_exact_groups[0].left,
             vec![
                 MatchNoteRef {
                     document_id: "left".to_string(),
@@ -505,7 +542,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            result.unmatched_right,
+            result.ambiguous_exact_groups[0].right,
             vec![
                 MatchNoteRef {
                     document_id: "right".to_string(),
@@ -516,6 +553,80 @@ mod tests {
                     note_id: "right-2".to_string(),
                 },
             ]
+        );
+        assert!(result.unmatched_left.is_empty());
+        assert!(result.unmatched_right.is_empty());
+    }
+
+    #[test]
+    fn preserves_unequal_duplicate_multiplicity_without_arbitrarily_naming_the_extra_note() {
+        let left = vec![
+            note("left-1", 120, 360),
+            note("left-2", 120, 360),
+            note("left-3", 120, 360),
+        ];
+        let right = vec![note("right-1", 120, 360), note("right-2", 120, 360)];
+
+        let result =
+            match_strict_notes(document("left", 480, &left), document("right", 480, &right))
+                .unwrap();
+
+        assert_eq!(result.exact_match_multiplicity, 2);
+        assert_eq!(result.ambiguous_exact_groups.len(), 1);
+        assert_eq!(result.ambiguous_exact_groups[0].matched_multiplicity, 2);
+        assert_eq!(
+            result.ambiguous_exact_groups[0].unmatched_left_multiplicity,
+            1
+        );
+        assert_eq!(
+            result.ambiguous_exact_groups[0].unmatched_right_multiplicity,
+            0
+        );
+        assert!(result.unmatched_left.is_empty());
+        assert!(result.unmatched_right.is_empty());
+    }
+
+    #[test]
+    fn does_not_group_duplicates_when_channel_or_velocity_differs() {
+        let left = vec![note("left-1", 120, 360), note("left-2", 120, 360)];
+        let mut different_channel = note("right-channel", 120, 360);
+        different_channel.channel += 1;
+        let mut different_velocity = note("right-velocity", 120, 360);
+        different_velocity.velocity += 1;
+        let right = vec![different_channel, different_velocity];
+
+        let result =
+            match_strict_notes(document("left", 480, &left), document("right", 480, &right))
+                .unwrap();
+
+        assert_eq!(result.exact_match_multiplicity, 0);
+        assert!(result.ambiguous_exact_groups.is_empty());
+        assert_eq!(result.unmatched_left.len(), 2);
+        assert_eq!(result.unmatched_right.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_ambiguity_is_input_order_invariant() {
+        let first_left = note("left-1", 120, 360);
+        let second_left = note("left-2", 120, 360);
+        let first_right = note("right-1", 120, 360);
+        let second_right = note("right-2", 120, 360);
+        let forward_left = vec![first_left.clone(), second_left.clone()];
+        let forward_right = vec![first_right.clone(), second_right.clone()];
+        let reversed_left = vec![second_left, first_left];
+        let reversed_right = vec![second_right, first_right];
+
+        assert_eq!(
+            match_strict_notes(
+                document("left", 480, &forward_left),
+                document("right", 480, &forward_right),
+            )
+            .unwrap(),
+            match_strict_notes(
+                document("left", 480, &reversed_left),
+                document("right", 480, &reversed_right),
+            )
+            .unwrap()
         );
     }
 
@@ -530,7 +641,9 @@ mod tests {
             StrictNoteMatchResult {
                 matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
                 policy: NoteMatchPolicy::StrictRoundTripV1,
+                exact_match_multiplicity: 0,
                 exact_pairs: Vec::new(),
+                ambiguous_exact_groups: Vec::new(),
                 unmatched_left: Vec::new(),
                 unmatched_right: Vec::new(),
             }
