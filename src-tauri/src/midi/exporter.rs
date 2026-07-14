@@ -205,11 +205,15 @@ fn denominator_power(denominator: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::midi::content_matching::MatchDocument;
     use crate::midi::model::{
         AssignmentReason, MidiNoteDto, MidiProjectDto, MidiVoiceDto, SeparationStrategy,
         SeparationSummaryDto, StrategySuggestionDto, TempoChangeDto, TimeSignatureDto,
     };
     use crate::midi::parser::parse_midi_project;
+    use crate::midi::round_trip_verification::{
+        strict_round_trip_verification_dto, verify_strict_note_content,
+    };
     use std::path::Path;
 
     fn note(id: &str, voice_id: &str, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
@@ -373,5 +377,137 @@ mod tests {
             error.code,
             crate::error::AppErrorCode::ExportTimingOutOfRange
         );
+    }
+
+    fn strict_content_report(
+        project: &MidiProjectDto,
+    ) -> crate::midi::model::StrictRoundTripVerificationDto {
+        let bytes = export_midi_bytes(project).expect("project should export");
+        let reimported = parse_midi_project(Path::new("round-trip.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+        strict_round_trip_verification_dto(
+            &verify_strict_note_content(
+                MatchDocument {
+                    document_id: "expected-export",
+                    ppq: project.ppq,
+                    notes: &project.notes,
+                },
+                MatchDocument {
+                    document_id: "reimported-export",
+                    ppq: reimported.ppq,
+                    notes: &reimported.notes,
+                },
+            )
+            .expect("exported MIDI should have well-formed note timing"),
+        )
+    }
+
+    #[test]
+    fn round_trip_inventory_preserves_normal_content_and_timeline_metadata() {
+        let project = project();
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let reimported = parse_midi_project(Path::new("normal-round-trip.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        assert!(strict_content_report(&project).content_preserved);
+        assert_eq!(reimported.ppq, project.ppq);
+        assert_eq!(reimported.duration_ticks, project.duration_ticks);
+        assert_eq!(reimported.tempo_changes, project.tempo_changes);
+        assert_eq!(reimported.time_signatures, project.time_signatures);
+    }
+
+    #[test]
+    fn round_trip_inventory_marks_zero_length_content_as_a_difference_target() {
+        let mut project = project();
+        project.notes = vec![note("zero", "voice-1", 60, 240, 240)];
+        project.voices.truncate(1);
+
+        let report = strict_content_report(&project);
+
+        assert!(!report.content_preserved);
+        assert_eq!(report.missing_expected.len(), 1);
+        assert_eq!(report.unexpected_reimported.len(), 1);
+    }
+
+    #[test]
+    fn round_trip_inventory_marks_crossing_duplicate_notes_as_a_difference_target() {
+        let mut project = project();
+        project.duration_ticks = 20;
+        project.voices.truncate(1);
+        project.notes = vec![
+            note("first", "voice-1", 60, 0, 20),
+            note("second", "voice-1", 60, 10, 15),
+        ];
+
+        let report = strict_content_report(&project);
+
+        assert!(!report.content_preserved);
+        assert_eq!(report.missing_expected.len(), 2);
+        assert_eq!(report.unexpected_reimported.len(), 2);
+    }
+
+    #[test]
+    fn round_trip_inventory_marks_empty_exported_voices_as_a_partition_difference_target() {
+        let mut project = project();
+        project.notes.truncate(1);
+
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let reimported = parse_midi_project(Path::new("empty-voice.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        assert!(strict_content_report(&project).content_preserved);
+        assert_eq!(project.voices.len(), 2);
+        assert_eq!(reimported.voices.len(), 1);
+    }
+
+    #[test]
+    fn round_trip_inventory_marks_percussion_identity_as_a_role_difference_target() {
+        let mut project = project();
+        project.voices.truncate(1);
+        project.voices[0].id = "percussion".to_string();
+        project.voices[0].label = "Percussion".to_string();
+        project.notes = vec![MidiNoteDto {
+            channel: 9,
+            pitch: 36,
+            ..note("kick", "percussion", 36, 0, 480)
+        }];
+
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let reimported = parse_midi_project(Path::new("percussion.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        assert!(strict_content_report(&project).content_preserved);
+        assert_eq!(reimported.voices[0].label, "Percussion");
+        assert_ne!(reimported.voices[0].id, "percussion");
+    }
+
+    #[test]
+    fn round_trip_inventory_marks_duplicate_labels_as_a_difference_target() {
+        let mut project = project();
+        project.voices[0].label = "Square".to_string();
+        project.voices[1].label = "Square".to_string();
+
+        let bytes = export_midi_bytes(&project).expect("project should export");
+        let reimported = parse_midi_project(Path::new("duplicate-labels.mid"), &bytes)
+            .expect("exported MIDI should reimport");
+
+        let labels = reimported
+            .voices
+            .iter()
+            .map(|voice| voice.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["Square", "Square 2"]);
+    }
+
+    #[test]
+    fn round_trip_inventory_emits_an_extra_track_for_unlisted_voice_notes() {
+        let mut project = project();
+        project
+            .notes
+            .push(note("unlisted", "not-listed", 67, 480, 960));
+
+        let smf = build_export_smf(&project).expect("project should export");
+
+        assert_eq!(smf.tracks.len(), project.voices.len() + 2);
     }
 }
