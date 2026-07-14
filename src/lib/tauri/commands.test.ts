@@ -79,17 +79,44 @@ describe("tauri command adapter", () => {
 
   it("maps export success", async () => {
     const project = { fileName: "song.mid", notes: [] };
-    invokeMock.mockResolvedValue({
+    const result = {
       path: "C:\\music\\song-voices.mid",
       trackCount: 3,
       noteCount: 12,
-    });
+      verification: {
+        verifierVersion: 1,
+        matcherVersion: 1,
+        policy: "STRICT_ROUND_TRIP_V1",
+        status: "VERIFIED",
+        noteSummary: {
+          expectedNoteCount: 12,
+          reimportedNoteCount: 12,
+          exactMatchMultiplicity: 12,
+          contentPreserved: true,
+          ambiguousExactGroupCount: 0,
+          missingExpected: [],
+          unexpectedReimported: [],
+        },
+        voicePartition: {
+          unambiguousPairCount: 12,
+          ambiguousDuplicateGroupCount: 0,
+          comparable: true,
+          preserved: true,
+        },
+        metadata: {
+          ppqPreserved: true,
+          durationPreserved: true,
+          tempoMapPreserved: true,
+          timeSignaturesPreserved: true,
+        },
+        differences: [],
+      },
+    };
+    invokeMock.mockResolvedValue(result);
 
-    await expect(exportMidi("C:\\music\\song-voices.mid", project as never)).resolves.toEqual({
-      path: "C:\\music\\song-voices.mid",
-      trackCount: 3,
-      noteCount: 12,
-    });
+    await expect(exportMidi("C:\\music\\song-voices.mid", project as never)).resolves.toEqual(
+      result,
+    );
     expect(invokeMock).toHaveBeenCalledWith("export_midi", {
       path: "C:\\music\\song-voices.mid",
       project,

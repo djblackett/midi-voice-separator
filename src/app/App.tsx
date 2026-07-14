@@ -47,7 +47,6 @@ import {
   reassignVoices,
   type AppCommandError,
   type AssignmentMode,
-  type ExportMidiResult,
   type SeparationStrategy,
 } from "../lib/tauri/commands";
 import { voiceIdForNumber } from "../domain/midi/voiceAssignments";
@@ -92,6 +91,12 @@ import {
 } from "../domain/midi/rangeRules";
 import type { EditorDocument } from "./editor/editorDocument";
 import { canApplyRerunResult } from "./editor/rerunGuard";
+import {
+  createExportVerificationState,
+  isExportVerificationCurrent,
+  retainExportVerificationForTarget,
+  type ExportVerificationState,
+} from "./editor/exportVerificationState";
 import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
 import { resolveLinkedLaneTarget } from "./editor/laneViewportLink";
 import { resolveKeyboardCommand, type KeyboardCommandId } from "./keyboard/keyboardCommands";
@@ -226,7 +231,7 @@ export default function App() {
   const [error, setError] = useState<AppCommandError | null>(null);
   const [exportError, setExportError] = useState<AppCommandError | null>(null);
   const [reassignError, setReassignError] = useState<AppCommandError | null>(null);
-  const [exportResult, setExportResult] = useState<ExportMidiResult | null>(null);
+  const [exportResult, setExportResult] = useState<ExportVerificationState | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [skippedReviewNoteIds, setSkippedReviewNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [activeVoiceId, setActiveVoiceId] = useState<string | null>(null);
@@ -298,6 +303,15 @@ export default function App() {
   const latestRerunRequestId = useRef(0);
   const { project, voiceOverrides, voiceOrder, voiceLabels, rangeAssignedNoteIds } = editorDocument;
   const history = editorBranch.history;
+  const currentExportTarget = {
+    branchId: editorBranch.branchId,
+    documentId: editorDocument.documentId,
+    revision: editorDocument.revision,
+  };
+  const visibleExportResult = retainExportVerificationForTarget(exportResult, currentExportTarget);
+  useEffect(() => {
+    setExportResult((current) => retainExportVerificationForTarget(current, currentExportTarget));
+  }, [currentExportTarget.branchId, currentExportTarget.documentId, currentExportTarget.revision]);
   const displayedProject = useMemo(
     () => materializeEditorProject({ project, voiceOverrides, voiceOrder, voiceLabels }),
     [project, voiceOverrides, voiceOrder, voiceLabels],
@@ -942,14 +956,16 @@ export default function App() {
       return;
     }
 
+    const exportTarget = currentEditorRevision();
+
     setIsExporting(true);
     setExportError(null);
     setExportResult(null);
 
     try {
       const result = await selectAndExportMidi(displayedProject);
-      if (result) {
-        setExportResult(result);
+      if (result && isExportVerificationCurrent(exportTarget, currentEditorRevision())) {
+        setExportResult(createExportVerificationState(exportTarget, result));
       }
     } catch (commandError) {
       setExportError(
@@ -1927,10 +1943,10 @@ export default function App() {
         </section>
       ) : null}
 
-      {exportResult ? (
+      {visibleExportResult ? (
         <section className="export-success" aria-live="polite">
-          Exported {exportResult.noteCount} notes across {exportResult.trackCount} tracks to{" "}
-          {exportResult.path}.
+          Exported {visibleExportResult.noteCount} notes across {visibleExportResult.trackCount}{" "}
+          tracks to {visibleExportResult.exportPath}.
         </section>
       ) : null}
 

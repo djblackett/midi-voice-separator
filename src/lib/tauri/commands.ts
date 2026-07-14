@@ -31,9 +31,78 @@ export interface AppCommandError {
 }
 
 export interface ExportMidiResult {
-  path: string;
-  trackCount: number;
-  noteCount: number;
+  readonly path: string;
+  readonly trackCount: number;
+  readonly noteCount: number;
+  readonly verification: RoundTripVerificationReport;
+}
+
+export type RoundTripVerificationStatus =
+  | "VERIFIED"
+  | "DIFFERENCES_FOUND"
+  | "INCONCLUSIVE"
+  | "COULD_NOT_VERIFY";
+
+export type RoundTripDifferenceKind =
+  | "MISSING_NOTE"
+  | "UNEXPECTED_NOTE"
+  | "AMBIGUOUS_DUPLICATE_PARTITION"
+  | "VOICE_PARTITION"
+  | "VOICE_LABEL"
+  | "VOICE_ROLE"
+  | "PPQ"
+  | "DURATION"
+  | "TEMPO_MAP"
+  | "TIME_SIGNATURES"
+  | "OVERLAPPING_DUPLICATE_PAIRING";
+
+export interface VerificationNoteRef {
+  readonly documentId: string;
+  readonly noteId: string;
+}
+
+export interface StrictNoteVerificationSummary {
+  readonly expectedNoteCount: number;
+  readonly reimportedNoteCount: number;
+  readonly exactMatchMultiplicity: number;
+  readonly contentPreserved: boolean;
+  readonly ambiguousExactGroupCount: number;
+  readonly missingExpected: readonly VerificationNoteRef[];
+  readonly unexpectedReimported: readonly VerificationNoteRef[];
+}
+
+export interface VoicePartitionVerification {
+  readonly unambiguousPairCount: number;
+  readonly ambiguousDuplicateGroupCount: number;
+  readonly comparable: boolean;
+  readonly preserved: boolean;
+}
+
+export interface TimelineMetadataVerification {
+  readonly ppqPreserved: boolean;
+  readonly durationPreserved: boolean;
+  readonly tempoMapPreserved: boolean;
+  readonly timeSignaturesPreserved: boolean;
+}
+
+export interface RoundTripDifference {
+  readonly kind: RoundTripDifferenceKind;
+  readonly expectedNotes: readonly VerificationNoteRef[];
+  readonly reimportedNotes: readonly VerificationNoteRef[];
+  readonly expectedVoiceId: string | null;
+  readonly reimportedVoiceId: string | null;
+}
+
+/** Native verification of the materialized project against the exact written file. */
+export interface RoundTripVerificationReport {
+  readonly verifierVersion: number;
+  readonly matcherVersion: number;
+  readonly policy: "STRICT_ROUND_TRIP_V1";
+  readonly status: RoundTripVerificationStatus;
+  readonly noteSummary: StrictNoteVerificationSummary;
+  readonly voicePartition: VoicePartitionVerification;
+  readonly metadata: TimelineMetadataVerification;
+  readonly differences: readonly RoundTripDifference[];
 }
 
 /** Result returned by import and rerun commands before B2 carries it on the document. */

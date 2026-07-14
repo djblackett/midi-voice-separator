@@ -1,6 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { exportMidi } from "../../lib/tauri/commands";
+import { exportMidi, type ExportMidiResult } from "../../lib/tauri/commands";
 import { selectAndExportMidi } from "./exportMidi";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -29,7 +29,12 @@ describe("selectAndExportMidi", () => {
 
   it("exports to whatever path the dialog returns", async () => {
     saveMock.mockResolvedValue("C:\\music\\song-voices.mid");
-    const result = { path: "C:\\music\\song-voices.mid", trackCount: 2, noteCount: 4 };
+    const result = {
+      path: "C:\\music\\song-voices.mid",
+      trackCount: 2,
+      noteCount: 4,
+      verification: { status: "VERIFIED" } as ExportMidiResult["verification"],
+    };
     exportMidiMock.mockResolvedValue(result);
     const project = { fileName: "song.mid" } as never;
 

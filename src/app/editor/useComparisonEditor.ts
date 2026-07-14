@@ -47,7 +47,7 @@ export function useComparisonEditor(): {
   forkB: (document: EditorDocument, forkedFrom: string | null) => void;
   discardB: () => void;
   setActiveSide: (side: BranchId) => void;
-  currentRevision: () => { branchId: BranchId; revision: number };
+  currentRevision: () => { branchId: BranchId; documentId: string; revision: number };
 } {
   const [branches, setBranches] = useState<ComparisonBranches>(() =>
     createComparisonBranches(createEditorBranch("A", emptyDocument())),
@@ -103,7 +103,11 @@ export function useComparisonEditor(): {
 
   const currentRevision = useCallback(() => {
     const active = selectActiveBranch(branchesRef.current);
-    return { branchId: active.branchId, revision: active.present.revision };
+    return {
+      branchId: active.branchId,
+      documentId: active.present.documentId,
+      revision: active.present.revision,
+    };
   }, []);
 
   const active = selectActiveBranch(branches);
