@@ -1,4 +1,8 @@
 pub mod assignment_metric;
+// A1 intentionally adds the pure canonicalization seam before a public
+// matcher policy consumes it in A2; retain it crate-private until then.
+#[allow(dead_code)]
+pub(crate) mod content_matching;
 pub mod exporter;
 pub mod model;
 pub mod parser;
