@@ -11,7 +11,7 @@ use crate::{
             cross_import_match_result_dto, discover_cross_import_candidates,
             resolve_cross_import_candidates, ContentMatchError, MatchDocument,
         },
-        exporter::export_midi_bytes,
+        exporter::encode_midi_export,
         model::{
             AssignmentMode, AssignmentProvenanceDto, CrossImportComparisonRequestDto,
             CrossImportComparisonResponseDto, ReferenceDocumentDto, SeparationStrategy,
@@ -200,19 +200,19 @@ pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiRe
         return Err(AppError::unsupported_extension());
     }
 
-    let bytes = export_midi_bytes(&project).map_err(|error| {
+    let encoded = encode_midi_export(&project).map_err(|error| {
         eprintln!("Failed to encode MIDI export '{}': {error}", path.display());
         error
     })?;
 
-    fs::write(path, bytes).map_err(|error| {
+    fs::write(path, encoded.bytes).map_err(|error| {
         eprintln!("Failed to write MIDI export '{}': {error}", path.display());
         AppError::from_write_io(&error)
     })?;
 
     Ok(ExportMidiResultDto {
         path: path.display().to_string(),
-        track_count: project.voices.len() + 1,
+        track_count: encoded.track_count,
         note_count: project.notes.len(),
     })
 }
@@ -497,6 +497,21 @@ mod tests {
         assert_eq!(result.track_count, 2);
         assert!(path.exists());
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn export_midi_reports_the_actual_track_count_with_an_unlisted_voice() {
+        let path = std::env::temp_dir().join("chiptune-voice-separator-unlisted-track.mid");
+        let mut input = project();
+        input
+            .notes
+            .push(note("unlisted", "not-listed", 67, 480, 960));
+
+        let result = export_midi(path.display().to_string(), input)
+            .expect("unlisted voice should export through the fallback track");
+
+        assert_eq!(result.track_count, 3);
         let _ = std::fs::remove_file(&path);
     }
 

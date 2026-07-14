@@ -12,6 +12,10 @@ use super::{
 };
 
 const MAX_MIDI_DELTA: u64 = 0x0fff_ffff;
+const NORMAL_NOTE_OFF_ORDER: u8 = 0;
+const ZERO_LENGTH_NOTE_ON_ORDER: u8 = 1;
+const ZERO_LENGTH_NOTE_OFF_ORDER: u8 = 2;
+const NORMAL_NOTE_ON_ORDER: u8 = 3;
 
 #[derive(Debug, Clone)]
 struct AbsoluteEvent {
@@ -21,12 +25,29 @@ struct AbsoluteEvent {
     kind: TrackEventKind<'static>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EncodedMidiExport {
+    pub bytes: Vec<u8>,
+    pub track_count: usize,
+}
+
+/// Byte-only helper retained for parser/exporter tests. Production callers
+/// need `EncodedMidiExport` so they can report the actual track structure.
+#[allow(dead_code)]
 pub fn export_midi_bytes(project: &MidiProjectDto) -> Result<Vec<u8>, AppError> {
+    Ok(encode_midi_export(project)?.bytes)
+}
+
+/// Encodes the project once and retains facts about the actual SMF structure
+/// for the command result. This avoids reporting a formula based on listed
+/// voices when the exporter emitted an additional fallback track.
+pub(crate) fn encode_midi_export(project: &MidiProjectDto) -> Result<EncodedMidiExport, AppError> {
     let smf = build_export_smf(project)?;
+    let track_count = smf.tracks.len();
     let mut bytes = Vec::new();
     smf.write_std(&mut bytes)
         .map_err(|_| AppError::from_write_io(&std::io::Error::other("failed to encode MIDI")))?;
-    Ok(bytes)
+    Ok(EncodedMidiExport { bytes, track_count })
 }
 
 fn build_export_smf(project: &MidiProjectDto) -> Result<Smf<'_>, AppError> {
@@ -115,9 +136,14 @@ fn build_voice_track<'a>(
     let mut events = Vec::new();
 
     for note in notes {
+        let is_zero_length = note.start_tick == note.end_tick;
         events.push(AbsoluteEvent {
             tick: note.start_tick,
-            order: 1,
+            order: if is_zero_length {
+                ZERO_LENGTH_NOTE_ON_ORDER
+            } else {
+                NORMAL_NOTE_ON_ORDER
+            },
             note_id: note.id.clone(),
             kind: TrackEventKind::Midi {
                 channel: u4::new(note.channel.min(15)),
@@ -129,7 +155,11 @@ fn build_voice_track<'a>(
         });
         events.push(AbsoluteEvent {
             tick: note.end_tick,
-            order: 0,
+            order: if is_zero_length {
+                ZERO_LENGTH_NOTE_OFF_ORDER
+            } else {
+                NORMAL_NOTE_OFF_ORDER
+            },
             note_id: note.id.clone(),
             kind: TrackEventKind::Midi {
                 channel: u4::new(note.channel.min(15)),
@@ -398,6 +428,43 @@ mod tests {
         assert_eq!(error.code, crate::error::AppErrorCode::InvalidExportProject);
     }
 
+    #[test]
+    fn orders_same_tick_note_events_for_zero_length_round_trips() {
+        let mut project = project();
+        project.voices.truncate(1);
+        project.notes = vec![
+            note("ending", "voice-1", 60, 0, 480),
+            note("zero", "voice-1", 62, 480, 480),
+            note("starting", "voice-1", 64, 480, 960),
+        ];
+
+        let smf = build_export_smf(&project).expect("project should export");
+        let midi_events = smf.tracks[1]
+            .iter()
+            .filter_map(|event| match event.kind {
+                TrackEventKind::Midi { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(matches!(
+            midi_events.as_slice(),
+            [
+                MidiMessage::NoteOn { key, .. },
+                MidiMessage::NoteOff { key: ending, .. },
+                MidiMessage::NoteOn { key: zero_on, .. },
+                MidiMessage::NoteOff { key: zero_off, .. },
+                MidiMessage::NoteOn { key: starting, .. },
+                MidiMessage::NoteOff { key: ending_last, .. },
+            ] if key.as_int() == 60
+                && ending.as_int() == 60
+                && zero_on.as_int() == 62
+                && zero_off.as_int() == 62
+                && starting.as_int() == 64
+                && ending_last.as_int() == 64
+        ));
+    }
+
     fn strict_content_report(
         project: &MidiProjectDto,
     ) -> crate::midi::model::StrictRoundTripVerificationDto {
@@ -436,16 +503,16 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_inventory_marks_zero_length_content_as_a_difference_target() {
+    fn round_trip_inventory_preserves_zero_length_note_content() {
         let mut project = project();
         project.notes = vec![note("zero", "voice-1", 60, 240, 240)];
         project.voices.truncate(1);
 
         let report = strict_content_report(&project);
 
-        assert!(!report.content_preserved);
-        assert_eq!(report.missing_expected.len(), 1);
-        assert_eq!(report.unexpected_reimported.len(), 1);
+        assert!(report.content_preserved);
+        assert!(report.missing_expected.is_empty());
+        assert!(report.unexpected_reimported.is_empty());
     }
 
     #[test]
