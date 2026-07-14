@@ -18,6 +18,7 @@ use crate::{
             ASSIGNMENT_ALGORITHM_VERSION,
         },
         parser::{has_exported_voice_tracks, parse_midi_project},
+        round_trip_verification::{could_not_verify_round_trip_report, verify_round_trip_model},
         voice_assignment::{assign_voices_with_locks, summarize_separation_quality},
         AssignmentOperationResultDto, ExportMidiResultDto, MidiProjectDto,
     },
@@ -200,6 +201,18 @@ pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiRe
         return Err(AppError::unsupported_extension());
     }
 
+    write_and_verify_midi_export(path, project, |destination| fs::read(destination))
+}
+
+/// Writes the encoded project, then verifies the exact bytes obtained from the
+/// destination. The injectable reader keeps the successful-write/readback
+/// failure contract testable without making the production command depend on
+/// a fake filesystem.
+fn write_and_verify_midi_export(
+    path: &Path,
+    project: MidiProjectDto,
+    readback: impl FnOnce(&Path) -> std::io::Result<Vec<u8>>,
+) -> Result<ExportMidiResultDto, AppError> {
     let encoded = encode_midi_export(&project).map_err(|error| {
         eprintln!("Failed to encode MIDI export '{}': {error}", path.display());
         error
@@ -210,10 +223,42 @@ pub fn export_midi(path: String, project: MidiProjectDto) -> Result<ExportMidiRe
         AppError::from_write_io(&error)
     })?;
 
+    let verification: Result<_, String> = (|| {
+        let bytes = readback(path).map_err(|error| {
+            format!(
+                "could not read back written MIDI export '{}': {error}",
+                path.display()
+            )
+        })?;
+        let reimported = parse_midi_project(path, &bytes).map_err(|error| {
+            format!(
+                "could not parse written MIDI export '{}': {error}",
+                path.display()
+            )
+        })?;
+        verify_round_trip_model(
+            "expected-export",
+            &project,
+            "reimported-export",
+            &reimported,
+        )
+        .map_err(|error| {
+            format!(
+                "could not inspect written MIDI export '{}': {error:?}",
+                path.display()
+            )
+        })
+    })();
+    let verification = verification.unwrap_or_else(|error| {
+        eprintln!("MIDI export was written but could not be verified: {error}");
+        could_not_verify_round_trip_report(&project)
+    });
+
     Ok(ExportMidiResultDto {
         path: path.display().to_string(),
         track_count: encoded.track_count,
         note_count: project.notes.len(),
+        verification,
     })
 }
 
@@ -246,11 +291,14 @@ mod tests {
     use crate::midi::assignment_metric::GENERAL_PURPOSE_PROFILE;
     use crate::midi::model::{
         AssignmentMode, AssignmentProvenanceDto, AssignmentReason, CrossImportComparisonRequestDto,
-        MatchDocumentRequestDto, MidiNoteDto, MidiVoiceDto, SeparationSummaryDto,
-        StrategySuggestionDto, TempoChangeDto, TimeSignatureDto, VoiceRoleDto,
-        ASSIGNMENT_ALGORITHM_VERSION,
+        MatchDocumentRequestDto, MidiNoteDto, MidiVoiceDto, RoundTripDifferenceKindDto,
+        RoundTripVerificationStatusDto, SeparationSummaryDto, StrategySuggestionDto,
+        TempoChangeDto, TimeSignatureDto, VoiceRoleDto, ASSIGNMENT_ALGORITHM_VERSION,
     };
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn note(id: &str, voice_id: &str, pitch: u8, start_tick: u64, end_tick: u64) -> MidiNoteDto {
         MidiNoteDto {
@@ -311,6 +359,14 @@ mod tests {
             .join("..")
             .join("fixtures")
             .join("two-note-smoke.mid")
+    }
+
+    fn unique_export_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("chiptune-voice-separator-{label}-{nonce}.mid"))
     }
 
     fn comparison_request(
@@ -495,9 +551,82 @@ mod tests {
 
         assert_eq!(result.note_count, 1);
         assert_eq!(result.track_count, 2);
+        assert_eq!(
+            result.verification.status,
+            RoundTripVerificationStatusDto::Verified
+        );
         assert!(path.exists());
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn export_midi_reports_crossing_duplicate_end_pairing_after_reading_the_written_file() {
+        let path = unique_export_path("crossing-duplicates");
+        let mut input = project();
+        input.notes = vec![
+            note("outer", "voice-1", 60, 0, 600),
+            note("inner", "voice-1", 60, 120, 480),
+        ];
+
+        let result = export_midi(path.display().to_string(), input)
+            .expect("crossing duplicates should still write");
+
+        assert_eq!(
+            result.verification.status,
+            RoundTripVerificationStatusDto::DifferencesFound
+        );
+        assert!(result.verification.differences.iter().any(|difference| {
+            difference.kind == RoundTripDifferenceKindDto::OverlappingDuplicatePairing
+        }));
+        std::fs::remove_file(path).expect("export should be removable");
+    }
+
+    #[test]
+    fn export_midi_reports_equal_duplicate_content_as_inconclusive() {
+        let path = unique_export_path("equal-duplicates");
+        let mut input = project();
+        input.notes = vec![
+            note("first", "voice-1", 60, 0, 480),
+            note("second", "voice-1", 60, 0, 480),
+        ];
+        input.voices[0].note_count = 2;
+
+        let result = export_midi(path.display().to_string(), input)
+            .expect("equal duplicate content should still write");
+
+        assert_eq!(
+            result.verification.status,
+            RoundTripVerificationStatusDto::Inconclusive
+        );
+        assert!(result.verification.differences.iter().any(|difference| {
+            difference.kind == RoundTripDifferenceKindDto::AmbiguousDuplicatePartition
+        }));
+        std::fs::remove_file(path).expect("export should be removable");
+    }
+
+    #[test]
+    fn export_midi_returns_could_not_verify_after_a_successful_write_without_mutating_input() {
+        let path = unique_export_path("readback-failure");
+        let input = project();
+        let original = input.clone();
+
+        let result = write_and_verify_midi_export(&path, input.clone(), |_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "injected readback failure",
+            ))
+        })
+        .expect("a readback failure should not hide a successful write");
+
+        assert_eq!(
+            result.verification.status,
+            RoundTripVerificationStatusDto::CouldNotVerify
+        );
+        assert!(result.verification.differences.is_empty());
+        assert!(path.exists());
+        assert_eq!(input, original);
+        std::fs::remove_file(path).expect("export should be removable");
     }
 
     #[test]

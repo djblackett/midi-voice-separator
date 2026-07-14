@@ -5,8 +5,9 @@
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M16, M18),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md`, the existing exporter/parser, and
   Feature 8's immutable/reference ownership boundary.
-- Status: Phases 0--B complete; the native readback command begins in Phase C
-  while Feature 6 manual acceptance and Feature 8 UI work remain outstanding.
+- Status: Phases 0--C1 complete; revision-scoped frontend handling begins in
+  C2 while Feature 6 manual acceptance and Feature 8 UI work remain
+  outstanding.
 
 ## 1. User outcome
 

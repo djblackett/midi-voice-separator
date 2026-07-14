@@ -1,7 +1,7 @@
 use super::{
     content_matching::{
         match_strict_notes, ContentMatchError, MatchDocument, NoteMatchPolicy,
-        StrictNoteMatchResult,
+        StrictNoteMatchResult, NOTE_CORRESPONDENCE_MATCHER_VERSION,
     },
     export_validation::export_project_diagnostics,
     model::{
@@ -82,6 +82,42 @@ pub(crate) fn strict_round_trip_verification_dto(
             .iter()
             .map(note_ref_dto)
             .collect(),
+    }
+}
+
+/// A successful write whose destination cannot subsequently be read, parsed,
+/// or compared still returns a complete, explicitly non-semantic result. It
+/// must never be mistaken for missing notes or an ordinary model difference.
+pub(crate) fn could_not_verify_round_trip_report(
+    expected: &MidiProjectDto,
+) -> RoundTripVerificationReportDto {
+    RoundTripVerificationReportDto {
+        verifier_version: ROUND_TRIP_VERIFIER_VERSION,
+        matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+        policy: NoteMatchPolicyDto::StrictRoundTripV1,
+        status: RoundTripVerificationStatusDto::CouldNotVerify,
+        note_summary: StrictNoteVerificationSummaryDto {
+            expected_note_count: expected.notes.len(),
+            reimported_note_count: 0,
+            exact_match_multiplicity: 0,
+            content_preserved: false,
+            ambiguous_exact_group_count: 0,
+            missing_expected: Vec::new(),
+            unexpected_reimported: Vec::new(),
+        },
+        voice_partition: VoicePartitionVerificationDto {
+            unambiguous_pair_count: 0,
+            ambiguous_duplicate_group_count: 0,
+            comparable: false,
+            preserved: false,
+        },
+        metadata: TimelineMetadataVerificationDto {
+            ppq_preserved: false,
+            duration_preserved: false,
+            tempo_map_preserved: false,
+            time_signatures_preserved: false,
+        },
+        differences: Vec::new(),
     }
 }
 

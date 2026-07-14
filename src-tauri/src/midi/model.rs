@@ -199,6 +199,9 @@ pub struct ExportMidiResultDto {
     pub path: String,
     pub track_count: usize,
     pub note_count: usize,
+    /// Every successful write carries a semantic result for the exact bytes
+    /// read back from the destination, including `CouldNotVerify`.
+    pub verification: RoundTripVerificationReportDto,
 }
 
 /// Versioned policy echoed by a note-correspondence response. The matching
@@ -458,8 +461,8 @@ pub struct RoundTripDifferenceDto {
 }
 
 /// Pure semantic verification of an expected materialized project against a
-/// reparsed export. The export command is wired in a later slice; this DTO is
-/// deliberately complete enough to make that transport thin and auditable.
+/// reparsed export. The export command transports this report after reading
+/// the exact bytes it wrote to the requested destination.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
