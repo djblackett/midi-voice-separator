@@ -5,8 +5,8 @@
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M16, M18),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md`, the existing exporter/parser, and
   Feature 8's immutable/reference ownership boundary.
-- Status: architecture drafted; pure backend preparation may begin while the
-  Feature 6 manual acceptance and Feature 8 UI work remain outstanding.
+- Status: Phases 0--B complete; the native readback command begins in Phase C
+  while Feature 6 manual acceptance and Feature 8 UI work remain outstanding.
 
 ## 1. User outcome
 
@@ -78,7 +78,7 @@ or represented in the report before a successful export can claim `Verified`:
 | Duplicate labels                          | Marked tracks retain duplicate labels exactly; generic imports still de-duplicate display labels.          | Preserve this split between app-export fidelity and generic-import orientation.                                                     |
 | Unlisted note voices                      | Exporter emits an `Unassigned` fallback track for unlisted IDs.                                            | Return the actual emitted track count; validation/report explicitly identifies the extra exported voice track.                      |
 | Zero-length notes                         | Exporter orders normal note-offs, zero-length note-on/off pairs, then normal note-ons at a shared tick.    | Preserve this ordering and verify the zero-length note multiset through parse/reimport.                                             |
-| Overlapping duplicate pitch/channel notes | FIFO reparse cannot in general preserve crossing end-pairings.                                             | Detect before export and report a specific unsupported/inconclusive partition fidelity issue; never mark `Verified`.                |
+| Overlapping duplicate pitch/channel notes | Preflight detects crossing pairs on a shared export track; FIFO reparse cannot preserve their end-pairing. | Report the exact affected notes as an unsupported/inconclusive partition fidelity issue; never mark `Verified` or order-pair them.  |
 
 The last item is a MIDI-event identity limitation, not a matcher weakness. No
 ordering change can uniquely recover arbitrary crossing equal pitch/channel

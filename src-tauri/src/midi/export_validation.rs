@@ -47,12 +47,19 @@ pub(crate) fn validate_export_project(
     validate_note_metadata(project)?;
     validate_timeline_metadata(project)?;
 
+    Ok(export_project_diagnostics(project))
+}
+
+/// Collects valid-but-unsupported export facts for a project that has already
+/// passed structural validation. The round-trip verifier consumes this pure
+/// diagnostic rather than guessing note occurrence identity from event order.
+pub(crate) fn export_project_diagnostics(project: &MidiProjectDto) -> ExportProjectPreflight {
     let listed_voice_ids: BTreeSet<&str> = project
         .voices
         .iter()
         .map(|voice| voice.id.as_str())
         .collect();
-    Ok(ExportProjectPreflight {
+    ExportProjectPreflight {
         unlisted_voice_ids: project
             .notes
             .iter()
@@ -62,7 +69,7 @@ pub(crate) fn validate_export_project(
             .into_iter()
             .collect(),
         crossing_duplicate_overlaps: crossing_duplicate_overlaps(project, &listed_voice_ids),
-    })
+    }
 }
 
 fn validate_ppq(project: &MidiProjectDto) -> Result<(), AppError> {

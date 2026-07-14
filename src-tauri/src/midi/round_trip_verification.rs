@@ -3,6 +3,7 @@ use super::{
         match_strict_notes, ContentMatchError, MatchDocument, NoteMatchPolicy,
         StrictNoteMatchResult,
     },
+    export_validation::export_project_diagnostics,
     model::{
         MidiProjectDto, NoteMatchPolicyDto, NoteRefDto, RoundTripDifferenceDto,
         RoundTripDifferenceKindDto, RoundTripVerificationReportDto, RoundTripVerificationStatusDto,
@@ -115,6 +116,24 @@ pub(crate) fn verify_round_trip_model(
         reimported,
         &strict.strict,
     );
+    for overlap in export_project_diagnostics(expected).crossing_duplicate_overlaps {
+        differences.push(RoundTripDifferenceDto {
+            kind: RoundTripDifferenceKindDto::OverlappingDuplicatePairing,
+            expected_notes: vec![
+                NoteRefDto {
+                    document_id: expected_document_id.to_string(),
+                    note_id: overlap.first_note_id,
+                },
+                NoteRefDto {
+                    document_id: expected_document_id.to_string(),
+                    note_id: overlap.second_note_id,
+                },
+            ],
+            reimported_notes: Vec::new(),
+            expected_voice_id: Some(overlap.first_voice_id),
+            reimported_voice_id: Some(overlap.second_voice_id),
+        });
+    }
 
     if !strict.strict.unmatched_left.is_empty() {
         differences.push(RoundTripDifferenceDto {
@@ -148,11 +167,23 @@ pub(crate) fn verify_round_trip_model(
     sort_differences(&mut differences);
 
     let has_known_difference = differences.iter().any(|difference| {
-        difference.kind != RoundTripDifferenceKindDto::AmbiguousDuplicatePartition
+        !matches!(
+            difference.kind,
+            RoundTripDifferenceKindDto::AmbiguousDuplicatePartition
+                | RoundTripDifferenceKindDto::OverlappingDuplicatePairing
+        )
     });
     let status = if !note_summary.content_preserved || has_known_difference {
         RoundTripVerificationStatusDto::DifferencesFound
-    } else if !voice_partition.comparable {
+    } else if !voice_partition.comparable
+        || differences.iter().any(|difference| {
+            matches!(
+                difference.kind,
+                RoundTripDifferenceKindDto::AmbiguousDuplicatePartition
+                    | RoundTripDifferenceKindDto::OverlappingDuplicatePairing
+            )
+        })
+    {
         RoundTripVerificationStatusDto::Inconclusive
     } else {
         RoundTripVerificationStatusDto::Verified
@@ -912,5 +943,33 @@ mod tests {
             report.differences[0].kind,
             RoundTripDifferenceKindDto::AmbiguousDuplicatePartition
         );
+    }
+
+    #[test]
+    fn reports_crossing_duplicate_end_pairing_as_inconclusive_without_pairing_it() {
+        let project = project(
+            480,
+            960,
+            vec![
+                note_in_voice("outer", "voice-1", 60, 0, 600),
+                note_in_voice("inner", "voice-1", 60, 120, 480),
+            ],
+            vec![voice("voice-1", "Lead", VoiceRoleDto::Melodic)],
+        );
+
+        let report =
+            verify_round_trip_model("expected-export", &project, "reimported-export", &project)
+                .expect("well-formed project should compare");
+
+        assert_eq!(report.status, RoundTripVerificationStatusDto::Inconclusive);
+        let difference = report
+            .differences
+            .iter()
+            .find(|difference| {
+                difference.kind == RoundTripDifferenceKindDto::OverlappingDuplicatePairing
+            })
+            .expect("crossing overlap should be reported");
+        assert_eq!(difference.expected_notes.len(), 2);
+        assert!(difference.reimported_notes.is_empty());
     }
 }
