@@ -1,4 +1,5 @@
 use super::model::MidiNoteDto;
+use std::collections::HashSet;
 
 /// Bump when a correspondence-policy change can alter match results.
 pub(crate) const NOTE_CORRESPONDENCE_MATCHER_VERSION: u32 = 1;
@@ -6,6 +7,7 @@ pub(crate) const NOTE_CORRESPONDENCE_MATCHER_VERSION: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoteMatchPolicy {
     StrictRoundTripV1,
+    CrossImportV1,
 }
 
 /// Side-qualified local address returned by correspondence. The address lets a
@@ -55,6 +57,35 @@ pub(crate) struct StrictNoteMatchResult {
     pub ambiguous_exact_groups: Vec<AmbiguousExactNoteGroup>,
     pub unmatched_left: Vec<MatchNoteRef>,
     pub unmatched_right: Vec<MatchNoteRef>,
+}
+
+/// Non-negative rational-quarter distance retained as a score component; no
+/// floating-point value can make a boundary decision drift across PPQs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RationalQuarterDistance {
+    pub numerator: u128,
+    pub denominator: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FuzzyNoteCandidate {
+    pub left: MatchNoteRef,
+    pub right: MatchNoteRef,
+    pub onset_distance: RationalQuarterDistance,
+    pub duration_distance: RationalQuarterDistance,
+    pub same_channel: bool,
+    pub velocity_difference: u8,
+}
+
+/// Exact-first candidate discovery for the future cross-import policy. B1
+/// intentionally discovers sparse scored edges only; B2 decides which unique
+/// candidates are safe to materialize as fuzzy pairs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CrossImportCandidateResult {
+    pub matcher_version: u32,
+    pub policy: NoteMatchPolicy,
+    pub exact: StrictNoteMatchResult,
+    pub fuzzy_candidates: Vec<FuzzyNoteCandidate>,
 }
 
 /// Exact, reduced position in quarter-note units. MIDI ticks are normalized
@@ -254,6 +285,139 @@ pub(crate) fn match_strict_notes(
         unmatched_left,
         unmatched_right,
     })
+}
+
+/// Finds tolerant cross-import candidates after exact content has been
+/// drained. A candidate requires identical pitch and onset/duration deltas no
+/// greater than one sixty-fourth of a quarter note; channel/velocity affect
+/// only its later score, not eligibility.
+pub(crate) fn discover_cross_import_candidates(
+    left: MatchDocument<'_>,
+    right: MatchDocument<'_>,
+) -> Result<CrossImportCandidateResult, ContentMatchError> {
+    let exact = match_strict_notes(
+        MatchDocument {
+            document_id: left.document_id,
+            ppq: left.ppq,
+            notes: left.notes,
+        },
+        MatchDocument {
+            document_id: right.document_id,
+            ppq: right.ppq,
+            notes: right.notes,
+        },
+    )?;
+    let consumed_left = consumed_note_ids(&exact, true);
+    let consumed_right = consumed_note_ids(&exact, false);
+    let left_notes = canonicalize_notes(left.notes, left.ppq)?;
+    let right_notes = canonicalize_notes(right.notes, right.ppq)?;
+    let mut fuzzy_candidates = Vec::new();
+
+    for left_note in left_notes
+        .iter()
+        .filter(|note| !consumed_left.contains(note.note_id.as_str()))
+    {
+        for right_note in right_notes
+            .iter()
+            .filter(|note| !consumed_right.contains(note.note_id.as_str()))
+        {
+            if left_note.atom.pitch != right_note.atom.pitch {
+                continue;
+            }
+            let onset_distance = rational_distance(
+                left_note.atom.start_quarters,
+                right_note.atom.start_quarters,
+            );
+            let duration_distance =
+                rational_distance_between(duration(left_note.atom), duration(right_note.atom));
+            if !within_cross_import_threshold(onset_distance)
+                || !within_cross_import_threshold(duration_distance)
+            {
+                continue;
+            }
+            fuzzy_candidates.push(FuzzyNoteCandidate {
+                left: note_ref(left.document_id, left_note),
+                right: note_ref(right.document_id, right_note),
+                onset_distance,
+                duration_distance,
+                same_channel: left_note.atom.channel == right_note.atom.channel,
+                velocity_difference: left_note.atom.velocity.abs_diff(right_note.atom.velocity),
+            });
+        }
+    }
+    fuzzy_candidates.sort_by(compare_fuzzy_candidates);
+
+    Ok(CrossImportCandidateResult {
+        matcher_version: NOTE_CORRESPONDENCE_MATCHER_VERSION,
+        policy: NoteMatchPolicy::CrossImportV1,
+        exact,
+        fuzzy_candidates,
+    })
+}
+
+fn consumed_note_ids(result: &StrictNoteMatchResult, left: bool) -> HashSet<&str> {
+    let pairs = result
+        .exact_pairs
+        .iter()
+        .map(|pair| if left { &pair.left } else { &pair.right });
+    let ambiguous = result.ambiguous_exact_groups.iter().flat_map(|group| {
+        if left {
+            group.left.iter()
+        } else {
+            group.right.iter()
+        }
+    });
+    pairs
+        .chain(ambiguous)
+        .map(|note| note.note_id.as_str())
+        .collect()
+}
+
+fn duration(atom: CanonicalNoteAtom) -> RationalQuarterDistance {
+    rational_distance(atom.end_quarters, atom.start_quarters)
+}
+
+fn rational_distance(left: RationalQuarter, right: RationalQuarter) -> RationalQuarterDistance {
+    let left_scaled = u128::from(left.numerator) * u128::from(right.denominator);
+    let right_scaled = u128::from(right.numerator) * u128::from(left.denominator);
+    RationalQuarterDistance {
+        numerator: left_scaled.abs_diff(right_scaled),
+        denominator: u128::from(left.denominator) * u128::from(right.denominator),
+    }
+}
+
+fn rational_distance_between(
+    left: RationalQuarterDistance,
+    right: RationalQuarterDistance,
+) -> RationalQuarterDistance {
+    RationalQuarterDistance {
+        numerator: (left.numerator * right.denominator)
+            .abs_diff(right.numerator * left.denominator),
+        denominator: left.denominator * right.denominator,
+    }
+}
+
+fn within_cross_import_threshold(distance: RationalQuarterDistance) -> bool {
+    distance.numerator * 64 <= distance.denominator
+}
+
+fn compare_fuzzy_candidates(
+    left: &FuzzyNoteCandidate,
+    right: &FuzzyNoteCandidate,
+) -> std::cmp::Ordering {
+    compare_distance(left.onset_distance, right.onset_distance)
+        .then_with(|| compare_distance(left.duration_distance, right.duration_distance))
+        .then_with(|| right.same_channel.cmp(&left.same_channel))
+        .then_with(|| left.velocity_difference.cmp(&right.velocity_difference))
+        .then_with(|| left.left.cmp(&right.left))
+        .then_with(|| left.right.cmp(&right.right))
+}
+
+fn compare_distance(
+    left: RationalQuarterDistance,
+    right: RationalQuarterDistance,
+) -> std::cmp::Ordering {
+    (left.numerator * right.denominator).cmp(&(right.numerator * left.denominator))
 }
 
 fn atom_group_end(notes: &[CanonicalNote], start: usize) -> usize {
@@ -648,5 +812,72 @@ mod tests {
                 unmatched_right: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn cross_import_accepts_the_inclusive_timing_boundary_but_rejects_the_next_tick() {
+        let left = vec![note("left", 0, 960)];
+        let at_boundary = vec![note("right", 15, 975)];
+        let beyond_boundary = vec![note("right", 16, 976)];
+
+        let accepted = discover_cross_import_candidates(
+            document("left", 960, &left),
+            document("right", 960, &at_boundary),
+        )
+        .unwrap();
+        let rejected = discover_cross_import_candidates(
+            document("left", 960, &left),
+            document("right", 960, &beyond_boundary),
+        )
+        .unwrap();
+
+        assert_eq!(accepted.policy, NoteMatchPolicy::CrossImportV1);
+        assert_eq!(accepted.fuzzy_candidates.len(), 1);
+        assert_eq!(accepted.fuzzy_candidates[0].onset_distance.numerator, 1);
+        assert_eq!(accepted.fuzzy_candidates[0].onset_distance.denominator, 64);
+        assert!(rejected.fuzzy_candidates.is_empty());
+    }
+
+    #[test]
+    fn cross_import_requires_equal_pitch_but_scores_channel_and_velocity() {
+        let left = vec![note("left", 0, 960)];
+        let mut compatible = note("right", 7, 967);
+        compatible.channel = 3;
+        compatible.velocity = 91;
+        let mut wrong_pitch = compatible.clone();
+        wrong_pitch.pitch += 1;
+
+        let compatible_result = discover_cross_import_candidates(
+            document("left", 960, &left),
+            document("right", 960, std::slice::from_ref(&compatible)),
+        )
+        .unwrap();
+        let wrong_pitch_result = discover_cross_import_candidates(
+            document("left", 960, &left),
+            document("right", 960, std::slice::from_ref(&wrong_pitch)),
+        )
+        .unwrap();
+
+        assert_eq!(compatible_result.fuzzy_candidates.len(), 1);
+        assert!(!compatible_result.fuzzy_candidates[0].same_channel);
+        assert_eq!(compatible_result.fuzzy_candidates[0].velocity_difference, 9);
+        assert!(wrong_pitch_result.fuzzy_candidates.is_empty());
+    }
+
+    #[test]
+    fn cross_import_drains_exact_pairs_before_discovering_nearby_candidates() {
+        let left = vec![note("exact-left", 0, 480), note("near-left", 960, 1440)];
+        let right = vec![note("exact-right", 0, 480), note("near-right", 968, 1448)];
+
+        let result = discover_cross_import_candidates(
+            document("left", 960, &left),
+            document("right", 960, &right),
+        )
+        .unwrap();
+
+        assert_eq!(result.exact.exact_pairs.len(), 1);
+        assert_eq!(result.fuzzy_candidates.len(), 1);
+        assert_eq!(result.fuzzy_candidates[0].left.note_id, "near-left");
+        assert_eq!(result.fuzzy_candidates[0].right.note_id, "near-right");
     }
 }
