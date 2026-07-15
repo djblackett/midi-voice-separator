@@ -5,8 +5,8 @@
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M16, M18),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md`, the existing exporter/parser, and
   Feature 8's immutable/reference ownership boundary.
-- Status: Phases 0--C3 complete. The user explicitly authorized C3 after Feature 8's automated
-  UI work completed, despite Feature 6's outstanding manual acceptance. D1--D2 remain; neither
+- Status: Phases 0--D1 complete. The user explicitly authorized C3 after Feature 8's automated
+  UI work completed, despite Feature 6's outstanding manual acceptance. D2 remains; neither
   Feature 6 nor Feature 9 manual acceptance is recorded by this implementation work.
 
 ### Implementation authorization (2026-07-15)
@@ -14,6 +14,13 @@
 The user requested that implementation continue despite the remaining manual checkpoints. That
 permits the C3/D1 automation work after Feature 8's C4/D1 UI boundary; it does **not** waive
 Feature 6 acceptance, Feature 8 D2 evidence, or Feature 9 D2 native/manual acceptance.
+
+### Execution record (2026-07-15)
+
+- C3 `b4b80e0` renders revision-current verification reports in the export/readiness area with
+  bounded application-model wording, details for categories, and no inconclusive-export lockout.
+- D1 covers verified, differences, inconclusive duplicate partitions, readback failure, and
+  stale-result removal in serial Chromium journeys. D2 native/manual evidence remains unclaimed.
 
 ## 1. User outcome
 
