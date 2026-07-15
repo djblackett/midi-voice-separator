@@ -192,7 +192,7 @@ through its D1 downstream-contract boundary (`CONTENT_BASED_NOTE_MATCHING_PLAN.m
 rational atoms, strict and conservative policies, coverage/ambiguity gates, a same-document
 adapter, fixtures, and proof that only trusted pairs can feed cross-import evidence.
 
-Feature 8 has completed phases 0.1--C4
+Feature 8 has completed phases 0.1--D1
 (`CROSS_IMPORT_DIFFING_PLAN.md`): immutable `ReferenceDocument` ownership, pair-driven voice
 correspondence, a side-qualified diff, `compare_external_midi`, a revision-guarded controller, and
 read-only projection. C2 wires the chooser and guarded external-reference lifecycle around the
@@ -200,8 +200,8 @@ materialized current editor; C3 presents policy/version, coverage, and side-qual
 without publishing a claim for incomparable input; C4 renders immutable current/reference/diff
 panes with side-qualified overlays and blocks reference-side mutations. The existing local-ID
 snapshot/A–B diff remains unchanged. The user authorized implementation before Feature 6 manual
-acceptance, but that acceptance and Feature 8 D2 native/manual evidence remain unclaimed. D1
-remains. Feature 9 has completed its backend and revision-state phases through C2
+acceptance, but that acceptance and Feature 8 D2 native/manual evidence remain unclaimed. Feature
+9 has completed its backend and revision-state phases through C2
 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`); its presentation still waits for Feature 8’s remaining
 UI.
 

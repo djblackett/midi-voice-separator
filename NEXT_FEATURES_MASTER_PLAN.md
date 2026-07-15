@@ -555,13 +555,13 @@ semantics.
 Exit gate: input ordering does not change matches; low coverage yields `incomparable`; strict
 and tolerant policies cannot be confused.
 
-### 8. Cross-import diffing — implementation through C4
+### 8. Cross-import diffing — implementation through D1
 
-Implementation design and commit-sized slices: `CROSS_IMPORT_DIFFING_PLAN.md`. Through C4, the
+Implementation design and commit-sized slices: `CROSS_IMPORT_DIFFING_PLAN.md`. Through D1, the
 app can choose, replace, retry, reopen, and close an immutable external MIDI reference while
 sending the current materialized editor project to the guarded native command, then present
 coverage-first diagnostics without unsafe reassignment claims, render read-only paired diff panes,
-and prevent reference-side input from mutating the working copy. D1--D2 remain; Feature 6 and
+and prevent reference-side input from mutating the working copy. D2 remains; Feature 6 and
 Feature 8 manual acceptance are still unrecorded.
 
 Required work:

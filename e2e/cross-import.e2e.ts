@@ -202,12 +202,21 @@ test("reports insufficient matcher coverage without publishing assignment or voi
   );
   await expect(summary).not.toContainText("Reassigned paired notes");
   await expect(summary).not.toContainText("Matched voices");
+  await expect(page.getByRole("button", { name: "Diff", exact: true })).toBeDisabled();
 
   await summary.getByText(/Ambiguity and unmatched notes/).click();
   await expect(summary).toContainText(/reference-ambiguous \(reference-\d+\)/);
   await expect(summary).toContainText("editable-ambiguous (A)");
   await expect(summary).toContainText("reference-only-1");
   await expect(summary).toContainText("editable-only-1 (A)");
+
+  await page.getByRole("button", { name: "Reference", exact: true }).click();
+  await expect(
+    page.getByLabel("External reference piano roll note visualization", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Read-only reference: editing, snapshots, export, and playback"),
+  ).toBeVisible();
 });
 
 test("renders external panes read-only and keeps reference pointer and shortcuts off the working copy", async ({

@@ -4,8 +4,8 @@
 - Date: 2026-07-15
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M17),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md` (Feature 7 handoff), and the existing A/B workspace.
-- Status: Phases 0.1--C4 are complete. The user explicitly authorized implementation to continue
-  before Feature 6 manual audio/ergonomics acceptance was recorded. D1--D2 remain;
+- Status: Phases 0.1--D1 are complete. The user explicitly authorized implementation to continue
+  before Feature 6 manual audio/ergonomics acceptance was recorded. D2 remains;
   that manual acceptance and Feature 8 D2 native/manual evidence are still unclaimed.
 
 ### Execution record (2026-07-14)
@@ -26,6 +26,9 @@
   applies changed-note cues only after side/document validation, and keeps reference pointer,
   keyboard, snapshot, export, and playback paths from mutating the working copy. It does not add
   reference playback.
+- D1 (2026-07-15) completes the serial Chromium journeys across comparable regenerated IDs,
+  replacement/close/retry/stale states, insufficient/duplicate ambiguity, and read-only
+  reference/diff/split-pane routing. Incomparable input proves the Diff action stays disabled.
 
 ### Implementation authorization (2026-07-15)
 
