@@ -612,10 +612,7 @@ mod tests {
         let original = input.clone();
 
         let result = write_and_verify_midi_export(&path, input.clone(), |_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "injected readback failure",
-            ))
+            Err(std::io::Error::other("injected readback failure"))
         })
         .expect("a readback failure should not hide a successful write");
 

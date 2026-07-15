@@ -278,6 +278,9 @@ mod tests {
         },
     };
 
+    type ProjectMutator = Box<dyn Fn(&mut MidiProjectDto)>;
+    type ValidationCase = (&'static str, ProjectMutator);
+
     fn note(id: &str, voice_id: &str, start_tick: u64, end_tick: u64) -> MidiNoteDto {
         MidiNoteDto {
             id: id.to_string(),
@@ -380,7 +383,7 @@ mod tests {
 
     #[test]
     fn rejects_note_values_that_the_encoder_would_clamp_or_reinterpret() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut MidiProjectDto)>)> = vec![
+        let cases: Vec<ValidationCase> = vec![
             (
                 "end before start",
                 Box::new(|project| project.notes[0].end_tick = 0),
@@ -411,7 +414,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_or_malformed_voice_and_note_addresses() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut MidiProjectDto)>)> = vec![
+        let cases: Vec<ValidationCase> = vec![
             (
                 "empty voice",
                 Box::new(|project| project.voices[0].id.clear()),
@@ -445,7 +448,7 @@ mod tests {
 
     #[test]
     fn rejects_timeline_metadata_that_would_be_coerced_or_reordered() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut MidiProjectDto)>)> = vec![
+        let cases: Vec<ValidationCase> = vec![
             (
                 "zero tempo",
                 Box::new(|project| project.tempo_changes[0].microseconds_per_quarter = 0),
