@@ -1,11 +1,12 @@
 # Detailed Plan: Cross-Import Diffing (Master-Plan Feature 8)
 
 - Repository: `chiptune-voice-separator`
-- Date: 2026-07-14
+- Date: 2026-07-15
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M17),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md` (Feature 7 handoff), and the existing A/B workspace.
-- Status: Phases 0.1--C1 are complete through `fa2417c`; C2--C4 UI and D1--D2 evidence remain
-  gated behind Feature 6 manual audio/ergonomics acceptance.
+- Status: Phases 0.1--C2 are complete. The user explicitly authorized implementation to continue
+  before Feature 6 manual audio/ergonomics acceptance was recorded. C3--C4 and D1--D2 remain;
+  that manual acceptance and Feature 8 D2 native/manual evidence are still unclaimed.
 
 ### Execution record (2026-07-14)
 
@@ -14,8 +15,16 @@
   side-qualified cross-import diff contract.
 - B1 `0a3b875` and B2 `6f82fef` added the native comparison command and revision-guarded
   controller; C1 `fa2417c` generalized pure comparison projection for a read-only reference pane.
-- None of those slices wire an App action or make the external project editable. C2--C4 remain
-  intentionally unstarted until the recorded manual Feature 6 checkpoint.
+- C2 (2026-07-15) wires the external MIDI chooser, materialized-project request, replacement,
+  close/reopen, retry, stale-result, file-name, and A/B-exclusion flow without making the
+  reference editable. Its serial browser coverage proves the materialized payload and preserves
+  the working editor through replacement, stale, and recoverable-error states.
+
+### Implementation authorization (2026-07-15)
+
+The user explicitly requested that implementation proceed despite the outstanding Feature 6 manual
+checkpoint. That permits the remaining implementation slices, but does **not** record Feature 6
+manual acceptance, Feature 8 D2 evidence, or Feature 9 acceptance.
 
 ## 1. Purpose and user outcome
 
@@ -45,8 +54,8 @@ overrides, snapshots, promotion, export, or replacement of the working import.
    that only unambiguous pairs can feed voice-overlap evidence and that `incomparable` cannot be
    converted to local-ID diff counts.
 2. Resolve Feature 6’s recorded fullscreen split-lane Playwright regression and record its manual
-   audio/ergonomics acceptance before beginning Feature 8 UI work. Pure contract preparation may
-   be reviewed beforehand, but does not waive that acceptance requirement.
+   audio/ergonomics acceptance before Feature 8 release acceptance. The user authorized
+   implementation to continue on 2026-07-15; that does not waive the manual acceptance or D2.
 3. Start every slice from a clean `git status --short`; do not bundle Feature 6 repair, Feature 7
    matcher retuning, or Feature 9 export changes into this plan.
 
@@ -75,8 +84,9 @@ Feature 7 is complete through D1 and Feature 8 has already consumed its bounded 
   `incomparable` for insufficient coverage.
 - Feature 8 owns the serializable match-result DTO and `compare_external_midi` command. The command
   returns an immutable reference plus derived data and does not mutate the working editor.
-- The revision-guarded controller and C1 projection are pure/unwired foundations. An external
-  reference remains absent from `App.tsx` until the gated C2 user-flow slice.
+- The revision-guarded controller and C1 projection are paired with the C2 lifecycle wiring in
+  `App.tsx`. The working editor remains the only rendered/editable project until C4 adds the
+  reference pane and its hard read-only authorization.
 
 The existing comparison implementation is intentionally not a suitable external-reference owner:
 

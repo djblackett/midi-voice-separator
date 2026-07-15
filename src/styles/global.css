@@ -778,6 +778,38 @@ button {
   font-size: 13px;
 }
 
+.external-reference-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.external-reference-status,
+.external-reference-error {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.external-reference-status {
+  color: #94a3b8;
+}
+
+.external-reference-error {
+  color: #fca5a5;
+}
+
+.external-reference-name {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .diff-summary-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(90px, 1fr));

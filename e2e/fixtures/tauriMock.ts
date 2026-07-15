@@ -5,6 +5,10 @@ import type {
   AssignmentMetricComponent,
   AssignmentMetricReport,
 } from "../../src/domain/midi/assignmentMetric";
+import type {
+  CrossImportComparisonRequest,
+  CrossImportComparisonResponse,
+} from "../../src/lib/tauri/commands";
 
 /**
  * Fakes the Tauri IPC boundary so Playwright can drive the real frontend
@@ -41,6 +45,9 @@ export interface TauriMockOptions {
   evaluateAssignment?: (
     request: AssignmentEvaluationRequest,
   ) => AssignmentMetricReport | Promise<AssignmentMetricReport>;
+  compareExternal?: (
+    request: CrossImportComparisonRequest,
+  ) => CrossImportComparisonResponse | Promise<CrossImportComparisonResponse>;
   importPath?: string;
   exportPath?: string;
   /** When set, `import_midi` rejects with this instead of resolving `importedProject`. */
@@ -49,6 +56,7 @@ export interface TauriMockOptions {
   exportError?: CommandError;
   /** When set, `reassign_voices` rejects with this instead of calling `reassign`. */
   reassignError?: CommandError;
+  compareExternalError?: CommandError;
 }
 
 export async function installFakeTauri(page: Page, options: TauriMockOptions): Promise<void> {
@@ -63,9 +71,23 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
       ? options.evaluateAssignment(request)
       : buildAssignmentMetricReport(request),
   );
+  await page.exposeFunction("__fakeCompareExternal", (request: CrossImportComparisonRequest) => {
+    if (!options.compareExternal) {
+      throw new Error("Unhandled fake external comparison");
+    }
+    return options.compareExternal(request);
+  });
 
   await page.addInitScript(
-    ({ importedProject, importPath, exportPath, importError, exportError, reassignError }) => {
+    ({
+      importedProject,
+      importPath,
+      exportPath,
+      importError,
+      exportError,
+      reassignError,
+      compareExternalError,
+    }) => {
       (
         window as unknown as { __TAURI_EVENT_PLUGIN_INTERNALS__: unknown }
       ).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -140,6 +162,16 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
               }
             ).__fakeEvaluateAssignment((args as { request: unknown }).request);
           }
+          if (cmd === "compare_external_midi") {
+            if (compareExternalError) {
+              throw compareExternalError;
+            }
+            return (
+              window as unknown as {
+                __fakeCompareExternal: (request: unknown) => Promise<unknown>;
+              }
+            ).__fakeCompareExternal((args as { request: unknown }).request);
+          }
           throw new Error(`Unhandled fake invoke: ${cmd}`);
         },
       };
@@ -151,6 +183,7 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
       importError: options.importError,
       exportError: options.exportError,
       reassignError: options.reassignError,
+      compareExternalError: options.compareExternalError,
     },
   );
 }

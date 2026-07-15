@@ -192,13 +192,15 @@ through its D1 downstream-contract boundary (`CONTENT_BASED_NOTE_MATCHING_PLAN.m
 rational atoms, strict and conservative policies, coverage/ambiguity gates, a same-document
 adapter, fixtures, and proof that only trusted pairs can feed cross-import evidence.
 
-Feature 8 has completed pure/native phases 0.1--C1
+Feature 8 has completed phases 0.1--C2
 (`CROSS_IMPORT_DIFFING_PLAN.md`): immutable `ReferenceDocument` ownership, pair-driven voice
 correspondence, a side-qualified diff, `compare_external_midi`, a revision-guarded controller, and
-read-only projection. Its C2--C4 UI and D1--D2 evidence are gated by Feature 6 manual acceptance.
-The existing local-ID snapshot/A–B diff remains unchanged. Feature 9 has completed its backend and
-revision-state phases through C2 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`); its presentation is
-likewise gated by Feature 6 manual acceptance and Feature 8 UI completion.
+read-only projection. C2 now wires the chooser and guarded external-reference lifecycle around the
+materialized current editor, while preserving the existing local-ID snapshot/A–B diff. The user
+authorized implementation before Feature 6 manual acceptance, but that acceptance and Feature 8
+D2 native/manual evidence remain unclaimed. C3--C4 and D1 remain. Feature 9 has completed its
+backend and revision-state phases through C2 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`); its
+presentation still waits for Feature 8’s remaining UI.
 
 ## Progress Log
 
@@ -2167,8 +2169,9 @@ The repo-wide `pnpm format:check` still flags only the pre-existing untouched
 Then run `pnpm tauri dev` and complete `MANUAL_TEST_CASES.md`'s **Voice-lane editing parity**
 section on sparse and dense files, especially source-row Brush preview, clipped-row Lasso feel,
 last-lane reachability, fullscreen, split A/B, audition by ear, and playhead alignment. Feature 6
-is implemented but not fully accepted until that manual result is recorded. Feature 8 and Feature 9
-must retain their existing UI gates until then.
+is implemented but not fully accepted until that manual result is recorded. The user has authorized
+Feature 8/9 implementation to continue, but neither feature may claim manual acceptance until its
+recorded checks are completed.
 
 ## Architecture Invariants
 

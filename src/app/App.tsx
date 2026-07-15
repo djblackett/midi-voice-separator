@@ -11,6 +11,7 @@ import {
 } from "../domain/midi/midiProject";
 import { MidiImportButton } from "../features/midi-import/MidiImportButton";
 import { selectAndImportMidi } from "../features/midi-import/importMidi";
+import { selectExternalComparisonMidi } from "../features/midi-import/selectExternalComparisonMidi";
 import { listenForMidiFileDrop } from "../features/midi-import/dropImport";
 import { MidiExportButton } from "../features/midi-export/MidiExportButton";
 import { selectAndExportMidi } from "../features/midi-export/exportMidi";
@@ -117,12 +118,14 @@ import {
 } from "./editorSnapshots";
 import {
   createComparisonWorkspace,
+  createExternalReferenceWorkspace,
   isEditingDisabledForComparison,
   materializeSnapshotProject,
   updateComparisonViewing,
   type ComparisonWorkspace,
   type CompareViewing,
 } from "./editorCompare";
+import { useCrossImportComparison } from "./editor/useCrossImportComparison";
 import {
   diffAssignments,
   formatConfidenceDelta,
@@ -223,6 +226,11 @@ const VOICE_LANES_BLOCK_RANGE_HINT_ID = "voice-lanes-block-range-hint";
 const RANGE_BLOCKS_VOICE_LANES_MESSAGE = "Exit Range markers before switching to Voice lanes.";
 const VOICE_LANES_BLOCK_RANGE_MESSAGE = "Switch to Piano roll before enabling Range markers.";
 
+function fileNameFromPath(path: string): string {
+  const pathSegments = path.split(/[\\/]/);
+  return pathSegments[pathSegments.length - 1] || path;
+}
+
 export default function App() {
   const [status, setStatus] = useState("Checking backend...");
   const [isImporting, setIsImporting] = useState(false);
@@ -316,6 +324,53 @@ export default function App() {
     () => materializeEditorProject({ project, voiceOverrides, voiceOrder, voiceLabels }),
     [project, voiceOverrides, voiceOrder, voiceLabels],
   );
+  const crossImportTarget = useMemo(
+    () =>
+      displayedProject
+        ? {
+            branchId: editorBranch.branchId,
+            documentId: editorDocument.documentId,
+            revision: editorDocument.revision,
+            project: displayedProject,
+          }
+        : null,
+    [displayedProject, editorBranch.branchId, editorDocument.documentId, editorDocument.revision],
+  );
+  const crossImportComparison = useCrossImportComparison(crossImportTarget);
+  const crossImportState = crossImportComparison.state;
+  const externalReferencePath =
+    crossImportState.reference?.sourcePath ??
+    (crossImportState.status === "idle" ? null : crossImportState.request.referencePath);
+  const externalReferenceName = externalReferencePath
+    ? fileNameFromPath(externalReferencePath)
+    : null;
+  const isExternalComparisonOpen = compareState?.kind === "externalReference";
+  const isExternalComparisonLoading = crossImportState.status === "loading";
+
+  useEffect(() => {
+    if (crossImportState.status !== "ready") {
+      return;
+    }
+
+    setCompareState((current) => {
+      if (current?.kind === "editableSnapshot") {
+        return current;
+      }
+      if (
+        current?.kind === "externalReference" &&
+        current.referenceDocumentId === crossImportState.reference.documentId
+      ) {
+        return current;
+      }
+      return createExternalReferenceWorkspace(crossImportState.reference.documentId, {
+        branchId: crossImportState.request.branchId,
+        documentId: crossImportState.request.documentId,
+        revision: crossImportState.request.revision,
+      });
+    });
+    setMonitorOverride(null);
+    setPendingCompareExit(false);
+  }, [crossImportState]);
   const selectedNotes = useMemo(
     () => displayedProject?.notes.filter((note) => selectedNoteIds.has(note.id)) ?? [],
     [displayedProject, selectedNoteIds],
@@ -918,6 +973,7 @@ export default function App() {
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
     setCompareState(null);
+    crossImportComparison.reset();
     resetSplitNavigation();
   }
 
@@ -1217,11 +1273,15 @@ export default function App() {
     setShowChangedNotes(false);
     setOnlyChangedNotes(false);
     setCompareState(null);
+    crossImportComparison.close();
     setMonitorOverride(null);
     resetSplitNavigation();
   }
 
   function handleStartCompare() {
+    if (compareState?.kind === "externalReference") {
+      return;
+    }
     const target = namedSnapshots.find((snapshot) => snapshot.id === diffTargetId);
     if (!target) {
       return;
@@ -1244,6 +1304,28 @@ export default function App() {
     setSelectedNoteIds(new Set());
     setSoloVoiceId(null);
     setOnlyChangedNotes(false);
+    resetSplitNavigation();
+  }
+
+  async function handleStartExternalComparison() {
+    if (!displayedProject || editorBranchB) {
+      return;
+    }
+
+    try {
+      const referencePath = await selectExternalComparisonMidi();
+      if (referencePath !== null) {
+        await crossImportComparison.load(referencePath);
+      }
+    } catch (commandError) {
+      setError(toAppCommandError(commandError));
+    }
+  }
+
+  function handleCloseExternalComparison() {
+    crossImportComparison.close();
+    setCompareState((current) => (current?.kind === "externalReference" ? null : current));
+    setMonitorOverride(null);
     resetSplitNavigation();
   }
 
@@ -2480,6 +2562,77 @@ export default function App() {
               </select>
             </label>
           </div>
+          {!isExternalComparisonOpen ? (
+            <div className="external-reference-controls" aria-label="External MIDI comparison">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleStartExternalComparison()}
+                disabled={
+                  isExternalComparisonLoading ||
+                  editorBranchB !== null ||
+                  isImporting ||
+                  isExporting ||
+                  isReassigning
+                }
+                title={
+                  editorBranchB
+                    ? "Exit A/B compare before loading an external MIDI reference."
+                    : undefined
+                }
+              >
+                {isExternalComparisonLoading
+                  ? "Comparing external MIDI…"
+                  : crossImportState.reference
+                    ? "Replace external MIDI…"
+                    : "Compare external MIDI…"}
+              </button>
+              {crossImportState.status === "idle" && crossImportState.reference ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void crossImportComparison.retry()}
+                  disabled={editorBranchB !== null || isImporting || isExporting || isReassigning}
+                >
+                  Reopen external reference
+                </button>
+              ) : null}
+              {isExternalComparisonLoading && externalReferenceName ? (
+                <span className="external-reference-status" role="status">
+                  Comparing {externalReferenceName}…
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {editorBranchB ? (
+            <p className="diff-summary-note">
+              Exit A/B compare before loading an external MIDI reference.
+            </p>
+          ) : null}
+          {crossImportState.status === "error" ? (
+            <p className="external-reference-error" role="alert">
+              External MIDI comparison failed: {crossImportState.message}
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void crossImportComparison.retry()}
+              >
+                Retry external MIDI
+              </button>
+            </p>
+          ) : null}
+          {crossImportState.status === "outOfDate" ? (
+            <p className="external-reference-status" role="status">
+              The external comparison is out of date after an editor change.
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void crossImportComparison.retry()}
+              >
+                Recompute external match
+              </button>
+            </p>
+          ) : null}
           {!diffTargetId ? (
             <p className="diff-summary-empty">Choose a snapshot above to see what changed.</p>
           ) : !assignmentDiffResult ? (
@@ -2555,10 +2708,15 @@ export default function App() {
                 </label>
               </div>
               <div className="compare-controls" aria-label="A/B compare preview controls">
-                {compareState ? (
+                {compareState?.kind === "editableSnapshot" ? (
                   <p className="compare-active-hint">
                     A/B compare active — use the A / B / Diff toggle above the piano roll to switch
                     views.
+                  </p>
+                ) : isExternalComparisonOpen ? (
+                  <p className="compare-active-hint">
+                    An external reference is active — close it above the piano roll before starting
+                    A/B compare.
                   </p>
                 ) : (
                   <button
@@ -2735,7 +2893,7 @@ export default function App() {
       >
         {displayedProject ? (
           <section className="piano-roll-toolbar">
-            {compareState ? (
+            {compareState?.kind === "editableSnapshot" ? (
               <div className="compare-toolbar-group" aria-label="A/B compare preview controls">
                 <div className="compare-view-toggle" role="group" aria-label="Compare view">
                   {(isSplitLayout ? (["A", "B"] as const) : (["A", "B", "diff"] as const)).map(
@@ -2858,6 +3016,29 @@ export default function App() {
                     </button>
                   </>
                 )}
+              </div>
+            ) : compareState?.kind === "externalReference" && externalReferenceName ? (
+              <div className="compare-toolbar-group" aria-label="External reference controls">
+                <span className="external-reference-name">
+                  External reference: {externalReferenceName}
+                </span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void handleStartExternalComparison()}
+                  disabled={isExternalComparisonLoading}
+                >
+                  {isExternalComparisonLoading
+                    ? "Replacing external MIDI…"
+                    : "Replace external MIDI…"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleCloseExternalComparison}
+                >
+                  Close external comparison
+                </button>
               </div>
             ) : null}
             <button
