@@ -127,6 +127,12 @@ import {
 } from "./editorCompare";
 import { useCrossImportComparison } from "./editor/useCrossImportComparison";
 import {
+  describeCrossImportIncomparable,
+  formatCorrespondenceNoteRef,
+  formatMatcherCoverage,
+  formatTrustedPairCoverage,
+} from "./editor/crossImportSummary";
+import {
   diffAssignments,
   formatConfidenceDelta,
   formatOnlyInOneSideSummary,
@@ -2632,6 +2638,122 @@ export default function App() {
                 Recompute external match
               </button>
             </p>
+          ) : null}
+          {crossImportState.status === "ready" ? (
+            <section className="cross-import-summary" aria-label="External MIDI comparison summary">
+              <div className="cross-import-summary-header">
+                <div>
+                  <h3>External MIDI comparison</h3>
+                  <p>{externalReferenceName ?? "External reference"}</p>
+                </div>
+                <span>
+                  Policy {crossImportState.diff.matcher.policy} · matcher v
+                  {crossImportState.diff.matcher.matcherVersion}
+                </span>
+              </div>
+              <div className="cross-import-coverage-grid">
+                <div>
+                  <h4>Reference matcher coverage</h4>
+                  <p>{formatMatcherCoverage(crossImportState.diff.matcher.referenceCoverage)}</p>
+                </div>
+                <div>
+                  <h4>Current matcher coverage</h4>
+                  <p>{formatMatcherCoverage(crossImportState.diff.matcher.editableCoverage)}</p>
+                </div>
+                <div>
+                  <h4>Reference trusted-pair coverage</h4>
+                  <p>
+                    {formatTrustedPairCoverage(crossImportState.diff.trustedPairCoverage.reference)}
+                  </p>
+                </div>
+                <div>
+                  <h4>Current trusted-pair coverage</h4>
+                  <p>
+                    {formatTrustedPairCoverage(crossImportState.diff.trustedPairCoverage.editable)}
+                  </p>
+                </div>
+              </div>
+              {crossImportState.diff.comparable ? (
+                <dl className="cross-import-assignment-stats">
+                  <div>
+                    <dt>Reassigned paired notes</dt>
+                    <dd>{crossImportState.diff.changedPairs.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Matched voices</dt>
+                    <dd>{crossImportState.diff.matchedVoices.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Current-only voices</dt>
+                    <dd>{crossImportState.diff.addedEditableVoices.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Reference-only voices</dt>
+                    <dd>{crossImportState.diff.removedReferenceVoices.length}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="cross-import-incomparable">
+                  {describeCrossImportIncomparable(crossImportState.diff)}
+                </p>
+              )}
+              <details className="cross-import-diagnostics">
+                <summary>
+                  Ambiguity and unmatched notes (
+                  {crossImportState.response.correspondence.ambiguous.length} groups,{" "}
+                  {crossImportState.response.correspondence.unmatchedReference.length} reference,{" "}
+                  {crossImportState.response.correspondence.unmatchedEditable.length} current)
+                </summary>
+                {crossImportState.response.correspondence.ambiguous.length > 0 ? (
+                  <ul>
+                    {crossImportState.response.correspondence.ambiguous.map((group, index) => (
+                      <li key={group.kind + "-" + index}>
+                        <strong>{group.kind}</strong>: reference{" "}
+                        {group.reference.map(formatCorrespondenceNoteRef).join(", ") || "none"};
+                        current{" "}
+                        {group.editable.map(formatCorrespondenceNoteRef).join(", ") || "none"}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>No ambiguous note groups.</p>
+                )}
+                <div className="cross-import-unmatched">
+                  <div>
+                    <h4>Reference-only notes</h4>
+                    {crossImportState.response.correspondence.unmatchedReference.length > 0 ? (
+                      <ul>
+                        {crossImportState.response.correspondence.unmatchedReference.map(
+                          (reference) => (
+                            <li key={reference.documentId + "-" + reference.noteId}>
+                              {formatCorrespondenceNoteRef(reference)}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    ) : (
+                      <p>None.</p>
+                    )}
+                  </div>
+                  <div>
+                    <h4>Current-only notes</h4>
+                    {crossImportState.response.correspondence.unmatchedEditable.length > 0 ? (
+                      <ul>
+                        {crossImportState.response.correspondence.unmatchedEditable.map(
+                          (reference) => (
+                            <li key={reference.documentId + "-" + reference.noteId}>
+                              {formatCorrespondenceNoteRef(reference)}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    ) : (
+                      <p>None.</p>
+                    )}
+                  </div>
+                </div>
+              </details>
+            </section>
           ) : null}
           {!diffTargetId ? (
             <p className="diff-summary-empty">Choose a snapshot above to see what changed.</p>

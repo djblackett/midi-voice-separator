@@ -4,8 +4,8 @@
 - Date: 2026-07-15
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M17),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md` (Feature 7 handoff), and the existing A/B workspace.
-- Status: Phases 0.1--C2 are complete. The user explicitly authorized implementation to continue
-  before Feature 6 manual audio/ergonomics acceptance was recorded. C3--C4 and D1--D2 remain;
+- Status: Phases 0.1--C3 are complete. The user explicitly authorized implementation to continue
+  before Feature 6 manual audio/ergonomics acceptance was recorded. C4 and D1--D2 remain;
   that manual acceptance and Feature 8 D2 native/manual evidence are still unclaimed.
 
 ### Execution record (2026-07-14)
@@ -15,10 +15,13 @@
   side-qualified cross-import diff contract.
 - B1 `0a3b875` and B2 `6f82fef` added the native comparison command and revision-guarded
   controller; C1 `fa2417c` generalized pure comparison projection for a read-only reference pane.
-- C2 (2026-07-15) wires the external MIDI chooser, materialized-project request, replacement,
+- C2 `225777f` wires the external MIDI chooser, materialized-project request, replacement,
   close/reopen, retry, stale-result, file-name, and A/B-exclusion flow without making the
   reference editable. Its serial browser coverage proves the materialized payload and preserves
   the working editor through replacement, stale, and recoverable-error states.
+- C3 (2026-07-15) adds the coverage-first diagnostic summary. It displays policy/version, matcher
+  and trusted-pair coverage, side-qualified ambiguity/unmatched-note diagnostics, and
+  incomparable reasons. Reassignment and voice counts render only after both coverage gates pass.
 
 ### Implementation authorization (2026-07-15)
 

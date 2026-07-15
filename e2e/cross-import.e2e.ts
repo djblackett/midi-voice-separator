@@ -82,6 +82,12 @@ test("loads the materialized editor as an immutable external reference, replaces
 
   await page.getByRole("button", { name: "Compare external MIDI…" }).click();
   await expect(page.getByText("External reference: regenerated.mid")).toBeVisible();
+  const summary = page.getByLabel("External MIDI comparison summary");
+  await expect(summary).toContainText("Policy CROSS_IMPORT_V1 · matcher v1");
+  await expect(summary).toContainText("Reference matcher coverage");
+  await expect(summary).toContainText("2 total · 2 exact · 0 fuzzy · 0 ambiguous · 0 unmatched");
+  await expect(summary).toContainText("Reference trusted-pair coverage");
+  await expect(summary).toContainText("Reassigned paired notes");
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]?.editable).toEqual({
     documentId: "A",
@@ -145,4 +151,61 @@ test("keeps the loaded reference and working editor through stale and failed rep
   await page.getByRole("button", { name: "Retry external MIDI" }).click();
   await expect(page.getByRole("alert")).toBeHidden();
   await expect(page.getByText("External reference: regenerated.mid")).toBeVisible();
+});
+
+test("reports insufficient matcher coverage without publishing assignment or voice counts", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: editableProject,
+    importPath: "C:/references/unrelated.mid",
+    compareExternal: (request) => {
+      const response = comparisonResponse(request);
+      return {
+        ...response,
+        correspondence: {
+          ...response.correspondence,
+          comparable: false,
+          incomparableReason: "INSUFFICIENT_COVERAGE",
+          referenceCoverage: { total: 4, exact: 1, fuzzy: 0, ambiguous: 1, unmatched: 2 },
+          editableCoverage: { total: 4, exact: 1, fuzzy: 0, ambiguous: 1, unmatched: 2 },
+          exactPairs: [response.correspondence.exactPairs[0]!],
+          ambiguous: [
+            {
+              kind: "DUPLICATE_EXACT",
+              reference: [
+                { documentId: request.referenceDocumentId, noteId: "reference-ambiguous" },
+              ],
+              editable: [{ documentId: request.editable.documentId, noteId: "editable-ambiguous" }],
+            },
+          ],
+          unmatchedReference: [
+            { documentId: request.referenceDocumentId, noteId: "reference-only-1" },
+            { documentId: request.referenceDocumentId, noteId: "reference-only-2" },
+          ],
+          unmatchedEditable: [
+            { documentId: request.editable.documentId, noteId: "editable-only-1" },
+            { documentId: request.editable.documentId, noteId: "editable-only-2" },
+          ],
+        },
+      };
+    },
+  });
+  await page.goto("/");
+  await importFixture(page);
+
+  await page.getByRole("button", { name: "Compare external MIDI…" }).click();
+  const summary = page.getByLabel("External MIDI comparison summary");
+  await expect(summary).toContainText("4 total · 1 exact · 0 fuzzy · 1 ambiguous · 2 unmatched");
+  await expect(summary).toContainText(
+    "The matcher found too little related note coverage to compare assignments.",
+  );
+  await expect(summary).not.toContainText("Reassigned paired notes");
+  await expect(summary).not.toContainText("Matched voices");
+
+  await summary.getByText(/Ambiguity and unmatched notes/).click();
+  await expect(summary).toContainText(/reference-ambiguous \(reference-\d+\)/);
+  await expect(summary).toContainText("editable-ambiguous (A)");
+  await expect(summary).toContainText("reference-only-1");
+  await expect(summary).toContainText("editable-only-1 (A)");
 });
