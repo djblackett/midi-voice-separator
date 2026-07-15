@@ -201,9 +201,10 @@ without publishing a claim for incomparable input; C4 renders immutable current/
 panes with side-qualified overlays and blocks reference-side mutations. The existing local-ID
 snapshot/A–B diff remains unchanged. The user authorized implementation before Feature 6 manual
 acceptance, but that acceptance and Feature 8 D2 native/manual evidence remain unclaimed. Feature
-9 has completed its backend and revision-state phases through C2
-(`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`); its presentation still waits for Feature 8’s remaining
-UI.
+9 has completed through C3 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`): the revision-scoped result
+now renders concise, application-model-only verification details and replaces the pre-export
+manual-reimport reminder for that exact revision without disabling export for an inconclusive
+report. Feature 9 D1 browser coverage and D2 native/manual evidence remain.
 
 ## Progress Log
 

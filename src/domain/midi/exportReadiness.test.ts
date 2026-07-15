@@ -172,6 +172,21 @@ describe("buildExportReadinessSummary", () => {
       ]),
     );
   });
+
+  it("removes the pre-export manual reminder once the exact revision has a verification report", () => {
+    const summary = buildExportReadinessSummary({
+      project: project([]),
+      reviewProgress: { flaggedCount: 0, reviewedCount: 0, remainingCount: 0 },
+      baselineDiff: null,
+      lockedNoteIds: new Set(),
+      hasCurrentVerification: true,
+    });
+
+    expect(summary.findings).not.toContainEqual(
+      expect.objectContaining({ id: "manual-reimport-check" }),
+    );
+    expect(formatExportReadinessStatus(summary)).toBe("Export readiness: no blocking checks.");
+  });
 });
 
 describe("formatExportReadinessStatus", () => {
@@ -194,7 +209,14 @@ describe("formatExportReadinessStatus", () => {
     expect(
       formatExportReadinessStatus({
         status: "info",
-        findings: [{ id: "c", severity: "info", label: "C", detail: "C" }],
+        findings: [
+          {
+            id: "manual-reimport-check",
+            severity: "info",
+            label: "Round trip",
+            detail: "Manual reimport reminder",
+          },
+        ],
       }),
     ).toBe(
       "Export readiness: no blocking checks. Review the manual reimport reminder after export.",

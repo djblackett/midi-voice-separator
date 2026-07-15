@@ -98,6 +98,7 @@ import {
   retainExportVerificationForTarget,
   type ExportVerificationState,
 } from "./editor/exportVerificationState";
+import { presentExportVerification } from "./editor/exportVerificationPresentation";
 import {
   resolveComparisonProjection,
   singleLayoutSide,
@@ -331,6 +332,9 @@ export default function App() {
     revision: editorDocument.revision,
   };
   const visibleExportResult = retainExportVerificationForTarget(exportResult, currentExportTarget);
+  const exportVerificationPresentation = visibleExportResult
+    ? presentExportVerification(visibleExportResult.report)
+    : null;
   useEffect(() => {
     setExportResult((current) => retainExportVerificationForTarget(current, currentExportTarget));
   }, [currentExportTarget.branchId, currentExportTarget.documentId, currentExportTarget.revision]);
@@ -551,8 +555,9 @@ export default function App() {
         baselineDiff:
           assignmentDiffResult && assignmentDiffResult.comparable ? assignmentDiffResult : null,
         lockedNoteIds: new Set(Object.keys(voiceOverrides)),
+        hasCurrentVerification: visibleExportResult !== null,
       }),
-    [displayedProject, reviewProgress, assignmentDiffResult, voiceOverrides],
+    [displayedProject, reviewProgress, assignmentDiffResult, voiceOverrides, visibleExportResult],
   );
   const smartFixSuggestions = useMemo(
     () =>
@@ -2164,10 +2169,52 @@ export default function App() {
       ) : null}
 
       {visibleExportResult ? (
-        <section className="export-success" aria-live="polite">
-          Exported {visibleExportResult.noteCount} notes across {visibleExportResult.trackCount}{" "}
-          tracks to {visibleExportResult.exportPath}.
-        </section>
+        <>
+          <section className="export-success" aria-live="polite">
+            Exported {visibleExportResult.noteCount} notes across {visibleExportResult.trackCount}{" "}
+            tracks to {visibleExportResult.exportPath}.
+          </section>
+          {exportVerificationPresentation ? (
+            <section
+              className={
+                "export-verification export-verification-" + exportVerificationPresentation.tone
+              }
+              aria-label="Export round-trip verification"
+              aria-live="polite"
+            >
+              <div className="export-verification-header">
+                <div>
+                  <h2>{exportVerificationPresentation.heading}</h2>
+                  <p>{exportVerificationPresentation.summary}</p>
+                </div>
+                <span className="export-verification-versions">
+                  Verifier v{visibleExportResult.report.verifierVersion} · strict matcher v
+                  {visibleExportResult.report.matcherVersion}
+                </span>
+              </div>
+              <ul className="export-verification-facts">
+                <li>{exportVerificationPresentation.noteContent}</li>
+                <li>{exportVerificationPresentation.voicePartition}</li>
+                <li>{exportVerificationPresentation.metadata}</li>
+              </ul>
+              {exportVerificationPresentation.retryExportSuggestion ? (
+                <p className="export-verification-retry">
+                  {exportVerificationPresentation.retryExportSuggestion}
+                </p>
+              ) : null}
+              {exportVerificationPresentation.differenceSummary ? (
+                <details className="export-verification-differences">
+                  <summary>{exportVerificationPresentation.differenceSummary}</summary>
+                  <ul>
+                    {exportVerificationPresentation.differenceKinds.map((kind) => (
+                      <li key={kind}>{kind}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {displayedProject ? (

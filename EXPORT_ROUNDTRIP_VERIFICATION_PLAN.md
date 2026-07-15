@@ -5,8 +5,15 @@
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M16, M18),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md`, the existing exporter/parser, and
   Feature 8's immutable/reference ownership boundary.
-- Status: Phases 0--C2 complete; C3 presentation remains gated behind Feature
-  6 manual acceptance and Feature 8 UI work.
+- Status: Phases 0--C3 complete. The user explicitly authorized C3 after Feature 8's automated
+  UI work completed, despite Feature 6's outstanding manual acceptance. D1--D2 remain; neither
+  Feature 6 nor Feature 9 manual acceptance is recorded by this implementation work.
+
+### Implementation authorization (2026-07-15)
+
+The user requested that implementation continue despite the remaining manual checkpoints. That
+permits the C3/D1 automation work after Feature 8's C4/D1 UI boundary; it does **not** waive
+Feature 6 acceptance, Feature 8 D2 evidence, or Feature 9 D2 native/manual acceptance.
 
 ## 1. User outcome
 
@@ -37,10 +44,10 @@ or equivalence to an arbitrary external import.
 2. The backend-only audit, validation, exporter/parser repair, verifier, and
    IPC slices may proceed independently. They do not alter Feature 8's
    read-only comparison workspace.
-3. The export-panel UI and browser/manual journeys wait for the recorded
+3. The export-panel UI and browser/manual journeys normally wait for the recorded
    Feature 6 fullscreen/audio acceptance and Feature 8's C2--C4 UI completion.
-   This prevents another large App/canvas interaction change while the existing
-   browser regression is unresolved.
+   The user authorized C3/D1 automation on 2026-07-15 after Feature 8 C4/D1 completed; this
+   does not waive either feature's remaining manual evidence.
 4. Begin every slice from a clean `git status --short`. Do not bundle Feature 8
    UI, matcher-policy tuning, or a broad MIDI metadata importer into this plan.
 

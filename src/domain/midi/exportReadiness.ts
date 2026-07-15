@@ -23,6 +23,8 @@ export interface ExportReadinessInput {
   reviewProgress: ReviewProgress;
   baselineDiff: AssignmentDiff | null;
   lockedNoteIds: ReadonlySet<string>;
+  /** A report for this exact revision replaces the pre-export manual reminder. */
+  hasCurrentVerification?: boolean;
 }
 
 function isGenericVoiceLabel(voice: MidiVoice, index: number): boolean {
@@ -53,6 +55,7 @@ export function buildExportReadinessSummary({
   reviewProgress,
   baselineDiff,
   lockedNoteIds,
+  hasCurrentVerification = false,
 }: ExportReadinessInput): ExportReadinessSummary {
   if (!project) {
     return { status: "ok", findings: [] };
@@ -128,13 +131,15 @@ export function buildExportReadinessSummary({
     });
   }
 
-  findings.push({
-    id: "manual-reimport-check",
-    severity: "info",
-    label: "Round trip",
-    detail:
-      "After export, reimport the MIDI manually to confirm track layout and note identity by ear/inspection.",
-  });
+  if (!hasCurrentVerification) {
+    findings.push({
+      id: "manual-reimport-check",
+      severity: "info",
+      label: "Round trip",
+      detail:
+        "After export, reimport the MIDI manually to confirm track layout and note identity by ear/inspection.",
+    });
+  }
 
   return {
     status: findings.length > 0 ? highestSeverity(findings) : "ok",
@@ -145,7 +150,9 @@ export function buildExportReadinessSummary({
 export function formatExportReadinessStatus(summary: ExportReadinessSummary): string {
   const warningCount = summary.findings.filter((finding) => finding.severity === "warning").length;
   if (warningCount === 0) {
-    return "Export readiness: no blocking checks. Review the manual reimport reminder after export.";
+    return summary.findings.some((finding) => finding.id === "manual-reimport-check")
+      ? "Export readiness: no blocking checks. Review the manual reimport reminder after export."
+      : "Export readiness: no blocking checks.";
   }
   return `Export readiness: ${warningCount} advisory check${warningCount === 1 ? "" : "s"} to review before export.`;
 }

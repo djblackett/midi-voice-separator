@@ -8,6 +8,7 @@ import type {
 import type {
   CrossImportComparisonRequest,
   CrossImportComparisonResponse,
+  RoundTripVerificationReport,
 } from "../../src/lib/tauri/commands";
 
 /**
@@ -50,6 +51,8 @@ export interface TauriMockOptions {
   ) => CrossImportComparisonResponse | Promise<CrossImportComparisonResponse>;
   importPath?: string;
   exportPath?: string;
+  /** Report returned by `export_midi`; defaults to a verified report for the mock project. */
+  exportVerification?: RoundTripVerificationReport;
   /** When set, `import_midi` rejects with this instead of resolving `importedProject`. */
   importError?: CommandError;
   /** When set, `export_midi` rejects with this instead of resolving a success result. */
@@ -83,6 +86,7 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
       importedProject,
       importPath,
       exportPath,
+      exportVerification,
       importError,
       exportError,
       reassignError,
@@ -136,6 +140,34 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
               path: exportPath,
               trackCount: project.voices.length + 1,
               noteCount: project.notes.length,
+              verification: exportVerification ?? {
+                verifierVersion: 1,
+                matcherVersion: 1,
+                policy: "STRICT_ROUND_TRIP_V1",
+                status: "VERIFIED",
+                noteSummary: {
+                  expectedNoteCount: project.notes.length,
+                  reimportedNoteCount: project.notes.length,
+                  exactMatchMultiplicity: project.notes.length,
+                  contentPreserved: true,
+                  ambiguousExactGroupCount: 0,
+                  missingExpected: [],
+                  unexpectedReimported: [],
+                },
+                voicePartition: {
+                  unambiguousPairCount: project.notes.length,
+                  ambiguousDuplicateGroupCount: 0,
+                  comparable: true,
+                  preserved: true,
+                },
+                metadata: {
+                  ppqPreserved: true,
+                  durationPreserved: true,
+                  tempoMapPreserved: true,
+                  timeSignaturesPreserved: true,
+                },
+                differences: [],
+              },
             };
           }
           if (cmd === "reassign_voices") {
@@ -180,6 +212,7 @@ export async function installFakeTauri(page: Page, options: TauriMockOptions): P
       importedProject: options.importedProject,
       importPath,
       exportPath,
+      exportVerification: options.exportVerification,
       importError: options.importError,
       exportError: options.exportError,
       reassignError: options.reassignError,

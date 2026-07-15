@@ -208,6 +208,7 @@ button {
 
 .inline-error,
 .warnings,
+.export-verification,
 .export-readiness,
 .voice-legend,
 .voice-diagnostics,
@@ -237,6 +238,78 @@ button {
   background: #052e16;
   color: #bbf7d0;
   padding: 10px 12px;
+}
+
+.export-verification {
+  border: 1px solid #15803d;
+  background: #052e16;
+  color: #bbf7d0;
+}
+
+.export-verification-warning {
+  border-color: #a16207;
+  background: #1f1a0d;
+  color: #fde68a;
+}
+
+.export-verification-danger {
+  border-color: #c2410c;
+  background: #431407;
+  color: #fed7aa;
+}
+
+.export-verification-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.export-verification h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 15px;
+}
+
+.export-verification p,
+.export-verification-versions {
+  margin: 2px 0 0;
+  color: inherit;
+  font-size: 12px;
+}
+
+.export-verification-versions {
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.export-verification-facts {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.export-verification-differences {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.export-verification-retry {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.export-verification-differences summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.export-verification-differences ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
 }
 
 .export-readiness {

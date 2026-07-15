@@ -59,6 +59,13 @@ test.describe("export", () => {
     await expect(successBanner).toContainText("2 notes");
     await expect(successBanner).toContainText("3 tracks"); // 2 voices + conductor track
     await expect(successBanner).toContainText("C:/fake/song-voices.mid");
+
+    const verification = page.getByLabel("Export round-trip verification");
+    await expect(verification).toContainText("Verified application model");
+    await expect(verification).toContainText("The written file preserved the modeled MIDI data.");
+    await expect(verification).toContainText("Note content: preserved");
+    await expect(verification).toContainText("Voice partition: preserved");
+    await expect(page.getByLabel("Export readiness summary")).not.toContainText("Round trip");
   });
 
   test("a failed export shows the error banner", async ({ page }) => {
