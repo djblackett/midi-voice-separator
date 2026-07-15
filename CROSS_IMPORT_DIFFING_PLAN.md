@@ -29,6 +29,9 @@
 - D1 (2026-07-15) completes the serial Chromium journeys across comparable regenerated IDs,
   replacement/close/retry/stale states, insufficient/duplicate ambiguity, and read-only
   reference/diff/split-pane routing. Incomparable input proves the Diff action stays disabled.
+- Partial D2 native automation (2026-07-15) exercises real Tauri/WebView IPC: an app export
+  compares back as a comparable immutable reference, while a pitch-shifted export is
+  INSUFFICIENT_COVERAGE. Manual pane/readability/interaction evidence remains unclaimed.
 
 ### Implementation authorization (2026-07-15)
 

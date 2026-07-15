@@ -204,8 +204,9 @@ acceptance, but that acceptance and Feature 8 D2 native/manual evidence remain u
 9 has completed through C3 (`EXPORT_ROUNDTRIP_VERIFICATION_PLAN.md`): the revision-scoped result
 now renders concise, application-model-only verification details and replaces the pre-export
 manual-reimport reminder for that exact revision without disabling export for an inconclusive
-report. Feature 9 D1 browser coverage now covers every verdict and stale-state removal; only D2
-native/manual evidence remains.
+report. Feature 9 D1 browser coverage now covers every verdict and stale-state removal. The native
+WebView bridge additionally proves real export verification plus comparable/unrelated external
+comparison IPC; Feature 8/9 D2 manual evidence remains.
 
 ## Progress Log
 

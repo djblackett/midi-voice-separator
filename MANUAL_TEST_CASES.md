@@ -320,6 +320,47 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
 
 - Reimport the exported file through the native **Import MIDI** dialog → every note and voice track returns, labels remain meaningful, and the app shows no unexpected warnings.
 
+## Cross-import comparison (Feature 8 acceptance)
+
+- Import a MIDI, make one visible voice reassignment, then click **Compare external MIDI…** and
+  select a related regenerated/exported MIDI → the working assignment stays in place; the
+  comparison names the external file and shows policy, matcher coverage, and trusted-pair coverage
+  before any reassignment or voice summary.
+- In a comparable result, switch **Current**, **Reference**, and **Diff** → Current is editable,
+  Reference says read-only, and Diff is read-only. The reference canvas has its own notes/labels;
+  changed-note cues never appear on an unrelated current note.
+- In **Reference** and **Diff**, try a canvas click, 1–9, Undo/Redo, snapshot controls, Export,
+  and Play → none can mutate or play the reference. Return to **Current** and confirm normal
+  editing/export/playback remains available.
+- Click **Split view** → current and external reference appear side by side with readable pane
+  labels; scroll, zoom, and inspect both. Confirm the current document remains the only editable
+  side and no unexpected audio source starts.
+- Edit Current after a successful match → the comparison clearly becomes out of date. Use
+  **Recompute external match** → the result returns for the new revision. Replace, close, and
+  reopen the reference → the working document and snapshots remain intact.
+- Compare an unrelated MIDI → coverage/ambiguity diagnostics remain visible, but reassignment and
+  matched-voice counts are absent and **Diff** is disabled. Check that the unrelated reference can
+  still be inspected without becoming editable.
+
+## Export round-trip verification (Feature 9 acceptance)
+
+- Export a normal corrected project → the export confirmation is followed by green **Verified
+  application model**, with note-content, voice-partition, and timeline-metadata facts. This is
+  semantic application-model verification, not a byte-identical or audio-quality claim.
+- Reimport that written file through the native **Import MIDI** dialog and listen/inspect it → the
+  expected notes, voice labels/roles, and timeline behavior remain sensible by ear and visually.
+- Export a project with zero-length notes, empty/percussion voices, and duplicate labels → verify
+  the report's outcome and details match what is visible after reimport; do not treat a successful
+  write as proof that unsupported source MIDI fields were preserved.
+- Export a fixture with crossing duplicate pitch/channel notes → expect **Inconclusive** or an
+  explicit duplicate-pairing diagnostic, never an invented Verified partition claim. Export
+  remains available for an inconclusive result.
+- If **Differences found** appears, expand the category disclosure and inspect each named
+  supported-model difference. If red **Could not verify written file** appears, confirm the write
+  path is shown and retry after checking the destination; it is not the same as a write failure.
+- Make one correction after any report → the report disappears for the old revision and the
+  pre-export readiness reminder returns until the next export.
+
 ## Cross-cutting / edge cases
 
 - All of the above while a low-confidence/flagged note is selected — confirm
@@ -331,7 +372,12 @@ them with a real MIDI file loaded. Each line is a "do this, expect that."
   a time → state at each step matches what was actually done, in reverse
   order.
 
-## Pending Feature 6 acceptance
+## Historical Feature 6 acceptance note (superseded)
+
+> Superseded on 2026-07-15: the fullscreen split-lane regression below was fixed, and the current
+> automated gates pass (612 unit tests and 117 serial Chromium tests). The Feature 6 checklist
+> still needs a human sparse/dense lane and audition pass. The Feature 8 and Feature 9 sections
+> above likewise need manual acceptance despite the now-passing real Tauri/WebView IPC coverage.
 
 Feature 6 implementation and the available non-browser gates are complete: `pnpm test` passed 562
 unit tests, lint/typecheck/build passed, and Playwright discovery found 108 tests (106 before the

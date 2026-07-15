@@ -21,6 +21,9 @@ Feature 6 acceptance, Feature 8 D2 evidence, or Feature 9 D2 native/manual accep
   bounded application-model wording, details for categories, and no inconclusive-export lockout.
 - D1 covers verified, differences, inconclusive duplicate partitions, readback failure, and
   stale-result removal in serial Chromium journeys. D2 native/manual evidence remains unclaimed.
+- Partial D2 native automation runs export_midi through a compiled Tauri/WebView bridge and
+  proves a real written file reports VERIFIED. The fixture/manual matrix and listening check
+  remain unclaimed.
 
 ## 1. User outcome
 
