@@ -98,7 +98,11 @@ import {
   retainExportVerificationForTarget,
   type ExportVerificationState,
 } from "./editor/exportVerificationState";
-import { resolveComparisonProjection, type SideProjection } from "./editor/comparisonProjection";
+import {
+  resolveComparisonProjection,
+  singleLayoutSide,
+  type ComparisonPaneProjection,
+} from "./editor/comparisonProjection";
 import { resolveLinkedLaneTarget } from "./editor/laneViewportLink";
 import { resolveKeyboardCommand, type KeyboardCommandId } from "./keyboard/keyboardCommands";
 import { useComparisonEditor } from "./editor/useComparisonEditor";
@@ -124,6 +128,7 @@ import {
   updateComparisonViewing,
   type ComparisonWorkspace,
   type CompareViewing,
+  type ReferenceCompareViewing,
 } from "./editorCompare";
 import { useCrossImportComparison } from "./editor/useCrossImportComparison";
 import {
@@ -139,6 +144,7 @@ import {
   formatPercussionDelta,
   toDiffSide,
 } from "../domain/midi/assignmentDiff";
+import { resolveCrossImportPaneOverlay } from "./editor/crossImportPaneOverlay";
 import { buildTempoMap, tickToSeconds } from "../domain/midi/tempoMap";
 import {
   buildExportReadinessSummary,
@@ -198,6 +204,7 @@ const FLAGGED_PLAYBACK_WINDOW_TICKS = 960;
 
 /** Identity presentation map (single side plays with its own per-voice timbre). */
 const EMPTY_PRESENTATION_KEYS: ReadonlyMap<string, string> = new Map();
+const EMPTY_NOTE_IDS: ReadonlySet<string> = new Set();
 
 /** Voice ids are side-local; correspondence is the only safe cross-side lookup. */
 function mapVoiceIdAcrossSides(
@@ -289,6 +296,7 @@ export default function App() {
   const [linkedLaneReveal, setLinkedLaneReveal] = useState<SplitLinkedLaneReveal | null>(null);
   const [laneLinkStatus, setLaneLinkStatus] = useState<string | null>(null);
   const linkedLaneRequestSequence = useRef(0);
+  const referenceKeyboardLockRef = useRef(false);
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false);
 
   useEffect(() => {
@@ -352,6 +360,17 @@ export default function App() {
     : null;
   const isExternalComparisonOpen = compareState?.kind === "externalReference";
   const isExternalComparisonLoading = crossImportState.status === "loading";
+  const externalComparisonDiff =
+    crossImportState.status === "ready" && crossImportState.diff.comparable
+      ? crossImportState.diff
+      : null;
+  const canShowExternalDiff = externalComparisonDiff !== null;
+  const externalReferenceProjection = crossImportState.reference
+    ? {
+        reference: crossImportState.reference,
+        diff: externalComparisonDiff,
+      }
+    : null;
 
   useEffect(() => {
     if (crossImportState.status !== "ready") {
@@ -377,6 +396,18 @@ export default function App() {
     setMonitorOverride(null);
     setPendingCompareExit(false);
   }, [crossImportState]);
+
+  useEffect(() => {
+    if (compareState?.kind !== "externalReference") {
+      referenceKeyboardLockRef.current = false;
+      return;
+    }
+    if (crossImportState.status !== "ready" && compareState.viewing === "diff") {
+      setCompareState((current) =>
+        current?.kind === "externalReference" ? { ...current, viewing: "current" } : current,
+      );
+    }
+  }, [compareState, crossImportState.status]);
   const selectedNotes = useMemo(
     () => displayedProject?.notes.filter((note) => selectedNoteIds.has(note.id)) ?? [],
     [displayedProject, selectedNoteIds],
@@ -545,7 +576,7 @@ export default function App() {
     return targetSide?.assignments ?? new Map<string, string>();
   }, [diffReference]);
   const isDiffPreview = compareState?.viewing === "diff";
-  const pianoRollChangedNoteIds = useMemo(() => {
+  const pianoRollChangedNoteIdsFromSnapshot = useMemo(() => {
     if (
       (!showChangedNotes && !isDiffPreview) ||
       !assignmentDiffResult ||
@@ -559,8 +590,8 @@ export default function App() {
     assignmentDiffResult !== null &&
     assignmentDiffResult.comparable &&
     assignmentDiffResult.changedNoteIds.length > 0;
-  const pianoRollOnlyChangedNotes =
-    showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIds.size > 0;
+  const pianoRollOnlyChangedNotesFromSnapshot =
+    showChangedNotes && onlyChangedNotes && pianoRollChangedNoteIdsFromSnapshot.size > 0;
   const isCompareReadOnly = isEditingDisabledForComparison(compareState, editorActiveSide);
   // Side B is "dirty" once it has been edited past its fork; its history is
   // empty at fork and gains an entry per committed edit (undoing back to the
@@ -575,8 +606,9 @@ export default function App() {
       resolveComparisonProjection(
         { activeSide: editorActiveSide, A: editorBranchA, B: editorBranchB },
         compareState,
+        externalReferenceProjection,
       ),
-    [editorActiveSide, editorBranchA, editorBranchB, compareState],
+    [editorActiveSide, editorBranchA, editorBranchB, compareState, externalReferenceProjection],
   );
   const isSplitLayout = comparisonProjection.visibleSides.length === 2;
   const verticalNavigationAxisLabel = pianoRollViewMode === "voice-lanes" ? "Lanes" : "Pitch";
@@ -596,8 +628,21 @@ export default function App() {
   // The canvas always renders the active side's own materialized document:
   // switching the A/B toggle switches the active branch, so `displayedProject`
   // already is the viewed side.
-  const pianoRollProject = displayedProject;
-  const pianoRollSoloVoiceId = soloVoiceId;
+  const singleComparisonPane = singleLayoutSide(comparisonProjection);
+  const singlePaneOverlay =
+    compareState?.kind === "externalReference"
+      ? resolveCrossImportPaneOverlay(externalComparisonDiff, {
+          side: singleComparisonPane.kind === "reference" ? "reference" : "editable",
+          documentId: singleComparisonPane.document.documentId,
+        })
+      : null;
+  const pianoRollProject = singleComparisonPane.project;
+  const pianoRollSoloVoiceId = singleComparisonPane.kind === "reference" ? null : soloVoiceId;
+  const pianoRollChangedNoteIds =
+    singlePaneOverlay?.changedNoteIds ?? pianoRollChangedNoteIdsFromSnapshot;
+  const pianoRollPreviousVoiceId = singlePaneOverlay?.previousVoiceId ?? changedNotePreviousVoiceId;
+  const pianoRollOnlyChangedNotes =
+    singlePaneOverlay === null ? pianoRollOnlyChangedNotesFromSnapshot : false;
   const flaggedNoteIdSet = useMemo(
     () => new Set(flaggedNotes.map((note) => note.id)),
     [flaggedNotes],
@@ -854,6 +899,9 @@ export default function App() {
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (referenceKeyboardLockRef.current) {
+        return;
+      }
       const target = event.target;
       const focusInEditableField =
         target instanceof HTMLInputElement ||
@@ -1192,7 +1240,7 @@ export default function App() {
   }
 
   function handleSaveSnapshot() {
-    if (!project) {
+    if (!project || isCompareReadOnly) {
       return;
     }
     const name = snapshotNameDraft.trim();
@@ -1226,6 +1274,9 @@ export default function App() {
   // next "Re-run separation" honors -- see editorSnapshots.ts C4. The
   // whole restore travels through one undoable editor transaction.
   function handleRestoreSnapshot(snapshot: NamedSnapshot) {
+    if (isCompareReadOnly) {
+      return;
+    }
     const restored = restoreEditorState(snapshot);
     dispatchEditorCommand({
       kind: "restoreDocument",
@@ -1244,12 +1295,18 @@ export default function App() {
   }
 
   function handleRenameSnapshot(id: string, name: string) {
+    if (isCompareReadOnly) {
+      return;
+    }
     setNamedSnapshots((current) =>
       current.map((entry) => (entry.id === id ? { ...entry, name } : entry)),
     );
   }
 
   function handleDeleteSnapshot(id: string) {
+    if (isCompareReadOnly) {
+      return;
+    }
     setNamedSnapshots((current) => current.filter((entry) => entry.id !== id));
     if (diffTargetId === id) {
       setDiffTargetId("");
@@ -1265,6 +1322,9 @@ export default function App() {
   // a snapshot deliberately leaves the Strategy/Search/Max-voices selectors
   // alone, since those are UI preferences, not corrigible editor state.
   function handleUseSnapshotSettings(snapshot: NamedSnapshot) {
+    if (isCompareReadOnly) {
+      return;
+    }
     setSeparationStrategy(snapshot.rerunSettings.strategy);
     setAssignmentMode(snapshot.rerunSettings.assignmentMode);
     setMaxVoiceCountInput(
@@ -1333,6 +1393,18 @@ export default function App() {
     setCompareState((current) => (current?.kind === "externalReference" ? null : current));
     setMonitorOverride(null);
     resetSplitNavigation();
+  }
+
+  function handleSetExternalReferenceViewing(viewing: ReferenceCompareViewing) {
+    setCompareState((current) =>
+      current?.kind === "externalReference" ? updateComparisonViewing(current, viewing) : current,
+    );
+    referenceKeyboardLockRef.current = viewing === "reference";
+    setPendingCompareExit(false);
+    setInteractionMode("select");
+    setSelectedNoteIds(new Set());
+    setSoloVoiceId(null);
+    setMonitorOverride(null);
   }
 
   // The A/B toggle doubles as the active-side switch: viewing A or B makes that
@@ -1406,14 +1478,21 @@ export default function App() {
     }
   }
 
-  // Toggle between the single A/B/Diff canvas and the two-pane split. Leaving
-  // split forces the diff-free single canvas onto the active side.
+  // Toggle between a single canvas and a two-pane split. The external target
+  // always returns to its editable current view when leaving split.
   function handleToggleSplitLayout() {
     setCompareState((current) =>
       current?.kind === "editableSnapshot"
         ? { ...current, layout: current.layout === "split" ? "single" : "split", viewing: "A" }
-        : current,
+        : current?.kind === "externalReference"
+          ? {
+              ...current,
+              layout: current.layout === "split" ? "single" : "split",
+              viewing: "current",
+            }
+          : current,
     );
+    referenceKeyboardLockRef.current = false;
     setEditorActiveSide("A");
     setInteractionMode("select");
     setSelectedNoteIds(new Set());
@@ -1439,56 +1518,86 @@ export default function App() {
     setEditorActiveSide(side);
   }
 
-  // One split pane, driven entirely by its projection. Only the active side is
-  // editable; clicking any pane activates it. Both panes share the global
-  // selection, so selecting a note highlights it in both (shared note ids).
-  function renderComparisonPane(sideProjection: SideProjection) {
-    const { side, editable } = sideProjection;
+  /** Renders either an editable branch or the immutable external reference. */
+  function renderComparisonPane(paneProjection: ComparisonPaneProjection) {
+    const { side, editable } = paneProjection;
+    const isReferencePane = paneProjection.kind === "reference";
+    const paneOverlay =
+      compareState?.kind === "externalReference"
+        ? resolveCrossImportPaneOverlay(externalComparisonDiff, {
+            side: isReferencePane ? "reference" : "editable",
+            documentId: paneProjection.document.documentId,
+          })
+        : null;
     const viewLabel = pianoRollViewMode === "voice-lanes" ? "voice lane" : "piano roll";
-    const paneSoloVoiceId = mapVoiceIdAcrossSides(
-      soloVoiceId,
-      editorActiveSide,
-      side,
-      comparisonProjection.correspondence,
-    );
+    const paneSoloVoiceId =
+      paneProjection.kind === "editable"
+        ? mapVoiceIdAcrossSides(
+            soloVoiceId,
+            editorActiveSide,
+            paneProjection.side,
+            comparisonProjection.correspondence,
+          )
+        : null;
     return (
       <div
         key={side}
         role="group"
-        aria-label={`Side ${side} ${viewLabel}${editable ? " (editing)" : ""}`}
-        className={editable ? "editor-pane editor-pane-active" : "editor-pane"}
-        onPointerDownCapture={() => handleActivateSide(side)}
+        aria-label={
+          isReferencePane
+            ? "External reference " + viewLabel + " (read-only)"
+            : "Side " + side + " " + viewLabel + (editable ? " (editing)" : "")
+        }
+        className={
+          isReferencePane
+            ? "editor-pane editor-pane-reference"
+            : editable
+              ? "editor-pane editor-pane-active"
+              : "editor-pane"
+        }
+        data-reference-pane={isReferencePane ? "true" : undefined}
+        onPointerDownCapture={
+          paneProjection.kind === "editable"
+            ? () => handleActivateSide(paneProjection.side)
+            : undefined
+        }
       >
         <div className="editor-pane-label">
-          Side {side}
-          {side === "A" ? " · Current" : " · Draft"}
-          {editable ? " · editing" : ""}
+          {isReferencePane
+            ? "External reference · read-only"
+            : "Side " +
+              side +
+              (side === "A" ? " · Current" : " · Draft") +
+              (editable ? " · editing" : "")}
         </div>
         <PianoRoll
-          project={sideProjection.project}
-          presentationKeyByVoiceId={sideProjection.presentationKeyByVoiceId}
-          selectedNoteIds={selectedNoteIds}
+          project={paneProjection.project}
+          presentationKeyByVoiceId={paneProjection.presentationKeyByVoiceId}
+          selectedNoteIds={isReferencePane ? EMPTY_NOTE_IDS : selectedNoteIds}
           onSelectionChange={editable ? setSelectedNoteIds : () => {}}
           soloVoiceId={paneSoloVoiceId}
-          interactionMode={interactionMode}
-          activeVoiceId={activeVoiceId}
-          onPaintNotes={handlePaintNotes}
+          interactionMode={isReferencePane ? "select" : interactionMode}
+          activeVoiceId={isReferencePane ? null : activeVoiceId}
+          onPaintNotes={editable ? handlePaintNotes : () => {}}
           paintTool={paintTool}
           brushRadius={brushRadius}
           onBrushRadiusChange={setBrushRadius}
           wandReach={wandReach}
-          onAssignNotes={handleAssignNotesToVoice}
-          onSelectVoice={handleSelectVoiceSwatch}
-          onAuditionNotes={handleAuditionNotes}
+          onAssignNotes={editable ? handleAssignNotesToVoice : () => {}}
+          onSelectVoice={editable ? handleSelectVoiceSwatch : () => {}}
+          onAuditionNotes={editable ? handleAuditionNotes : () => {}}
           confidenceHeatmap={isConfidenceHeatOn}
-          pitchMarkers={pitchMarkers}
-          onPitchMarkersChange={setPitchMarkers}
+          pitchMarkers={isReferencePane ? [] : pitchMarkers}
+          onPitchMarkersChange={editable ? setPitchMarkers : () => {}}
           currentPlaybackTick={playback.currentTick}
           isPlaying={playback.isPlaying}
-          onSeek={playback.seek}
+          onSeek={editable ? playback.seek : () => {}}
+          changedNoteIds={paneOverlay?.changedNoteIds}
+          previousVoiceId={paneOverlay?.previousVoiceId}
           readOnly={!editable}
           viewMode={pianoRollViewMode}
-          accessibleLabelPrefix={`Side ${side}`}
+          accessibleLabelPrefix={isReferencePane ? "External reference" : "Side " + side}
+          referencePane={isReferencePane}
           timeViewport={splitTimeViewport}
           onTimeViewportChange={setSplitTimeViewport}
           pitchViewport={
@@ -1499,10 +1608,25 @@ export default function App() {
               ? setSplitPitchViewport
               : undefined
           }
-          laneViewport={splitLaneViewports[side]}
-          onLaneViewportChange={(next) => handleSplitLaneViewportChange(side, next)}
-          onLaneNavigationAnchor={(voiceId) => handleSplitLaneNavigationAnchor(side, voiceId)}
-          linkedLaneReveal={linkedLaneReveal?.targetSide === side ? linkedLaneReveal : null}
+          laneViewport={
+            paneProjection.kind === "editable" ? splitLaneViewports[paneProjection.side] : undefined
+          }
+          onLaneViewportChange={
+            paneProjection.kind === "editable"
+              ? (next) => handleSplitLaneViewportChange(paneProjection.side, next)
+              : undefined
+          }
+          onLaneNavigationAnchor={
+            paneProjection.kind === "editable"
+              ? (voiceId) => handleSplitLaneNavigationAnchor(paneProjection.side, voiceId)
+              : undefined
+          }
+          linkedLaneReveal={
+            paneProjection.kind === "editable" &&
+            linkedLaneReveal?.targetSide === paneProjection.side
+              ? linkedLaneReveal
+              : null
+          }
         />
       </div>
     );
@@ -1958,7 +2082,14 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      onPointerDownCapture={(event) => {
+        const target = event.target;
+        referenceKeyboardLockRef.current =
+          target instanceof Element && target.closest("[data-reference-pane='true']") !== null;
+      }}
+    >
       {isDragOver ? (
         <div className="drop-overlay" role="status" aria-live="polite">
           <p>Drop to import MIDI file</p>
@@ -2472,8 +2603,14 @@ export default function App() {
                 value={snapshotNameDraft}
                 onChange={(event) => setSnapshotNameDraft(event.target.value)}
                 aria-label="New snapshot name"
+                disabled={isCompareReadOnly}
               />
-              <button type="button" className="secondary-button" onClick={handleSaveSnapshot}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleSaveSnapshot}
+                disabled={isCompareReadOnly}
+              >
                 Save snapshot
               </button>
             </div>
@@ -2493,6 +2630,7 @@ export default function App() {
                         className="snapshot-name-input"
                         value={snapshot.name}
                         onChange={(event) => handleRenameSnapshot(snapshot.id, event.target.value)}
+                        disabled={isCompareReadOnly}
                         aria-label={`Rename snapshot ${snapshot.name}`}
                       />
                       <span>{formatSnapshotSummary(snapshot)}</span>
@@ -2502,6 +2640,7 @@ export default function App() {
                         type="button"
                         className="secondary-button"
                         onClick={() => handleUseSnapshotSettings(snapshot)}
+                        disabled={isCompareReadOnly}
                       >
                         Use these settings
                       </button>
@@ -2517,6 +2656,7 @@ export default function App() {
                         type="button"
                         className="secondary-button"
                         onClick={() => handleDeleteSnapshot(snapshot.id)}
+                        disabled={isCompareReadOnly}
                       >
                         Delete
                       </button>
@@ -3003,7 +3143,11 @@ export default function App() {
           aria-live="polite"
           aria-hidden={isCompareReadOnly ? undefined : "true"}
         >
-          Read-only preview: editing is disabled in the diff view. Switch to A or B to edit.
+          {compareState?.kind === "externalReference"
+            ? compareState.viewing === "reference"
+              ? "Read-only reference: editing, snapshots, export, and playback stay on the current document."
+              : "Read-only diff preview: select Current to resume editing."
+            : "Read-only preview: editing is disabled in the diff view. Switch to A or B to edit."}
         </section>
       ) : null}
 
@@ -3144,6 +3288,43 @@ export default function App() {
                 <span className="external-reference-name">
                   External reference: {externalReferenceName}
                 </span>
+                {!isSplitLayout ? (
+                  <div
+                    className="compare-view-toggle"
+                    role="group"
+                    aria-label="External reference view"
+                  >
+                    {(["current", "reference", "diff"] as const).map((viewing) => (
+                      <button
+                        key={viewing}
+                        type="button"
+                        className={
+                          compareState.viewing === viewing
+                            ? "secondary-button active"
+                            : "secondary-button"
+                        }
+                        onClick={() => handleSetExternalReferenceViewing(viewing)}
+                        aria-pressed={compareState.viewing === viewing ? "true" : "false"}
+                        disabled={viewing === "diff" && !canShowExternalDiff}
+                      >
+                        {viewing === "current"
+                          ? "Current"
+                          : viewing === "reference"
+                            ? "Reference"
+                            : "Diff"}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className={isSplitLayout ? "secondary-button active" : "secondary-button"}
+                  onClick={handleToggleSplitLayout}
+                  aria-pressed={isSplitLayout ? "true" : "false"}
+                  title="Show the current document beside the external reference"
+                >
+                  {isSplitLayout ? "Single view" : "Split view"}
+                </button>
                 <button
                   type="button"
                   className="secondary-button"
@@ -3543,40 +3724,76 @@ export default function App() {
         ) : null}
 
         <section className="editor-grid">
-          {isSplitLayout && comparisonProjection.sideB ? (
-            <div className="editor-split" aria-label="Split comparison of sides A and B">
+          {isSplitLayout && (comparisonProjection.sideB || comparisonProjection.reference) ? (
+            <div
+              className="editor-split"
+              aria-label={
+                comparisonProjection.reference
+                  ? "Split comparison of current document and external reference"
+                  : "Split comparison of sides A and B"
+              }
+            >
               {renderComparisonPane(comparisonProjection.sideA)}
-              {renderComparisonPane(comparisonProjection.sideB)}
+              {comparisonProjection.sideB
+                ? renderComparisonPane(comparisonProjection.sideB)
+                : comparisonProjection.reference
+                  ? renderComparisonPane(comparisonProjection.reference)
+                  : null}
             </div>
           ) : (
             <PianoRoll
               project={pianoRollProject}
-              selectedNoteIds={selectedNoteIds}
-              onSelectionChange={isCompareReadOnly ? () => {} : setSelectedNoteIds}
+              presentationKeyByVoiceId={singleComparisonPane.presentationKeyByVoiceId}
+              selectedNoteIds={
+                singleComparisonPane.kind === "reference" ? EMPTY_NOTE_IDS : selectedNoteIds
+              }
+              onSelectionChange={
+                isCompareReadOnly || singleComparisonPane.kind === "reference"
+                  ? () => {}
+                  : setSelectedNoteIds
+              }
               soloVoiceId={pianoRollSoloVoiceId}
-              interactionMode={interactionMode}
-              activeVoiceId={activeVoiceId}
-              onPaintNotes={handlePaintNotes}
+              interactionMode={
+                singleComparisonPane.kind === "reference" ? "select" : interactionMode
+              }
+              activeVoiceId={singleComparisonPane.kind === "reference" ? null : activeVoiceId}
+              onPaintNotes={singleComparisonPane.kind === "reference" ? () => {} : handlePaintNotes}
               paintTool={paintTool}
               brushRadius={brushRadius}
               onBrushRadiusChange={setBrushRadius}
               wandReach={wandReach}
-              onAssignNotes={handleAssignNotesToVoice}
-              onSelectVoice={handleSelectVoiceSwatch}
-              onAuditionNotes={handleAuditionNotes}
+              onAssignNotes={
+                singleComparisonPane.kind === "reference" ? () => {} : handleAssignNotesToVoice
+              }
+              onSelectVoice={
+                singleComparisonPane.kind === "reference" ? () => {} : handleSelectVoiceSwatch
+              }
+              onAuditionNotes={
+                singleComparisonPane.kind === "reference" ? () => {} : handleAuditionNotes
+              }
               confidenceHeatmap={isConfidenceHeatOn}
-              pitchMarkers={pitchMarkers}
-              onPitchMarkersChange={setPitchMarkers}
+              pitchMarkers={singleComparisonPane.kind === "reference" ? [] : pitchMarkers}
+              onPitchMarkersChange={
+                singleComparisonPane.kind === "reference" ? () => {} : setPitchMarkers
+              }
               currentPlaybackTick={playback.currentTick}
               isPlaying={playback.isPlaying}
-              onSeek={playback.seek}
+              onSeek={singleComparisonPane.kind === "reference" ? () => {} : playback.seek}
               changedNoteIds={pianoRollChangedNoteIds}
-              previousVoiceId={changedNotePreviousVoiceId}
+              previousVoiceId={pianoRollPreviousVoiceId}
               onlyChangedNotes={pianoRollOnlyChangedNotes}
-              readOnly={isCompareReadOnly}
+              readOnly={isCompareReadOnly || singleComparisonPane.kind === "reference"}
               voiceDescriptions={pianoRollVoiceDescriptions}
-              conflictNoteIds={pianoRollConflictNoteIds}
+              conflictNoteIds={
+                singleComparisonPane.kind === "reference"
+                  ? EMPTY_NOTE_IDS
+                  : pianoRollConflictNoteIds
+              }
               viewMode={pianoRollViewMode}
+              accessibleLabelPrefix={
+                singleComparisonPane.kind === "reference" ? "External reference" : undefined
+              }
+              referencePane={singleComparisonPane.kind === "reference"}
             />
           )}
         </section>

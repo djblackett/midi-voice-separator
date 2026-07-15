@@ -137,6 +137,8 @@ interface PianoRollProps {
   viewMode?: PianoRollViewMode;
   /** Optional split-pane prefix such as "Side A" for the note canvas name. */
   accessibleLabelPrefix?: string;
+  /** Marks an immutable reference canvas so its parent can lock editor shortcuts. */
+  referencePane?: boolean;
   /** voiceId -> presentation key (M10), so matched voices render in a shared color. */
   presentationKeyByVoiceId?: ReadonlyMap<string, string>;
   /** Controlled horizontal (tick) viewport (M13). Omit for internal, uncontrolled state. */
@@ -183,6 +185,7 @@ export function PianoRoll({
   conflictNoteIds = new Set(),
   viewMode = "piano",
   accessibleLabelPrefix,
+  referencePane = false,
   presentationKeyByVoiceId = new Map(),
   timeViewport,
   onTimeViewportChange,
@@ -1449,6 +1452,7 @@ export function PianoRoll({
         .filter(Boolean)
         .join(" ")}
       ref={containerRef}
+      data-reference-pane={referencePane ? "true" : undefined}
     >
       {minimap ? (
         <div

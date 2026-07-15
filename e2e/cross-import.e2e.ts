@@ -209,3 +209,65 @@ test("reports insufficient matcher coverage without publishing assignment or voi
   await expect(summary).toContainText("reference-only-1");
   await expect(summary).toContainText("editable-only-1 (A)");
 });
+
+test("renders external panes read-only and keeps reference pointer and shortcuts off the working copy", async ({
+  page,
+}) => {
+  await installFakeTauri(page, {
+    importedProject: editableProject,
+    importPath: "C:/references/regenerated.mid",
+    compareExternal: comparisonResponse,
+  });
+  await page.goto("/");
+  await importFixture(page);
+
+  await page.getByLabel("Select notes in Lead", { exact: true }).click();
+  await page.keyboard.press("2");
+  await expect(voiceRow(page, "Lead")).toContainText("0 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+
+  await page.getByRole("button", { name: "Compare external MIDI…" }).click();
+  await page.getByRole("button", { name: "Reference", exact: true }).click();
+  const referenceCanvas = page.getByLabel("External reference piano roll note visualization", {
+    exact: true,
+  });
+  await expect(referenceCanvas).toBeVisible();
+  await expect(
+    page.getByText("Read-only reference: editing, snapshots, export, and playback"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export MIDI" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save snapshot" })).toBeDisabled();
+  await expect(page.getByLabel("New snapshot name")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Play" })).toBeDisabled();
+
+  await referenceCanvas.click();
+  await expect(voiceRow(page, "Lead")).toContainText("0 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+
+  await page.getByRole("button", { name: "Diff", exact: true }).click();
+  await expect(
+    page.getByText("Read-only diff preview: select Current to resume editing."),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Split view", exact: true }).click();
+  await expect(
+    page.getByLabel("Split comparison of current document and external reference"),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Side A piano roll note visualization", { exact: true }),
+  ).toBeVisible();
+  await expect(referenceCanvas).toBeVisible();
+
+  await page.getByLabel("Select notes in Bass", { exact: true }).click();
+  await expect(page.getByLabel("Selected note details")).toContainText("2 notes selected");
+  await referenceCanvas.click();
+  await expect(page.getByLabel("Selected note details")).toContainText("2 notes selected");
+  await page.keyboard.press("Control+z");
+  await expect(voiceRow(page, "Lead")).toContainText("0 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("2 notes");
+
+  await page.getByLabel("Side A piano roll note visualization", { exact: true }).click();
+  await page.keyboard.press("Control+z");
+  await expect(voiceRow(page, "Lead")).toContainText("1 notes");
+  await expect(voiceRow(page, "Bass")).toContainText("1 notes");
+});

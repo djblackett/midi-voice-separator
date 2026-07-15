@@ -1568,6 +1568,15 @@ kbd {
   box-shadow: 0 0 0 1px #38bdf8;
 }
 
+.editor-pane-reference {
+  border-color: #64748b;
+  border-style: dashed;
+}
+
+.editor-pane-reference .editor-pane-label {
+  color: #cbd5e1;
+}
+
 .editor-pane-label {
   margin-bottom: 6px;
   color: #94a3b8;

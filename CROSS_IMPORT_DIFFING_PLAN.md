@@ -4,8 +4,8 @@
 - Date: 2026-07-15
 - Consumes: `NEXT_FEATURES_MASTER_PLAN.md` (M8, M9, M17),
   `CONTENT_BASED_NOTE_MATCHING_PLAN.md` (Feature 7 handoff), and the existing A/B workspace.
-- Status: Phases 0.1--C3 are complete. The user explicitly authorized implementation to continue
-  before Feature 6 manual audio/ergonomics acceptance was recorded. C4 and D1--D2 remain;
+- Status: Phases 0.1--C4 are complete. The user explicitly authorized implementation to continue
+  before Feature 6 manual audio/ergonomics acceptance was recorded. D1--D2 remain;
   that manual acceptance and Feature 8 D2 native/manual evidence are still unclaimed.
 
 ### Execution record (2026-07-14)
@@ -22,6 +22,10 @@
 - C3 (2026-07-15) adds the coverage-first diagnostic summary. It displays policy/version, matcher
   and trusted-pair coverage, side-qualified ambiguity/unmatched-note diagnostics, and
   incomparable reasons. Reassignment and voice counts render only after both coverage gates pass.
+- C4 (2026-07-15) renders immutable reference/current/diff projections in single or split panes,
+  applies changed-note cues only after side/document validation, and keeps reference pointer,
+  keyboard, snapshot, export, and playback paths from mutating the working copy. It does not add
+  reference playback.
 
 ### Implementation authorization (2026-07-15)
 
