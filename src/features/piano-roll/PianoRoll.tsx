@@ -783,7 +783,9 @@ export function PianoRoll({
     }
 
     let rafId = 0;
-    const voiceColor = activeVoiceId ? getVoiceFillColor(activeVoiceId) : null;
+    const voiceColor = activeVoiceId
+      ? getVoiceFillColor(presentationKeyByVoiceId.get(activeVoiceId) ?? activeVoiceId)
+      : null;
     function drawFrame(time: number) {
       if (overlayContext) {
         drawPaintOverlay(overlayContext, canvasSize.width, canvasSize.height, {
@@ -803,7 +805,14 @@ export function PianoRoll({
     }
     rafId = requestAnimationFrame(drawFrame);
     return () => cancelAnimationFrame(rafId);
-  }, [isPaintCursorActive, paintTool, brushRadius, activeVoiceId, canvasSize]);
+  }, [
+    isPaintCursorActive,
+    paintTool,
+    brushRadius,
+    activeVoiceId,
+    canvasSize,
+    presentationKeyByVoiceId,
+  ]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1605,7 +1614,11 @@ export function PianoRoll({
                   <button
                     type="button"
                     className="piano-roll-legend-swatch"
-                    style={{ backgroundColor: getVoiceFillColor(voice.id) }}
+                    style={{
+                      backgroundColor: getVoiceFillColor(
+                        presentationKeyByVoiceId.get(voice.id) ?? voice.id,
+                      ),
+                    }}
                     aria-label={`Select ${voice.label} voice`}
                     aria-pressed={activeVoiceId === voice.id}
                     disabled={readOnly}

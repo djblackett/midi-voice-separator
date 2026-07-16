@@ -26,6 +26,11 @@ const threeVoiceProject = buildFixtureProject(
   ],
 );
 
+const reallocatedVoiceProject = buildFixtureProject(
+  [note("a", "voice-7", 60, 0), note("b", "voice-3", 64, 120)],
+  [voice("voice-7", "Voice 1", 1, 60, 60), voice("voice-3", "Voice 2", 1, 64, 64)],
+);
+
 async function importFixture(page: Page) {
   await page.getByRole("button", { name: "Import MIDI" }).click();
   await page.waitForSelector(".voice-legend");
@@ -74,6 +79,23 @@ test.describe("selection and bulk reassignment", () => {
 
     await expect(voiceRow(page, "Voice 1")).toContainText("0 notes");
     await expect(voiceRow(page, "Voice 2")).toContainText("3 notes");
+  });
+
+  test("number-key voice slots keep the same color after voice ids are reallocated", async ({
+    page,
+  }) => {
+    await installFakeTauri(page, { importedProject: reallocatedVoiceProject });
+    await page.goto("/");
+    await importFixture(page);
+
+    const mainSwatch = page.getByLabel("Select notes in Voice 1");
+    const rollSwatch = page.getByLabel("Select Voice 1 voice");
+    await expect(mainSwatch).toHaveCSS("background-color", "rgb(56, 189, 248)");
+    await expect(rollSwatch).toHaveCSS("background-color", "rgb(56, 189, 248)");
+
+    await page.getByLabel("Select notes in Voice 2").click();
+    await page.keyboard.press("1");
+    await expect(voiceRow(page, "Voice 1")).toContainText("2 notes");
   });
 
   test("a bulk reassignment is undoable and redoable", async ({ page }) => {

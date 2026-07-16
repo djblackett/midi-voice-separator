@@ -4,6 +4,7 @@ import type { MidiNote, MidiProject } from "../../domain/midi/midiProject";
 import type { ComparisonWorkspace } from "../editorCompare";
 import type { ReferenceDocument } from "../referenceDocument";
 import {
+  commitActive,
   createComparisonBranches,
   forkSideB,
   setActiveSide,
@@ -172,7 +173,23 @@ describe("resolveComparisonProjection", () => {
     // B's matched voices reuse their A partners' presentation keys; A stays canonical.
     expect(projection.sideB?.presentationKeyByVoiceId.get("voice-5")).toBe("voice-1");
     expect(projection.sideB?.presentationKeyByVoiceId.get("voice-6")).toBe("voice-2");
-    expect(projection.sideA.presentationKeyByVoiceId.size).toBe(0);
+    expect(projection.sideA.presentationKeyByVoiceId.get("voice-1")).toBe("voice-1");
+    expect(projection.sideA.presentationKeyByVoiceId.get("voice-2")).toBe("voice-2");
+  });
+
+  it("keeps presentation keys stable when a selected B note changes voice", () => {
+    const before = branchesWithB("B");
+    const beforeProjection = resolveComparisonProjection(before, workspace("split"));
+    const edited = commitActive(before, {
+      kind: "assignNotes",
+      noteIds: ["n1"],
+      voiceId: "voice-6",
+    });
+    const afterProjection = resolveComparisonProjection(edited, workspace("split"));
+
+    expect(beforeProjection.sideB?.presentationKeyByVoiceId.get("voice-6")).toBe("voice-2");
+    expect(afterProjection.sideB?.presentationKeyByVoiceId.get("voice-6")).toBe("voice-2");
+    expect(afterProjection.correspondence).toEqual(beforeProjection.correspondence);
   });
 
   it("marks only the active side editable", () => {
@@ -235,7 +252,7 @@ describe("resolveComparisonProjection", () => {
     expect(projection.visibleSides).toEqual(["A", "reference"]);
     expect(projection.reference?.editable).toBe(false);
     expect(presentationKeyForVoice(projection.reference!, "reference-lead")).toBe("voice-1");
-    expect(presentationKeyForVoice(projection.reference!, "reference-only")).toBe("reference-only");
+    expect(presentationKeyForVoice(projection.reference!, "reference-only")).toBe("voice-2");
     expect("revisionRef" in projection.reference!).toBe(false);
   });
 });

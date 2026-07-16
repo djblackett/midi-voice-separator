@@ -17,6 +17,17 @@ export interface PresentationKeySides {
 }
 
 /**
+ * Maps each visible voice slot to the palette/timbre key used by the same
+ * number-key shortcut. Internal voice ids may be reallocated by a re-run;
+ * visible slot 1 must still look and sound like slot 1.
+ */
+export function deriveVoiceOrderPresentationKeys(
+  voiceIds: readonly string[],
+): ReadonlyMap<string, PresentationKey> {
+  return new Map(voiceIds.map((voiceId, index) => [voiceId, `voice-${index + 1}`]));
+}
+
+/**
  * Derives per-side presentation keys from voice correspondence (M10). A voices
  * keep their own key (so a lone side is unchanged); a matched B voice reuses
  * its A partner's key so it renders in the partner's color; an unmatched B voice

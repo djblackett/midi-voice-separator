@@ -1,8 +1,8 @@
 import type { CrossImportAssignmentDiff } from "../../domain/midi/crossImportDiff";
 import { materializeEditorProject } from "../../domain/midi/editorMaterialization";
 import type { MidiProject } from "../../domain/midi/midiProject";
-import { correspondVoices, type VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence";
-import { derivePresentationKeys } from "../../features/piano-roll/presentationKeys";
+import type { VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence";
+import { deriveVoiceOrderPresentationKeys } from "../../features/piano-roll/presentationKeys";
 import type { ComparisonWorkspace } from "../editorCompare";
 import type { ReferenceDocument } from "../referenceDocument";
 import type { ComparisonBranches } from "./comparisonBranches";
@@ -69,10 +69,6 @@ export interface ComparisonProjection {
   readonly correspondence: VoiceCorrespondence | null;
 }
 
-function assignmentsOf(project: MidiProject): Map<string, string> {
-  return new Map(project.notes.map((note) => [note.id, note.voiceId]));
-}
-
 export function resolveComparisonProjection(
   branches: ComparisonBranches,
   workspace: ComparisonWorkspace | null,
@@ -84,21 +80,25 @@ export function resolveComparisonProjection(
   const bDocument = bBranch?.present ?? null;
   const aProject = materializeEditorProject(aDocument);
   const bProject = bDocument ? materializeEditorProject(bDocument) : null;
+  const aPresentationKeyByVoiceId = aProject
+    ? deriveVoiceOrderPresentationKeys(aProject.voices.map((voice) => voice.id))
+    : new Map<string, string>();
+  const bPresentationKeyByVoiceId = bProject
+    ? new Map(deriveVoiceOrderPresentationKeys(bProject.voices.map((voice) => voice.id)))
+    : new Map<string, string>();
 
-  // Correspondence + presentation keys are resolved whenever B exists: split
-  // rendering consumes them for color, and monitored playback for timbre, so a
-  // matched B voice looks and sounds like its A partner even in single view.
-  let correspondence: VoiceCorrespondence | null = null;
-  let bPresentationKeyByVoiceId: ReadonlyMap<string, string> = new Map();
-  if (bDocument !== null && aProject && bProject) {
-    correspondence = correspondVoices(
-      { voiceIds: aProject.voices.map((voice) => voice.id), assignments: assignmentsOf(aProject) },
-      { voiceIds: bProject.voices.map((voice) => voice.id), assignments: assignmentsOf(bProject) },
-    );
-    const presentation = derivePresentationKeys(correspondence);
-    bPresentationKeyByVoiceId = presentationKeysFor(bProject, (voiceId) =>
-      presentation.keyForSide("B", voiceId),
-    );
+  // Cross-side identity is frozen when B is forked. Recomputing it from live
+  // assignments would let one selected edit remap an entire B voice and make
+  // untouched notes appear to change color.
+  const correspondence: VoiceCorrespondence | null =
+    bDocument !== null && aProject && bProject ? branches.correspondence : null;
+  if (correspondence) {
+    for (const pair of correspondence.matched) {
+      const canonicalKey = aPresentationKeyByVoiceId.get(pair.aVoiceId);
+      if (canonicalKey && bPresentationKeyByVoiceId.has(pair.bVoiceId)) {
+        bPresentationKeyByVoiceId.set(pair.bVoiceId, canonicalKey);
+      }
+    }
   }
 
   const sideA: EditablePaneProjection = {
@@ -108,7 +108,7 @@ export function resolveComparisonProjection(
     project: aProject,
     editable: activeSide === "A",
     revisionRef: { branchId: "A", revision: aDocument.revision },
-    presentationKeyByVoiceId: new Map(), // A is the canonical palette.
+    presentationKeyByVoiceId: aPresentationKeyByVoiceId,
   };
   const sideB: EditablePaneProjection | null =
     bBranch && bDocument
@@ -122,7 +122,15 @@ export function resolveComparisonProjection(
           presentationKeyByVoiceId: bPresentationKeyByVoiceId,
         }
       : null;
-  const reference = resolveReferencePane(workspace, externalReference);
+  const editablePresentationKeyByVoiceId =
+    workspace?.kind === "externalReference" && workspace.target.branchId === "B"
+      ? bPresentationKeyByVoiceId
+      : aPresentationKeyByVoiceId;
+  const reference = resolveReferencePane(
+    workspace,
+    externalReference,
+    editablePresentationKeyByVoiceId,
+  );
 
   return {
     visibleSides: visibleSidesFor(workspace, activeSide, reference),
@@ -151,6 +159,7 @@ export function presentationKeyForVoice(pane: ComparisonPaneProjection, voiceId:
 function resolveReferencePane(
   workspace: ComparisonWorkspace | null,
   input: ExternalReferenceProjectionInput | null,
+  editablePresentationKeyByVoiceId: ReadonlyMap<string, string>,
 ): ReferencePaneProjection | null {
   if (
     workspace?.kind !== "externalReference" ||
@@ -159,24 +168,15 @@ function resolveReferencePane(
   ) {
     return null;
   }
-  const presentation = input.diff
-    ? derivePresentationKeys(
-        {
-          matched: input.diff.matchedVoices.map((pair) => ({
-            aVoiceId: pair.editable.voiceId,
-            bVoiceId: pair.reference.voiceId,
-            overlap: pair.overlap,
-          })),
-          unmatchedA: input.diff.addedEditableVoices.map((voice) => voice.voiceId),
-          unmatchedB: input.diff.removedReferenceVoices.map((voice) => voice.voiceId),
-          ambiguous: [],
-          splits: [],
-          merges: [],
-          matcherVersion: input.diff.matcher.matcherVersion,
-        },
-        { canonical: workspace.target.branchId, matched: "reference" },
-      )
-    : null;
+  const presentationKeyByVoiceId = new Map(
+    deriveVoiceOrderPresentationKeys(input.reference.project.voices.map((voice) => voice.id)),
+  );
+  for (const pair of input.diff?.matchedVoices ?? []) {
+    const canonicalKey = editablePresentationKeyByVoiceId.get(pair.editable.voiceId);
+    if (canonicalKey && presentationKeyByVoiceId.has(pair.reference.voiceId)) {
+      presentationKeyByVoiceId.set(pair.reference.voiceId, canonicalKey);
+    }
+  }
 
   return {
     kind: "reference",
@@ -184,11 +184,7 @@ function resolveReferencePane(
     document: input.reference,
     project: input.reference.project,
     editable: false,
-    presentationKeyByVoiceId: presentation
-      ? presentationKeysFor(input.reference.project, (voiceId) =>
-          presentation.keyForSide("reference", voiceId),
-        )
-      : new Map(),
+    presentationKeyByVoiceId,
   };
 }
 
@@ -206,18 +202,4 @@ function visibleSidesFor(
   return workspace?.kind === "editableSnapshot" && workspace.layout === "split"
     ? ["A", "B"]
     : [activeSide];
-}
-
-function presentationKeysFor(
-  project: MidiProject,
-  keyForVoice: (voiceId: string) => string,
-): ReadonlyMap<string, string> {
-  const keys = new Map<string, string>();
-  for (const voice of project.voices) {
-    const key = keyForVoice(voice.id);
-    if (key !== voice.id) {
-      keys.set(voice.id, key);
-    }
-  }
-  return keys;
 }

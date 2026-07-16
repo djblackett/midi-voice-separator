@@ -40,6 +40,7 @@ export function useComparisonEditor(): {
   document: EditorDocument;
   branchA: EditorBranch;
   branchB: EditorBranch | null;
+  correspondence: ComparisonBranches["correspondence"];
   dispatch: (command: EditorCommand) => void;
   undo: () => boolean;
   redo: () => boolean;
@@ -118,6 +119,7 @@ export function useComparisonEditor(): {
     document: active.present,
     branchA: branches.A,
     branchB: branches.B,
+    correspondence: branches.correspondence,
     dispatch,
     undo,
     redo,

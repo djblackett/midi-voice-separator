@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence";
-import { derivePresentationKeys, IDENTITY_PRESENTATION_KEYS } from "./presentationKeys";
+import {
+  derivePresentationKeys,
+  deriveVoiceOrderPresentationKeys,
+  IDENTITY_PRESENTATION_KEYS,
+} from "./presentationKeys";
 
 function correspondence(overrides: Partial<VoiceCorrespondence> = {}): VoiceCorrespondence {
   return {
@@ -16,6 +20,14 @@ function correspondence(overrides: Partial<VoiceCorrespondence> = {}): VoiceCorr
 }
 
 describe("derivePresentationKeys", () => {
+  it("maps visible voice order to the same slots used by number keys", () => {
+    const keys = deriveVoiceOrderPresentationKeys(["voice-7", "voice-3", "percussion"]);
+
+    expect(keys.get("voice-7")).toBe("voice-1");
+    expect(keys.get("voice-3")).toBe("voice-2");
+    expect(keys.get("percussion")).toBe("voice-3");
+  });
+
   it("keeps every A voice on its own key", () => {
     const keys = derivePresentationKeys(
       correspondence({ matched: [{ aVoiceId: "voice-1", bVoiceId: "voice-9", overlap: 3 }] }),

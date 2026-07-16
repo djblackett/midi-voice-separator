@@ -177,6 +177,22 @@ describe("resolveNoteRenderStyle", () => {
     expect(style.changeEdgeColor).toBe(getVoiceFillColor("voice-3"));
   });
 
+  it("resolves the changed-edge color through the same presentation map as note fills", () => {
+    const style = resolveNoteRenderStyle(
+      note({ id: "a", voiceId: "voice-8" }),
+      context({
+        changedNoteIds: new Set(["a"]),
+        previousVoiceId: new Map([["a", "voice-7"]]),
+        presentationKeyByVoiceId: new Map([
+          ["voice-7", "voice-1"],
+          ["voice-8", "voice-2"],
+        ]),
+      }),
+    );
+
+    expect(style.changeEdgeColor).toBe(getVoiceFillColor("voice-1"));
+  });
+
   it("has a null changed-edge color when the previous voice is unknown", () => {
     const style = resolveNoteRenderStyle(
       note({ id: "a" }),

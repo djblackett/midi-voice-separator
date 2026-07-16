@@ -313,6 +313,7 @@ export default function App() {
     activeSide: editorActiveSide,
     branchA: editorBranchA,
     branchB: editorBranchB,
+    correspondence: editorVoiceCorrespondence,
     dispatch: dispatchEditorCommand,
     undo: undoEditorBranch,
     redo: redoEditorBranch,
@@ -609,12 +610,28 @@ export default function App() {
   const comparisonProjection = useMemo(
     () =>
       resolveComparisonProjection(
-        { activeSide: editorActiveSide, A: editorBranchA, B: editorBranchB },
+        {
+          activeSide: editorActiveSide,
+          A: editorBranchA,
+          B: editorBranchB,
+          correspondence: editorVoiceCorrespondence,
+        },
         compareState,
         externalReferenceProjection,
       ),
-    [editorActiveSide, editorBranchA, editorBranchB, compareState, externalReferenceProjection],
+    [
+      editorActiveSide,
+      editorBranchA,
+      editorBranchB,
+      editorVoiceCorrespondence,
+      compareState,
+      externalReferenceProjection,
+    ],
   );
+  const displayedPresentationKeyByVoiceId =
+    editorActiveSide === "B" && comparisonProjection.sideB
+      ? comparisonProjection.sideB.presentationKeyByVoiceId
+      : comparisonProjection.sideA.presentationKeyByVoiceId;
   const isSplitLayout = comparisonProjection.visibleSides.length === 2;
   const verticalNavigationAxisLabel = pianoRollViewMode === "voice-lanes" ? "Lanes" : "Pitch";
   const verticalNavigationTitle =
@@ -2516,7 +2533,11 @@ export default function App() {
                   type="button"
                   className="voice-swatch"
                   disabled={isCompareReadOnly}
-                  style={{ backgroundColor: `var(--voice-${(index % 12) + 1})` }}
+                  style={{
+                    backgroundColor: getVoiceFillColor(
+                      displayedPresentationKeyByVoiceId.get(voice.id) ?? `voice-${index + 1}`,
+                    ),
+                  }}
                   aria-label={`Select notes in ${voice.label}`}
                   onClick={() => handleSelectVoiceSwatch(voice.id)}
                 />
@@ -3685,7 +3706,11 @@ export default function App() {
                   <span className="paint-voice-chip" title="The voice this stroke paints into">
                     <span
                       className="paint-voice-chip-swatch"
-                      style={{ backgroundColor: getVoiceFillColor(activeVoiceId) }}
+                      style={{
+                        backgroundColor: getVoiceFillColor(
+                          displayedPresentationKeyByVoiceId.get(activeVoiceId) ?? activeVoiceId,
+                        ),
+                      }}
                     />
                     {displayedProject.voices.find((voice) => voice.id === activeVoiceId)?.label ??
                       activeVoiceId}

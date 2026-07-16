@@ -263,7 +263,9 @@ export function resolveNoteRenderStyle(
 
   const previousVoice = previousVoiceId.get(note.id);
   const changeEdgeColor =
-    showChangedEdge && previousVoice ? getVoiceFillColor(previousVoice) : null;
+    showChangedEdge && previousVoice
+      ? getVoiceFillColor(presentationKeyByVoiceId.get(previousVoice) ?? previousVoice)
+      : null;
 
   // In heat view a note's color answers "how sure was the assignment?"
   // instead of "which voice?". An in-progress paint stroke still previews

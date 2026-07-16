@@ -6,6 +6,8 @@ import {
   type BranchId,
   type EditorBranch,
 } from "./editorBranch";
+import { materializeEditorProject } from "../../domain/midi/editorMaterialization";
+import { correspondVoices, type VoiceCorrespondence } from "../../domain/midi/voiceCorrespondence";
 import type { EditorCommand } from "./editorCommand";
 import type { EditorDocument } from "./editorDocument";
 
@@ -21,10 +23,12 @@ export interface ComparisonBranches {
   readonly activeSide: BranchId;
   readonly A: EditorBranch;
   readonly B: EditorBranch | null;
+  /** Frozen at fork so ordinary note edits cannot recolor untouched voices. */
+  readonly correspondence: VoiceCorrespondence | null;
 }
 
 export function createComparisonBranches(a: EditorBranch): ComparisonBranches {
-  return { activeSide: "A", A: a, B: null };
+  return { activeSide: "A", A: a, B: null, correspondence: null };
 }
 
 export function activeBranch(branches: ComparisonBranches): EditorBranch {
@@ -45,11 +49,30 @@ export function forkSideB(
   document: EditorDocument,
   forkedFrom: string | null,
 ): ComparisonBranches {
-  return { ...branches, B: createEditorBranch("B", document, forkedFrom) };
+  const aProject = materializeEditorProject(branches.A.present);
+  const bProject = materializeEditorProject(document);
+  const correspondence =
+    aProject && bProject
+      ? correspondVoices(
+          {
+            voiceIds: aProject.voices.map((voice) => voice.id),
+            assignments: new Map(aProject.notes.map((note) => [note.id, note.voiceId])),
+          },
+          {
+            voiceIds: bProject.voices.map((voice) => voice.id),
+            assignments: new Map(bProject.notes.map((note) => [note.id, note.voiceId])),
+          },
+        )
+      : null;
+  return {
+    ...branches,
+    B: createEditorBranch("B", document, forkedFrom),
+    correspondence,
+  };
 }
 
 export function discardSideB(branches: ComparisonBranches): ComparisonBranches {
-  return { ...branches, activeSide: "A", B: null };
+  return { ...branches, activeSide: "A", B: null, correspondence: null };
 }
 
 export function setActiveSide(branches: ComparisonBranches, side: BranchId): ComparisonBranches {
@@ -86,5 +109,10 @@ export function resetSideA(
   branches: ComparisonBranches,
   document: EditorDocument,
 ): ComparisonBranches {
-  return { activeSide: "A", A: createEditorBranch("A", document, branches.A.forkedFrom), B: null };
+  return {
+    activeSide: "A",
+    A: createEditorBranch("A", document, branches.A.forkedFrom),
+    B: null,
+    correspondence: null,
+  };
 }
